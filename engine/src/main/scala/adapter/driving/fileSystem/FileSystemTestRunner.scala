@@ -6,15 +6,17 @@ import adapter.driven.jacoco.JacocoBranchCoverageTracker
 import adapter.driven.scalameta.ScalametaBranchTreeBuilder
 import adapter.driven.scoverage.ScoverageSourceCoverageReader
 import domain.Strategy
-import port.driven.InputGenerator
+import org.scalacheck.Gen
+import port.driven.{GeneratorFactory, InputGenerator}
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
 
 import java.nio.file.{Path, Paths}
 
 /** Driving adapter: composes the JaCoCo + Scalameta + scoverage + file-system stack into a
-  * [[TestRunner]] and resolves a [[Strategy]] into a concrete [[InputGenerator]]. Concrete
-  * decisions about *where* SUT bytecode and scoverage data live stay here, out of the use case.
+  * [[TestRunner]] and resolves a [[Strategy]] into a concrete [[InputGenerator]] for any input type
+  * `A`. Concrete decisions about *where* SUT bytecode and scoverage data live stay here, out of the
+  * use case.
   */
 object FileSystemTestRunner {
 
@@ -32,11 +34,13 @@ object FileSystemTestRunner {
       treeBuilder = ScalametaBranchTreeBuilder(),
       sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
       writer = FileSystemCoverageReportWriter(),
-      generators = generatorFor
+      generators = factory
     )
 
-  private def generatorFor(strategy: Strategy): InputGenerator = strategy match {
-    case Strategy.Random => RandomInputGenerator(InitialSeed)
-    case Strategy.Guided => GuidedInputGenerator(RandomInputGenerator(InitialSeed))
+  private val factory: GeneratorFactory = new GeneratorFactory {
+    override def make[A](strategy: Strategy, gen: Gen[A]): InputGenerator[A] = strategy match {
+      case Strategy.Random => RandomInputGenerator(gen, InitialSeed)
+      case Strategy.Guided => GuidedInputGenerator(RandomInputGenerator(gen, InitialSeed))
+    }
   }
 }

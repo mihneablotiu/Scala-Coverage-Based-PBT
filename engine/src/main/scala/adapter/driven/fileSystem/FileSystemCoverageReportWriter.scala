@@ -18,14 +18,20 @@ import java.nio.file.{Files, Path}
   *   - `coverage.json` — full structured data.
   *
   * `coverage.svg` is *not* written here; produce it via `dot -Tsvg coverage.dot > coverage.svg`.
+  *
+  * Generic in the input type `A`; inputs are serialised via `_.toString`, truncated to a fixed
+  * width so a single huge value can't blow out the CSV.
   */
 object FileSystemCoverageReportWriter {
+
+  /** Max characters of `input.toString` kept in CSV / JSON cells. */
+  private val InputDisplayMax = 80
 
   def apply(): CoverageReportWriter = new Live
 
   private final class Live extends CoverageReportWriter {
 
-    override def write(report: SessionReport, outDir: Path): IO[Unit] = for {
+    override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = for {
       _ <- IO(Files.createDirectories(outDir))
       _ <- writeFile(outDir, "coverage.dot", renderDot(report))
       _ <- writeFile(outDir, "growth.svg", renderGrowthSvg(report))
@@ -62,10 +68,10 @@ object FileSystemCoverageReportWriter {
   // DOT — Report → Package → Class → Method → BranchTree (recursive)
   // ────────────────────────────────────────────────────────────────
 
-  private def renderDot(r: SessionReport): String = {
+  private def renderDot[A](r: SessionReport[A]): String = {
     val nodes = new StringBuilder
     val edges = new StringBuilder
-    val total = sumCounters(r.branchesByLine.values.map(_.counter))
+    val total = r.sourceBranchCounter
 
     val pkg = r.methodTree.map(_.packageName).filter(_.nonEmpty).getOrElse("<root>")
     val cls = r.methodTree
@@ -98,8 +104,15 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  /** Walks a [[BranchTree]] and emits one DOT node per AST node, colouring each by a position
-    * lookup against the scoverage-derived set of executed positions. No parent-status threading.
+  /** Walks a [[BranchTree]] and emits one DOT node per source node. Three cases, one each:
+    *
+    *   - [[BranchTree.Branch]] — a box with the construct kind ("if" / "match" / "partial" / …)
+    *     and one outgoing edge per arm. Colour is derived from descendant leaves via
+    *     [[BranchTree.isReached]] — uniform across all kinds, so partial functions colour the
+    *     same way as ifs.
+    *   - [[BranchTree.Sequence]] — siblings under one parent edge; emit each child with the same
+    *     parent and edge label.
+    *   - [[BranchTree.Leaf]] — terminal expression, coloured by position lookup.
     */
   private final class TreeRenderer(coveredPositions: Set[Pos]) {
     private var counter = 0
@@ -112,39 +125,23 @@ object FileSystemCoverageReportWriter {
         nodes: StringBuilder,
         edges: StringBuilder
     ): Unit = tree match {
-      case BranchTree.If(_, cond, thenT, elseT) =>
-        val id = emitBranchy(parentId, edgeLabel, "if", cond, nodes, edges)
-        render(thenT, id, "then", nodes, edges)
-        render(elseT, id, "else", nodes, edges)
+      case b @ BranchTree.Branch(_, kind, label, arms) =>
+        val id = freshId()
+        val reached = BranchTree.isReached(b, coveredPositions)
+        val fill = stateColour(reached, NodeCovered, NodeMissed, NodeUnknown)
+        nodes.append(boxNode(id, fill, branchyLabel(kind, label, reached)))
+        edge(parentId, id, edgeLabel, edges)
+        arms.foreach(a => render(a.body, id, a.label, nodes, edges))
 
-      case BranchTree.Match(_, scrut, cases) =>
-        val id = emitBranchy(parentId, edgeLabel, "match", scrut, nodes, edges)
-        cases.foreach(c => render(c.body, id, s"case ${c.pattern.text}", nodes, edges))
-
-      case BranchTree.While(_, cond, body) =>
-        val id = emitBranchy(parentId, edgeLabel, "while", cond, nodes, edges)
-        render(body, id, "body", nodes, edges)
+      case BranchTree.Sequence(_, children) =>
+        children.foreach(c => render(c, parentId, edgeLabel, nodes, edges))
 
       case BranchTree.Leaf(pos, text) =>
         val id = freshId()
-        val fill = pick(pos, LeafCovered, LeafMissed, LeafUnknown)
-        nodes.append(diamondNode(id, fill, leafLabel(text, pos)))
+        val covered = coveredPositions(pos)
+        val fill = stateColour(covered, LeafCovered, LeafMissed, LeafUnknown)
+        nodes.append(diamondNode(id, fill, leafLabel(text, covered)))
         edge(parentId, id, edgeLabel, edges)
-    }
-
-    private def emitBranchy(
-        parentId: String,
-        edgeLabel: String,
-        kind: String,
-        cond: BranchTree.Expr,
-        nodes: StringBuilder,
-        edges: StringBuilder
-    ): String = {
-      val id = freshId()
-      val fill = pick(cond.pos, NodeCovered, NodeMissed, NodeUnknown)
-      nodes.append(boxNode(id, fill, branchyLabel(kind, cond)))
-      edge(parentId, id, edgeLabel, edges)
-      id
     }
 
     private def edge(parent: String, id: String, label: String, edges: StringBuilder): Unit = {
@@ -152,24 +149,26 @@ object FileSystemCoverageReportWriter {
       edges.append(s"  $parent -> $id$attr;\n")
     }
 
-    /** Pick one of three values based on the coverage state at `pos`. */
-    private def pick[A](pos: Pos, covered: A, missed: A, unknown: A): A =
+    /** Three-state picker: covered / missed / unknown. "Unknown" only applies when scoverage
+      * reported nothing at all (no instrumentation available); otherwise it's covered or missed.
+      */
+    private def stateColour[B](reached: Boolean, covered: B, missed: B, unknown: B): B =
       if (coveredPositions.isEmpty) unknown
-      else if (coveredPositions(pos)) covered
+      else if (reached) covered
       else missed
 
-    private def branchyLabel(kind: String, cond: BranchTree.Expr): String =
+    private def branchyLabel(kind: String, label: BranchTree.Expr, reached: Boolean): String =
       s"""<font point-size="11"><b>$kind</b></font>""" +
-        s"""<br/><font face="Courier" point-size="11"><b>${htmlEscape(cond.text)}</b></font>""" +
-        s"""<br/><font point-size="10">${statusBadge(cond.pos, "reached", "not reached")}</font>"""
+        s"""<br/><font face="Courier" point-size="11"><b>${htmlEscape(label.text)}</b></font>""" +
+        s"""<br/><font point-size="10">${statusBadge(reached, "reached", "not reached")}</font>"""
 
-    private def leafLabel(text: String, pos: Pos): String =
+    private def leafLabel(text: String, covered: Boolean): String =
       s"""<font face="Courier" point-size="12"><b>${htmlEscape(text)}</b></font>""" +
-        s"""<br/><font point-size="10">${statusBadge(pos, "covered", "not reached")}</font>"""
+        s"""<br/><font point-size="10">${statusBadge(covered, "covered", "not reached")}</font>"""
 
-    private def statusBadge(pos: Pos, coveredLabel: String, missedLabel: String): String =
-      pick(
-        pos,
+    private def statusBadge(reached: Boolean, coveredLabel: String, missedLabel: String): String =
+      stateColour(
+        reached,
         covered = s"""<font color="$CovTxt"><b>$coveredLabel</b></font>""",
         missed = s"""<font color="$MisTxt"><b>$missedLabel</b></font>""",
         unknown = s"""<font color="$UnknownTxt">unknown</font>"""
@@ -186,7 +185,7 @@ object FileSystemCoverageReportWriter {
   private def diamondNode(id: String, fill: String, label: String): String =
     s"""  $id [shape=diamond, style="filled", fillcolor="$fill", penwidth=1.5, label=<$label>];\n"""
 
-  private def reportLabel(r: SessionReport, c: BranchCounter): String = {
+  private def reportLabel[A](r: SessionReport[A], c: BranchCounter): String = {
     val sat = r.saturationInputIndex.fold("—")(i => s"#$i")
     s"""<font point-size="14"><b>Report</b></font><br/>${counterText(
         c
@@ -216,7 +215,7 @@ object FileSystemCoverageReportWriter {
   // SVG growth chart
   // ────────────────────────────────────────────────────────────────
 
-  private def renderGrowthSvg(r: SessionReport): String = {
+  private def renderGrowthSvg[A](r: SessionReport[A]): String = {
     val width = 820; val height = 360
     val mL = 80; val mR = 40; val mT = 60; val mB = 70
     val plotW = width - mL - mR; val plotH = height - mT - mB
@@ -259,7 +258,7 @@ object FileSystemCoverageReportWriter {
        |  <rect width="$width" height="$height" fill="white"/>
        |  <text x="${width / 2}" y="32" text-anchor="middle" font-size="17" font-weight="bold">${r.methodName} — coverage growth</text>
        |  <text x="${width / 2}" y="${height - 22}" text-anchor="middle" font-size="12">input index</text>
-       |  <text transform="translate(24, ${height / 2}) rotate(-90)" text-anchor="middle" font-size="12">branches covered</text>
+       |  <text transform="translate(24, ${height / 2}) rotate(-90)" text-anchor="middle" font-size="12">JVM branches covered (cumulative)</text>
        |  <line x1="$mL" y1="$mT" x2="$mL" y2="${height - mB}" stroke="$Border"/>
        |  <line x1="$mL" y1="${height - mB}" x2="${width - mR}" y2="${height - mB}" stroke="$Border"/>
        |$yTicks
@@ -288,8 +287,8 @@ object FileSystemCoverageReportWriter {
   // Summary, CSV, JSON
   // ────────────────────────────────────────────────────────────────
 
-  private def renderSummary(r: SessionReport): String = {
-    val total = sumCounters(r.branchesByLine.values.map(_.counter))
+  private def renderSummary[A](r: SessionReport[A]): String = {
+    val total = r.sourceBranchCounter
     val pct = if (total.total == 0) "—" else f"${total.covered * 100.0 / total.total}%.1f%%"
     val sat = r.saturationInputIndex.fold("never reached")(i => s"input #$i")
     val rows = r.branchesByLine.toSeq
@@ -303,25 +302,25 @@ object FileSystemCoverageReportWriter {
        |${"=" * 60}
        |Source file:      ${r.sourceFile.getFileName}
        |Total inputs:     ${r.totalInputs}
-       |Total branches:   ${total.total}
-       |Covered:          ${total.covered}/${total.total} ($pct)
+       |Source branches:  ${total.covered}/${total.total} ($pct)   [from scoverage]
        |Saturated at:     $sat
        |
-       |Per branch (line-level):
+       |JVM branches per line (from JaCoCo — drives per-input feedback, not the headline):
        |$rows
        |""".stripMargin
   }
 
-  private def renderInputsCsv(r: SessionReport): String = {
+  private def renderInputsCsv[A](r: SessionReport[A]): String = {
     val rows = r.inputLog.iterator
       .map { rec =>
-        s"${rec.index},${rec.input},${rec.linesExercised.size},${rec.linesExercised.toSeq.sorted.mkString(";")}"
+        val inputCell = csvEscape(displayInput(rec.input))
+        s"${rec.index},$inputCell,${rec.linesExercised.size},${rec.linesExercised.toSeq.sorted.mkString(";")}"
       }
       .mkString("\n")
     s"index,input,exercisedLineCount,exercisedLines\n$rows\n"
   }
 
-  private def renderJson(r: SessionReport): String = {
+  private def renderJson[A](r: SessionReport[A]): String = {
     val branches = r.branchesByLine.toSeq
       .sortBy(_._1)
       .map { case (line, s) =>
@@ -331,7 +330,8 @@ object FileSystemCoverageReportWriter {
       .mkString(",\n")
     val inputs = r.inputLog.iterator
       .map { rec =>
-        s"""    {"index": ${rec.index}, "input": ${rec.input}, "lines": [${rec.linesExercised.toSeq.sorted
+        val inputStr = jsonEscape(displayInput(rec.input))
+        s"""    {"index": ${rec.index}, "input": "$inputStr", "lines": [${rec.linesExercised.toSeq.sorted
             .mkString(", ")}]}"""
       }
       .mkString(",\n")
@@ -356,10 +356,18 @@ object FileSystemCoverageReportWriter {
   // Helpers
   // ────────────────────────────────────────────────────────────────
 
-  private def sumCounters(cs: Iterable[BranchCounter]): BranchCounter =
-    cs.foldLeft(BranchCounter(0, 0))((a, b) =>
-      BranchCounter(a.covered + b.covered, a.total + b.total)
-    )
+  private def displayInput[A](a: A): String = {
+    val s = String.valueOf(a)
+    if (s.length <= InputDisplayMax) s else s.take(InputDisplayMax - 1) + "…"
+  }
+
+  private def csvEscape(s: String): String =
+    if (s.contains(',') || s.contains('"') || s.contains('\n'))
+      "\"" + s.replace("\"", "\"\"") + "\""
+    else s
+
+  private def jsonEscape(s: String): String =
+    s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
 
   private def htmlEscape(s: String): String =
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")

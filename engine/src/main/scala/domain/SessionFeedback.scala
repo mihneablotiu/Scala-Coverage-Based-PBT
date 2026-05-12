@@ -7,10 +7,10 @@ package domain
   * simply ignore it.
   *
   * The fuzz loop also uses this type as its own running accumulator, so "loop state" and "what the
-  * generator sees" are the same value.
+  * generator sees" are the same value. Parameterised over the input type `A`.
   */
-final case class SessionFeedback(
-    history: Vector[InputRecord],
+final case class SessionFeedback[A](
+    history: Vector[InputRecord[A]],
     cumulativeCoverage: Map[Int, BranchCounter],
     hitCountsByLine: Map[Int, Int],
     firstHitsByLine: Map[Int, Int],
@@ -20,6 +20,6 @@ final case class SessionFeedback(
 }
 
 object SessionFeedback {
-  val empty: SessionFeedback =
-    SessionFeedback(Vector.empty, Map.empty, Map.empty, Map.empty, Vector.empty)
+  def empty[A]: SessionFeedback[A] =
+    SessionFeedback[A](Vector.empty, Map.empty, Map.empty, Map.empty, Vector.empty)
 }

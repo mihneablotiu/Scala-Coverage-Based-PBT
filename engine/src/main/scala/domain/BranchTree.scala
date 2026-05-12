@@ -1,13 +1,23 @@
 package domain
 
-/** AST of branchy expressions in one method, as parsed by a [[port.driven.BranchTreeBuilder]].
+/** Source-level decision graph of one method body. Built by walking the Scalameta AST and
+  * collecting every branching construct it finds, regardless of where the construct appears (a
+  * lambda argument, a `val` RHS, a non-tail block statement, etc.).
   *
-  * Every node carries its own source [[Pos]]. The writer matches these against the set of executed
-  * positions reported by [[port.driven.SourceCoverageReader]] to colour each node accurately —
-  * green for executed, red for not.
+  * Three node kinds, deliberately few:
   *
-  * Adding a new construct (Try, For, …) is a single new variant here plus one case in the Scalameta
-  * builder and one in the writer's recursive walk.
+  *   - [[Branch]]   — a decision point. The construct kind ("if", "match", "while", "try",
+  *                    "partial", …) is a free-form `String` discriminator, not a separate ADT
+  *                    variant. The renderer draws every branch the same way: a box with `kind` +
+  *                    `label` and one outgoing edge per arm. **Adding a new construct is a single
+  *                    new case in the AST walker — this file and the renderer don't change.**
+  *   - [[Sequence]] — multiple sibling subtrees rooted at the same parent. Used when a `Term.Block`
+  *                    contains several branchy statements, or a non-branchy parent (e.g. a
+  *                    `Term.Apply`) hides multiple branchy descendants.
+  *   - [[Leaf]]     — a terminal expression. Coloured by whether its position was invoked.
+  *
+  * Coverage is overlaid by the writer at render time using a `Set[Pos]` of invoked positions; see
+  * [[isReached]].
   */
 sealed trait BranchTree {
   def pos: Pos
@@ -15,32 +25,48 @@ sealed trait BranchTree {
 
 object BranchTree {
 
-  final case class If(
+  /** A decision point with `arms.size` labeled outcomes. */
+  final case class Branch(
       pos: Pos,
-      condition: Expr,
-      thenBranch: BranchTree,
-      elseBranch: BranchTree
+      kind: String,
+      label: Expr,
+      arms: List[Arm]
   ) extends BranchTree
 
-  final case class Match(
-      pos: Pos,
-      scrutinee: Expr,
-      cases: List[CaseArm]
-  ) extends BranchTree
+  /** Multiple sibling subtrees attached to the same parent. */
+  final case class Sequence(pos: Pos, children: List[BranchTree]) extends BranchTree
 
-  final case class While(
-      pos: Pos,
-      condition: Expr,
-      body: BranchTree
-  ) extends BranchTree
-
+  /** Terminal expression — its position determines its colour in the picture. */
   final case class Leaf(pos: Pos, text: String) extends BranchTree
 
-  /** A sub-expression with its own position — the condition of an `if`/`while`, the scrutinee of a
-    * `match`, or the pattern of a case arm. Tracked so the writer can colour the condition node
-    * based on whether the condition itself was reached.
+  /** One outcome of a [[Branch]]. `label` is the human-readable edge text ("then", "else",
+    * `case Seq(a, b, c)`, "body", "catch IOException", …); `body` is the subtree rendered below
+    * that edge.
+    */
+  final case class Arm(label: String, body: BranchTree)
+
+  /** A sub-expression with its own source position — the condition of an `if`, the scrutinee of a
+    * `match`, etc. Tracked so the writer can place the source text inside the branch's node and
+    * (in principle) colour the condition itself.
     */
   final case class Expr(pos: Pos, text: String)
 
-  final case class CaseArm(pos: Pos, pattern: Expr, body: BranchTree)
+  /** Total source-level branch arms in this tree. Sums `arms.size` over every [[Branch]] reached
+    * by walking the tree. Used by the drift check against scoverage's branch count.
+    */
+  def armCount(tree: BranchTree): Int = tree match {
+    case Branch(_, _, _, arms) => arms.size + arms.iterator.map(a => armCount(a.body)).sum
+    case Sequence(_, children) => children.iterator.map(armCount).sum
+    case Leaf(_, _)            => 0
+  }
+
+  /** True iff any descendant leaf's position is in `covered`. Used to colour a branch node — a
+    * branch is "reached" iff at least one of its arms was. Uniform across all branch kinds, so
+    * partial functions (no condition position) behave the same as ifs.
+    */
+  def isReached(tree: BranchTree, covered: Set[Pos]): Boolean = tree match {
+    case Leaf(pos, _)          => covered(pos)
+    case Branch(_, _, _, arms) => arms.exists(a => isReached(a.body, covered))
+    case Sequence(_, children) => children.exists(c => isReached(c, covered))
+  }
 }

@@ -9,24 +9,24 @@ import port.driven.InputGenerator
   * It receives the same [[SessionFeedback]] a real guided strategy would — cumulative line
   * coverage, hit counts, first-hit indices, growth curve, full input history — and prints a compact
   * summary so the channel is visibly working. It then delegates to a fallback (typically
-  * [[RandomInputGenerator]]) for the actual `Int` value.
+  * [[RandomInputGenerator]]) for the actual value.
   *
-  * Replacing the `printFeedback` body with a real selection/mutation algorithm is the next step in
-  * the project.
+  * Replacing the `printFeedback` body with a real selection / mutation algorithm is the next step
+  * in the project.
   */
 object GuidedInputGenerator {
 
-  def apply(fallback: InputGenerator): InputGenerator = new InputGenerator {
+  def apply[A](fallback: InputGenerator[A]): InputGenerator[A] = new InputGenerator[A] {
 
-    override def next(feedback: SessionFeedback): IO[Int] = for {
+    override def next(feedback: SessionFeedback[A]): IO[A] = for {
       _ <- IO(printFeedback(feedback))
       value <- fallback.next(feedback)
     } yield value
 
-    private def printFeedback(f: SessionFeedback): Unit = {
+    private def printFeedback(f: SessionFeedback[A]): Unit = {
       val totalCovered = f.cumulativeCoverage.values.iterator.map(_.covered).sum
       val totalBranch = f.cumulativeCoverage.values.iterator.map(_.total).sum
-      val lastInput = f.history.lastOption.fold("—")(r => r.input.toString)
+      val lastInput = f.history.lastOption.fold("—")(_.input.toString)
       println(
         f"[guided] iter=${f.iteration}%-3d coverage=$totalCovered/$totalBranch  lines=${f.cumulativeCoverage.size}%-2d  lastInput=$lastInput"
       )

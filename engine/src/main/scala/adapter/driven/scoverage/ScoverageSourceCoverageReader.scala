@@ -1,7 +1,7 @@
 package adapter.driven.scoverage
 
 import cats.effect.IO
-import domain.Pos
+import domain.{BranchCounter, MethodSourceCoverage, Pos}
 import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
 import scoverage.serialize.Serializer
@@ -13,11 +13,11 @@ import scala.jdk.CollectionConverters._
 /** Reads scoverage's per-statement coverage data for a single SUT.
   *
   *   - The *compile-time* statement map is at
-  *     `<sutRoot>/target/scala-2.13/scoverage-data/scoverage.coverage`.
+  *     `<sutRoot>/target/scala-2.13/scoverage-data/scoverage.coverage`. Each `Statement` carries a
+  *     `branch: Boolean` flag set by the scoverage compiler plugin — this is the source-level
+  *     authority on "what's a branch in this method?", covering `if`/`else`, `match`, case guards,
+  *     `try`/`catch`, `for` filters, `&&`/`||` short-circuits, etc., uniformly.
   *   - The *runtime* invocation log is in `scoverage.measurements.*` files in the same directory.
-  *
-  * For a given (source file, method), we return the start offsets of every scoverage statement
-  * invoked at runtime *and* declared in that method.
   *
   * `cleanStaleData` is idempotent within one JVM: scoverage's runtime caches a `FileWriter` per
   * data-dir on first invocation, so we may only delete the stale measurement files once, before any
@@ -46,20 +46,30 @@ object ScoverageSourceCoverageReader {
       }
     }
 
-    override def coveredPositions(sourceFile: Path, methodName: String): IO[Set[Pos]] = IO {
-      if (!coverageFile.exists()) Set.empty[Pos]
+    override def methodCoverage(
+        sourceFile: Path,
+        methodName: String
+    ): IO[MethodSourceCoverage] = IO {
+      if (!coverageFile.exists()) MethodSourceCoverage.Empty
       else {
         val coverage = Serializer.deserialize(coverageFile, sutRoot.toFile)
         val measurementFiles = IOUtils.findMeasurementFiles(dataDir.toFile)
         coverage.apply(IOUtils.invoked(measurementFiles.toSeq))
 
         val sourceFileName = sourceFile.getFileName.toString
-        coverage.statements.iterator
-          .filter(s =>
-            s.count > 0 && s.source.endsWith(sourceFileName) && s.location.method == methodName
-          )
-          .map(s => Pos(s.start))
-          .toSet
+        val statements = coverage.statements.iterator
+          .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
+          .toVector
+
+        val branchStmts = statements.filter(_.branch)
+        MethodSourceCoverage(
+          branchCounter = BranchCounter(
+            covered = branchStmts.count(_.count > 0),
+            total = branchStmts.size
+          ),
+          branchPositions = branchStmts.iterator.map(s => Pos(s.start)).toSet,
+          coveredPositions = statements.iterator.filter(_.count > 0).map(s => Pos(s.start)).toSet
+        )
       }
     }
   }

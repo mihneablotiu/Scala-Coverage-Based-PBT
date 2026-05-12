@@ -32,7 +32,7 @@ lazy val runner = (project in file("runner"))
       val agentJar = (engine / update).value.allFiles.find { f =>
         f.getName.startsWith("org.jacoco.agent-") && f.getName.endsWith("-runtime.jar")
       }.getOrElse(sys.error("JaCoCo agent runtime jar not found in engine's update report"))
-      Seq(s"-javaagent:${agentJar.getAbsolutePath}=includes=branchhard.*")
+      Seq(s"-javaagent:${agentJar.getAbsolutePath}=includes=benchmark.*")
     }
   )
 
