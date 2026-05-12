@@ -1,0 +1,18 @@
+target/
+project/target/
+project/project/
+.bsp/
+.bloop/
+.metals/
+.idea/
+.vscode/
+.DS_Store
+*.iml
+out/
+
+# JaCoCo agent dump produced when the runner JVM exits
+jacoco.exec
+
+# Python bytecode from diagram generators
+__pycache__/
+*.pyc
