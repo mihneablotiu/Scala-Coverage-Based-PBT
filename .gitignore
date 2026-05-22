@@ -9,6 +9,7 @@ project/project/
 .DS_Store
 *.iml
 out/
+engine/reports/
 
 # JaCoCo agent dump produced when the runner JVM exits
 jacoco.exec

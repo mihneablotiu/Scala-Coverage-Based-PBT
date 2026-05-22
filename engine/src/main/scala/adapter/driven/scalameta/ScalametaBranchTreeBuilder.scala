@@ -96,7 +96,7 @@ object ScalametaBranchTreeBuilder {
       case n                          => List(n)
     }
     flattened.filter(hasBranch) match {
-      case Nil          => BranchTree.Leaf(posOf(tree), textOf(tree))
+      case Nil           => BranchTree.Leaf(posOf(tree), textOf(tree))
       case single :: Nil => single
       case many          => BranchTree.Sequence(posOf(tree), many)
     }
@@ -145,8 +145,11 @@ object ScalametaBranchTreeBuilder {
       arms = t.cases.toList.map(armOf)
     )
 
-  private def armOf(c: Case): BranchTree.Arm =
-    BranchTree.Arm(s"case ${textOf(c.pat)}", visit(c.body))
+  private def armOf(c: Case): BranchTree.Arm = {
+    val patText = textOf(c.pat)
+    val label = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
+    BranchTree.Arm(label, visit(c.body))
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────
 

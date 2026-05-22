@@ -6,15 +6,15 @@ package domain
   *
   * Three node kinds, deliberately few:
   *
-  *   - [[Branch]]   — a decision point. The construct kind ("if", "match", "while", "try",
-  *                    "partial", …) is a free-form `String` discriminator, not a separate ADT
-  *                    variant. The renderer draws every branch the same way: a box with `kind` +
-  *                    `label` and one outgoing edge per arm. **Adding a new construct is a single
-  *                    new case in the AST walker — this file and the renderer don't change.**
+  *   - [[Branch]] — a decision point. The construct kind ("if", "match", "while", "try", "partial",
+  *     …) is a free-form `String` discriminator, not a separate ADT variant. The renderer draws
+  *     every branch the same way: a box with `kind` + `label` and one outgoing edge per arm.
+  *     **Adding a new construct is a single new case in the AST walker — this file and the renderer
+  *     don't change.**
   *   - [[Sequence]] — multiple sibling subtrees rooted at the same parent. Used when a `Term.Block`
-  *                    contains several branchy statements, or a non-branchy parent (e.g. a
-  *                    `Term.Apply`) hides multiple branchy descendants.
-  *   - [[Leaf]]     — a terminal expression. Coloured by whether its position was invoked.
+  *     contains several branchy statements, or a non-branchy parent (e.g. a `Term.Apply`) hides
+  *     multiple branchy descendants.
+  *   - [[Leaf]] — a terminal expression. Coloured by whether its position was invoked.
   *
   * Coverage is overlaid by the writer at render time using a `Set[Pos]` of invoked positions; see
   * [[isReached]].
@@ -46,13 +46,13 @@ object BranchTree {
   final case class Arm(label: String, body: BranchTree)
 
   /** A sub-expression with its own source position — the condition of an `if`, the scrutinee of a
-    * `match`, etc. Tracked so the writer can place the source text inside the branch's node and
-    * (in principle) colour the condition itself.
+    * `match`, etc. Tracked so the writer can place the source text inside the branch's node and (in
+    * principle) colour the condition itself.
     */
   final case class Expr(pos: Pos, text: String)
 
-  /** Total source-level branch arms in this tree. Sums `arms.size` over every [[Branch]] reached
-    * by walking the tree. Used by the drift check against scoverage's branch count.
+  /** Total source-level branch arms in this tree. Sums `arms.size` over every [[Branch]] reached by
+    * walking the tree. Used by the drift check against scoverage's branch count.
     */
   def armCount(tree: BranchTree): Int = tree match {
     case Branch(_, _, _, arms) => arms.size + arms.iterator.map(a => armCount(a.body)).sum

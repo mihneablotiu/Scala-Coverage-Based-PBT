@@ -7,17 +7,20 @@ import port.driven.CoverageReportWriter
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 
-/** Writes a [[SessionReport]] to disk in five complementary formats:
+/** Writes a [[SessionReport]] to disk under `outDir`, organised as:
   *
-  *   - `coverage.dot` — Graphviz tree (Report → Package → Class → Method → branch tree from
-  *     Scalameta). AST nodes coloured green/red from scoverage's per-position data; grey when no
-  *     scoverage info is available.
-  *   - `growth.svg` — line chart of branches covered vs input index.
-  *   - `summary.txt` — human summary suitable for pasting into a thesis.
-  *   - `inputs.csv` — per-input log (importable into pandas / Excel).
-  *   - `coverage.json` — full structured data.
+  * {{{
+  *   <outDir>/
+  *   ├── summary.txt        — human-readable entry point
+  *   ├── visuals/
+  *   │   ├── coverage.dot   — Graphviz branch tree, scoverage-coloured
+  *   │   └── growth.svg     — chart of branches covered vs. input index
+  *   └── data/
+  *       ├── coverage.json  — full structured dump
+  *       └── inputs.csv     — per-input log (pandas / Excel friendly)
+  * }}}
   *
-  * `coverage.svg` is *not* written here; produce it via `dot -Tsvg coverage.dot > coverage.svg`.
+  * Render `coverage.dot` to SVG with `dot -Tsvg visuals/coverage.dot > visuals/coverage.svg`.
   *
   * Generic in the input type `A`; inputs are serialised via `_.toString`, truncated to a fixed
   * width so a single huge value can't blow out the CSV.
@@ -31,14 +34,19 @@ object FileSystemCoverageReportWriter {
 
   private final class Live extends CoverageReportWriter {
 
-    override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = for {
-      _ <- IO(Files.createDirectories(outDir))
-      _ <- writeFile(outDir, "coverage.dot", renderDot(report))
-      _ <- writeFile(outDir, "growth.svg", renderGrowthSvg(report))
-      _ <- writeFile(outDir, "summary.txt", renderSummary(report))
-      _ <- writeFile(outDir, "inputs.csv", renderInputsCsv(report))
-      _ <- writeFile(outDir, "coverage.json", renderJson(report))
-    } yield ()
+    override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = {
+      val visuals = outDir.resolve("visuals")
+      val data = outDir.resolve("data")
+      for {
+        _ <- IO(Files.createDirectories(visuals))
+        _ <- IO(Files.createDirectories(data))
+        _ <- writeFile(outDir, "summary.txt", renderSummary(report))
+        _ <- writeFile(visuals, "coverage.dot", renderDot(report))
+        _ <- writeFile(visuals, "growth.svg", renderGrowthSvg(report))
+        _ <- writeFile(data, "coverage.json", renderJson(report))
+        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report))
+      } yield ()
+    }
 
     private def writeFile(dir: Path, name: String, content: String): IO[Unit] =
       IO(Files.writeString(dir.resolve(name), content, StandardCharsets.UTF_8)).void
@@ -106,10 +114,10 @@ object FileSystemCoverageReportWriter {
 
   /** Walks a [[BranchTree]] and emits one DOT node per source node. Three cases, one each:
     *
-    *   - [[BranchTree.Branch]] — a box with the construct kind ("if" / "match" / "partial" / …)
-    *     and one outgoing edge per arm. Colour is derived from descendant leaves via
-    *     [[BranchTree.isReached]] — uniform across all kinds, so partial functions colour the
-    *     same way as ifs.
+    *   - [[BranchTree.Branch]] — a box with the construct kind ("if" / "match" / "partial" / …) and
+    *     one outgoing edge per arm. Colour is derived from descendant leaves via
+    *     [[BranchTree.isReached]] — uniform across all kinds, so partial functions colour the same
+    *     way as ifs.
     *   - [[BranchTree.Sequence]] — siblings under one parent edge; emit each child with the same
     *     parent and edge label.
     *   - [[BranchTree.Leaf]] — terminal expression, coloured by position lookup.

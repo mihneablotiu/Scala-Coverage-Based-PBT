@@ -42,7 +42,7 @@ object ScoverageSourceCoverageReader {
           .iterator()
           .asScala
           .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
-          .foreach(Files.deleteIfExists(_))
+          .foreach(Files.deleteIfExists)
       }
     }
 

@@ -8,7 +8,11 @@ lazy val sut = (project in file("sut"))
   )
 
 lazy val engine = (project in file("engine"))
+  .dependsOn(sut)
   .settings(
+    fork                          := true,
+    Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
+    Compile / run / mainClass     := Some("app.Main"),
     libraryDependencies ++= Seq(
       "org.typelevel"  %% "cats-effect"                 % "3.7.0",
       "org.scalacheck" %% "scalacheck"                  % "1.19.0",
@@ -20,22 +24,17 @@ lazy val engine = (project in file("engine"))
       "org.jacoco"     %  "org.jacoco.core"             % "0.8.14",
       "org.jacoco"     %  "org.jacoco.agent"            % "0.8.14",
       "org.jacoco"     %  "org.jacoco.agent"            % "0.8.14" classifier "runtime"
-    )
-  )
-
-lazy val runner = (project in file("runner"))
-  .dependsOn(engine, sut)
-  .settings(
-    fork                          := true,
-    Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
+    ),
     javaOptions ++= {
-      val agentJar = (engine / update).value.allFiles.find { f =>
+      val agentJar = update.value.allFiles.find { f =>
         f.getName.startsWith("org.jacoco.agent-") && f.getName.endsWith("-runtime.jar")
-      }.getOrElse(sys.error("JaCoCo agent runtime jar not found in engine's update report"))
-      Seq(s"-javaagent:${agentJar.getAbsolutePath}=includes=benchmark.*")
+      }.getOrElse(sys.error("JaCoCo agent runtime jar not found"))
+      Seq(
+        s"-javaagent:${agentJar.getAbsolutePath}=includes=benchmark.*,output=none"
+      )
     }
   )
 
 lazy val root = (project in file("."))
-  .aggregate(sut, engine, runner)
+  .aggregate(sut, engine)
   .settings(name := "scala-coverage-based-pbt")

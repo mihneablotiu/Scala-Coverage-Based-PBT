@@ -1,46 +1,34 @@
 package adapter.driving.fileSystem
 
-import adapter.driven.fileSystem.FileSystemCoverageReportWriter
-import adapter.driven.gen.{GuidedInputGenerator, RandomInputGenerator}
-import adapter.driven.jacoco.JacocoBranchCoverageTracker
-import adapter.driven.scalameta.ScalametaBranchTreeBuilder
-import adapter.driven.scoverage.ScoverageSourceCoverageReader
+import cats.effect.IO
 import domain.Strategy
-import org.scalacheck.Gen
-import port.driven.{GeneratorFactory, InputGenerator}
+import org.scalacheck.Arbitrary
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
 
-import java.nio.file.{Path, Paths}
+import java.nio.file.Path
 
-/** Driving adapter: composes the JaCoCo + Scalameta + scoverage + file-system stack into a
-  * [[TestRunner]] and resolves a [[Strategy]] into a concrete [[InputGenerator]] for any input type
-  * `A`. Concrete decisions about *where* SUT bytecode and scoverage data live stay here, out of the
-  * use case.
+/** Driving adapter binding the [[TestRunner]] port to a filesystem context. **The SUT source file
+  * and the output base directory are construction-time constants of this adapter**, not call-time
+  * arguments of the port — that's how the port stays free of filesystem details.
+  *
+  * Instantiate one per source file (or per `(source, outBase)` pair). Each `run` call resolves the
+  * per-method report directory as `outBase / methodName`.
+  *
+  * Knows **nothing about the driven side** — JaCoCo, scoverage, Scalameta, the writer. Its only
+  * collaborator is the injected [[TestRunnerHandler]], which it forwards to with the filesystem
+  * context plugged in. Composition (constructing the handler with its driven adapters) happens in
+  * the app's composition root.
   */
-object FileSystemTestRunner {
+final class FileSystemTestRunner(
+    handler: TestRunnerHandler,
+    sourceFile: Path,
+    outBase: Path
+) extends TestRunner {
 
-  /** sbt convention: compiled `.class` files of the SUT subproject. */
-  private val ClassesDir: Path = Paths.get("sut", "target", "scala-2.13", "classes")
-
-  /** Root of the SUT subproject — scoverage's data dir is relative to this. */
-  private val SutRoot: Path = Paths.get("sut")
-
-  private val InitialSeed: Long = 0L
-
-  def apply(): TestRunner =
-    TestRunnerHandler(
-      tracker = JacocoBranchCoverageTracker(ClassesDir),
-      treeBuilder = ScalametaBranchTreeBuilder(),
-      sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
-      writer = FileSystemCoverageReportWriter(),
-      generators = factory
-    )
-
-  private val factory: GeneratorFactory = new GeneratorFactory {
-    override def make[A](strategy: Strategy, gen: Gen[A]): InputGenerator[A] = strategy match {
-      case Strategy.Random => RandomInputGenerator(gen, InitialSeed)
-      case Strategy.Guided => GuidedInputGenerator(RandomInputGenerator(gen, InitialSeed))
-    }
-  }
+  override def runTests[A: Arbitrary](
+      methodName: String,
+      strategy: Strategy
+  )(property: A => Boolean): IO[Unit] =
+    handler.handle(sourceFile, outBase.resolve(methodName), methodName, strategy)(property)
 }
