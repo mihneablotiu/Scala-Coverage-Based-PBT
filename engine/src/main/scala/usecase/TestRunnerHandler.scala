@@ -54,6 +54,7 @@ final class TestRunnerHandler(
     _ <- tracker.reset
     acc <- runScalaCheck(sourceFile, methodName, strategy, property)
     tree <- treeBuilder.build(sourceFile, methodName)
+    _ <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
     src <- sourceCoverage.methodCoverage(sourceFile, methodName)
     _ <- warnOnDrift(methodName, tree, src)
     _ <- writer.write(buildReport(sourceFile, methodName, acc, tree, src), outDir)
@@ -111,13 +112,13 @@ final class TestRunnerHandler(
   ): IO[Unit] = {
     val astArms = tree.fold(0)(t => BranchTree.armCount(t.body))
     val scov = src.branchCounter.total
-    if (astArms == 0 || scov == 0 || astArms == scov) IO.unit
-    else
+    IO.unlessA(astArms == 0 || scov == 0 || astArms == scov) {
       IO.println(
         s"[warn] $methodName: source-level branch drift — scoverage reports $scov branch arm(s), " +
           s"BranchTree models $astArms. Picture is missing decision points; add the construct " +
           s"to ScalametaBranchTreeBuilder.visit."
       )
+    }
   }
 
   private def buildReport[A](
