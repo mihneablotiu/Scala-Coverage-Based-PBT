@@ -16,9 +16,10 @@ trait SourceCoverageReader {
   /** Source-level coverage snapshot for the given method at the moment of call. */
   def methodCoverage(sourceFile: Path, methodName: String): IO[MethodSourceCoverage]
 
-  /** Removes stale runtime data so the first session sees a clean slate. Must be called **once,
-    * before any SUT code runs in this JVM** — scoverage's `Invoker` caches `FileWriter`s after the
-    * first SUT execution, so deleting files later would orphan them.
+  /** Wipes stale runtime data so the first session sees a clean slate. The use case calls this at
+    * the start of every `handle()`; adapters must make it idempotent so repeated calls are no-ops
+    * (only the first one actually deletes anything). Required because scoverage's `Invoker` caches
+    * `FileWriter`s after the first SUT execution, so deleting later would orphan them.
     */
   def cleanStaleData: IO[Unit]
 }

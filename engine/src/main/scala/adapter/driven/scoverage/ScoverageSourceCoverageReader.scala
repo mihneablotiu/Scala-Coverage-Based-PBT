@@ -1,7 +1,7 @@
 package adapter.driven.scoverage
 
 import cats.effect.IO
-import domain.{BranchCounter, MethodSourceCoverage, Pos}
+import domain.{MethodSourceCoverage, Pos}
 import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
 import scoverage.serialize.Serializer
@@ -30,10 +30,11 @@ object ScoverageSourceCoverageReader {
     private lazy val staticCoverage: Option[scoverage.domain.Coverage] =
       Option.when(coverageFile.exists())(Serializer.deserialize(coverageFile, sutRoot.toFile))
 
-    /** One-shot side effect: wipes stale measurement files on first invocation. `lazy val` gives us
-      * thread-safe atomic single-execution — `cleanStaleData` can be called from every `handle()`
-      * and only the first call actually wipes. Required because scoverage's `Invoker` caches
-      * `FileWriter`s after the first SUT execution, so deleting later orphans them.
+    /** One-shot wipe of stale measurement files. The `lazy val` gives thread-safe atomic
+      * single-execution semantics, so the use case can call `cleanStaleData` at the start of every
+      * session and only the first call actually deletes anything. Required because scoverage's
+      * `Invoker` caches `FileWriter`s after the first SUT execution — deleting later would orphan
+      * them.
       */
     private lazy val cleanedOnce: Unit =
       if (Files.isDirectory(dataDir))
@@ -56,14 +57,11 @@ object ScoverageSourceCoverageReader {
         val methodStmts = coverage.statements.iterator
           .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
           .toVector
-        val branchStmts = methodStmts.filter(_.branch)
         MethodSourceCoverage(
-          branchCounter = BranchCounter(
-            covered = branchStmts.count(s => firedIds(s.id)),
-            total = branchStmts.size
-          ),
           coveredPositions =
-            methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet
+            methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet,
+          branchLines =
+            methodStmts.iterator.filter(_.branch).map(s => Pos(s.start) -> s.line).toMap
         )
       }
     }

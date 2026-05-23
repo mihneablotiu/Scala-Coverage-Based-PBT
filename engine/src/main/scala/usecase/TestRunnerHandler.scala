@@ -3,47 +3,50 @@ package usecase
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import domain.{
-  BranchSummary,
+  BranchOutcome,
   BranchTree,
-  CoverageMeasurement,
   InputRecord,
   MethodSourceCoverage,
   MethodTree,
+  Pos,
   SessionFeedback,
   SessionReport,
   Strategy
 }
 import org.scalacheck.{Arbitrary, Gen, Prop, Test}
-import port.driven.{
-  BranchCoverageTracker,
-  BranchTreeBuilder,
-  CoverageReportWriter,
-  SourceCoverageReader
-}
+import port.driven.{BranchTreeBuilder, CoverageReportWriter, SourceCoverageReader}
 
 import java.nio.file.Path
 import scala.util.Try
 
 /** Use case for one fuzz session.
   *
-  * The fuzz loop is `Prop.forAll` + `Test.check` — the same shape you'd write for any normal
-  * ScalaCheck test. ScalaCheck owns the loop, size schedule, seed thread, and input generation.
+  * Pipeline:
   *
-  * Two pragmatic compromises are necessary to make this shape work alongside `IO`-typed driven
-  * adapters (since `Prop.forAll`'s body is sync):
+  *   1. Run the fuzz loop (`Prop.forAll` + `Test.check`), folding an immutable
+  *      [[SessionFeedback]] across iterations.
+  *   2. Parse the source for the method's branch tree (for the picture).
+  *   3. Read the final scoverage snapshot (for the headline numbers and per-branch lookup).
+  *   4. Warn if scoverage's branch count and the tree's arm count disagree (dev signal that the
+  *      Scalameta walker is missing a construct).
+  *   5. Hand a [[SessionReport]] to the writer.
   *
-  *   1. The body calls `tracker.measure(...).unsafeRunSync()` etc. The bridge is contained to this
-  *      one method, runs on the blocking thread pool via `IO.blocking`, and the IO ports themselves
-  *      do quick sync file I/O underneath.
-  *   2. A method-local `var feedback` for the running accumulator. Single-threaded inside
-  *      `Test.check`'s sequential body; can't escape this method.
+  * All coverage is source-level — every per-iteration delta comes from diffing scoverage's
+  * cumulative state against the running `coveredBranches` set in [[SessionFeedback]].
   *
-  * Future-proofing for guided: the `Gen[A]` for [[Strategy.Guided]] is a `Gen.delay` that closes
-  * over the running `feedback`, so a real coverage-driven generator plugs in without touching the
+  * Two pragmatic compromises bridge ScalaCheck's sync `Prop.forAll` body to the `IO`-typed ports:
+  *
+  *   1. `runScalaCheck` runs inside `IO.blocking` and calls `methodCoverage(...).unsafeRunSync()`
+  *      inside the prop body. The bridge is contained to that one method, and the IO underneath
+  *      does small sync file reads.
+  *   2. A method-local `var feedback` accumulator. Single-threaded inside `Test.check`'s
+  *      sequential body; never escapes this method.
+  *
+  * Future-proofing for guided: the `Gen[A]` for [[Strategy.Guided]] is a `Gen.delay` closure that
+  * sees the running `feedback`, so a real coverage-driven generator plugs in without touching the
   * loop or any port signature.
   */
 final class TestRunnerHandler(
-    tracker: BranchCoverageTracker,
     treeBuilder: BranchTreeBuilder,
     sourceCoverage: SourceCoverageReader,
     writer: CoverageReportWriter,
@@ -57,7 +60,6 @@ final class TestRunnerHandler(
       strategy: Strategy
   )(property: A => Boolean): IO[Unit] = for {
     _        <- sourceCoverage.cleanStaleData
-    _        <- tracker.reset
     feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
     tree     <- treeBuilder.build(sourceFile, methodName)
     src      <- sourceCoverage.methodCoverage(sourceFile, methodName)
@@ -71,7 +73,6 @@ final class TestRunnerHandler(
       strategy: Strategy,
       property: A => Boolean
   )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = IO.blocking {
-    val sourceFileName = sourceFile.getFileName.toString
     var feedback = SessionFeedback.empty[A]
 
     val gen: Gen[A] = strategy match {
@@ -86,36 +87,30 @@ final class TestRunnerHandler(
 
     val prop = Prop.forAll(gen) { input =>
       Try(property(input))
-      val m = tracker.measure(sourceFileName, methodName).unsafeRunSync()
       val src = sourceCoverage.methodCoverage(sourceFile, methodName).unsafeRunSync()
-      feedback = step(feedback, input, m, src.branchCounter.covered)
+      feedback = step(feedback, input, src)
       true
     }
     Test.check(params, prop)
     feedback
   }
 
-  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) → new
-    * state.
+  /** Pure transition: previous state + (input, fresh scoverage snapshot) → new state. The diff
+    * between scoverage's cumulative `coveredBranchPositions` and the running set gives this
+    * input's newly-covered set.
     */
   private def step[A](
       state: SessionFeedback[A],
       input: A,
-      m: CoverageMeasurement,
-      srcCovered: Int
+      src: MethodSourceCoverage
   ): SessionFeedback[A] = {
-    val exercised = m.perInput.iterator.collect { case (l, c) if c.covered > 0 => l }.toSet
+    val nowCovered = src.coveredBranchPositions
+    val newlyCovered = nowCovered -- state.coveredBranches
     val idx = state.iteration
     SessionFeedback(
-      history = state.history :+ InputRecord(idx, input, exercised),
-      cumulativeCoverage = m.cumulative,
-      hitCountsByLine = exercised.foldLeft(state.hitCountsByLine)((acc, l) =>
-        acc.updated(l, acc.getOrElse(l, 0) + 1)
-      ),
-      firstHitsByLine = exercised.foldLeft(state.firstHitsByLine)((acc, l) =>
-        acc.updatedWith(l)(_.orElse(Some(idx)))
-      ),
-      growthCurve = state.growthCurve :+ srcCovered
+      history = state.history :+ InputRecord(idx, input, newlyCovered),
+      coveredBranches = nowCovered,
+      growthCurve = state.growthCurve :+ src.branchCounter.covered
     )
   }
 
@@ -145,20 +140,21 @@ final class TestRunnerHandler(
     val finalCovered = feedback.growthCurve.lastOption.getOrElse(0)
     val saturation =
       Option.when(feedback.growthCurve.nonEmpty)(feedback.growthCurve.indexOf(finalCovered))
-    val branches = feedback.cumulativeCoverage.map { case (line, c) =>
-      line -> BranchSummary(
-        c,
-        feedback.hitCountsByLine.getOrElse(line, 0),
-        feedback.firstHitsByLine.get(line)
-      )
-    }
+    // Each branch's `Pos` appears in at most one record's `newlyCoveredBranches` (the iteration
+    // that first covered it), so this flat-map → toMap is unambiguous.
+    val firstHits: Map[Pos, Int] = feedback.history.iterator
+      .flatMap(rec => rec.newlyCoveredBranches.iterator.map(_ -> rec.index))
+      .toMap
+    val branches = src.branchLines.toVector
+      .sortBy { case (p, _) => p.offset }
+      .map { case (pos, line) => BranchOutcome(pos, line, firstHits.get(pos)) }
     SessionReport(
       methodName = methodName,
       sourceFile = sourceFile,
       totalInputs = feedback.iteration,
       methodTree = tree,
       sourceBranchCounter = src.branchCounter,
-      branchesByLine = branches,
+      branches = branches,
       inputLog = feedback.history,
       growthCurve = feedback.growthCurve,
       saturationInputIndex = saturation,

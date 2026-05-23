@@ -1,7 +1,7 @@
 package adapter.driven.fileSystem
 
 import cats.effect.IO
-import domain.{BranchCounter, BranchSummary, BranchTree, MethodTree, Pos, SessionReport}
+import domain.{BranchCounter, BranchTree, InputRecord, MethodTree, Pos, SessionReport}
 import port.driven.CoverageReportWriter
 
 import java.nio.charset.StandardCharsets
@@ -311,48 +311,49 @@ object FileSystemCoverageReportWriter {
     val total = r.sourceBranchCounter
     val pct = if (total.total == 0) "—" else f"${total.covered * 100.0 / total.total}%.1f%%"
     val sat = r.saturationInputIndex.fold("never reached")(i => s"input #$i")
-    val rows = r.branchesByLine.toSeq
-      .sortBy(_._1)
-      .map { case (line, s) =>
-        val first = s.firstHitInputIndex.fold("never")(i => s"#$i")
-        f"  - line $line: ${s.counter.covered}%d/${s.counter.total}%d covered, ${s.hitCount}%d hits, first reach $first"
+    val rows = r.branches
+      .map { b =>
+        val first = b.firstHitInput.fold("never covered")(i => s"first reached at input #$i")
+        f"  - line ${b.line}%d (pos ${b.pos.offset}%d): $first"
       }
       .mkString("\n")
     s"""${r.methodName} — coverage session summary
        |${"=" * 60}
        |Source file:      ${r.sourceFile.getFileName}
        |Total inputs:     ${r.totalInputs}
-       |Source branches:  ${total.covered}/${total.total} ($pct)   [from scoverage]
+       |Source branches:  ${total.covered}/${total.total} ($pct)
        |Saturated at:     $sat
        |
-       |JVM branches per line (from JaCoCo — drives per-input feedback, not the headline):
+       |Per source branch:
        |$rows
        |""".stripMargin
   }
 
   private def renderInputsCsv[A](r: SessionReport[A]): String = {
+    val newLines = newBranchLines(r)
     val rows = r.inputLog.iterator
       .map { rec =>
         val inputCell = csvEscape(displayInput(rec.input))
-        s"${rec.index},$inputCell,${rec.linesExercised.size},${rec.linesExercised.toSeq.sorted.mkString(";")}"
+        val lines = newLines(rec)
+        s"${rec.index},$inputCell,${lines.size},${lines.mkString(";")}"
       }
       .mkString("\n")
-    s"index,input,exercisedLineCount,exercisedLines\n$rows\n"
+    s"index,input,newBranchCount,newBranchLines\n$rows\n"
   }
 
   private def renderJson[A](r: SessionReport[A]): String = {
-    val branches = r.branchesByLine.toSeq
-      .sortBy(_._1)
-      .map { case (line, s) =>
-        val first = s.firstHitInputIndex.fold("null")(_.toString)
-        s"""    {"line": $line, "covered": ${s.counter.covered}, "total": ${s.counter.total}, "hitCount": ${s.hitCount}, "firstHitInputIndex": $first}"""
+    val newLines = newBranchLines(r)
+    val branches = r.branches
+      .map { b =>
+        val first = b.firstHitInput.fold("null")(_.toString)
+        s"""    {"pos": ${b.pos.offset}, "line": ${b.line}, "firstHitInput": $first}"""
       }
       .mkString(",\n")
     val inputs = r.inputLog.iterator
       .map { rec =>
         val inputStr = jsonEscape(displayInput(rec.input))
-        s"""    {"index": ${rec.index}, "input": "$inputStr", "lines": [${rec.linesExercised.toSeq.sorted
-            .mkString(", ")}]}"""
+        val lines = newLines(rec)
+        s"""    {"index": ${rec.index}, "input": "$inputStr", "newBranchLines": [${lines.mkString(", ")}]}"""
       }
       .mkString(",\n")
     val sat = r.saturationInputIndex.fold("null")(_.toString)
@@ -360,6 +361,7 @@ object FileSystemCoverageReportWriter {
        |  "method": "${r.methodName}",
        |  "sourceFile": "${r.sourceFile.getFileName}",
        |  "totalInputs": ${r.totalInputs},
+       |  "sourceBranches": {"covered": ${r.sourceBranchCounter.covered}, "total": ${r.sourceBranchCounter.total}},
        |  "saturationInputIndex": $sat,
        |  "branches": [
        |$branches
@@ -370,6 +372,14 @@ object FileSystemCoverageReportWriter {
        |  ]
        |}
        |""".stripMargin
+  }
+
+  /** Build a `record → source lines newly covered` lookup, once per report. Closes over the
+    * branch-line map so the lookup is O(k) per record (`k = newly covered branches`).
+    */
+  private def newBranchLines[A](r: SessionReport[A]): InputRecord[A] => Seq[Int] = {
+    val byPos = r.branches.iterator.map(b => b.pos -> b.line).toMap
+    rec => rec.newlyCoveredBranches.iterator.flatMap(byPos.get).toSeq.sorted
   }
 
   // ────────────────────────────────────────────────────────────────

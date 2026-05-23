@@ -1,7 +1,6 @@
 package app
 
 import adapter.driven.fileSystem.FileSystemCoverageReportWriter
-import adapter.driven.jacoco.JacocoBranchCoverageTracker
 import adapter.driven.scalameta.ScalametaBranchTreeBuilder
 import adapter.driven.scoverage.ScoverageSourceCoverageReader
 import adapter.driving.fileSystem.FileSystemTestRunner
@@ -21,7 +20,6 @@ import java.nio.file.{Path, Paths}
   */
 object Main extends IOApp.Simple {
 
-  private val ClassesDir: Path = Paths.get("sut/target/scala-2.13/classes")
   private val SutRoot: Path = Paths.get("sut")
   private val ReportsBase: Path = Paths.get("engine/reports")
   private val BoolSrc: Path = Paths.get("sut/src/main/scala/benchmark/bool/BoolBench.scala")
@@ -34,7 +32,6 @@ object Main extends IOApp.Simple {
   private val sourceCoverage = ScoverageSourceCoverageReader(SutRoot)
 
   private val handler: TestRunnerHandler = new TestRunnerHandler(
-    tracker = JacocoBranchCoverageTracker(ClassesDir),
     treeBuilder = ScalametaBranchTreeBuilder(),
     sourceCoverage = sourceCoverage,
     writer = FileSystemCoverageReportWriter(),

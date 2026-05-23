@@ -2,20 +2,17 @@ package domain
 
 import java.nio.file.Path
 
-/** Everything one fuzz session produces, in a form ready for any writer.
+/** Everything one fuzz session produces, in a form ready for any writer. Source-level throughout —
+  * every covered/total figure, per-branch entry, and per-input row is expressed in scoverage's
+  * source-statement units, never in bytecode-branch counts.
   *
-  * Two coverage views live side-by-side:
-  *
-  *   - `sourceBranchCounter` — the authoritative source-level branch count from scoverage. Drives
-  *     every "covered/total" headline (DOT picture, summary, growth chart y-axis).
-  *   - `branchesByLine` — per-line JVM-branch counts from JaCoCo. Kept for the per-input feedback
-  *     signal the guided strategy consumes and for the line-level breakdown in `summary.txt`. *Not*
-  *     the headline number: JaCoCo counts bytecode branches, which inflate for `==` on reference
-  *     types, `&&`/`||` short-circuits, and other constructs that desugar into multiple jumps.
-  *
-  * `coveredPositions` is populated post-session from a [[port.driven.SourceCoverageReader]]
-  * (scoverage-backed by default) and is used by the writer to colour AST nodes accurately. It is
-  * *not* used by the strategy or by any of the JaCoCo-derived counters above it.
+  *   - `sourceBranchCounter` — authoritative source-level branch count from scoverage. Headline
+  *     figure for every artifact.
+  *   - `branches` — one row per source-level branch in the method, with its line and the iteration
+  *     that first covered it (or `None` if it was never covered).
+  *   - `coveredPositions` — every source position invoked, branch or not. Used by the writer to
+  *     colour AST leaves accurately in the picture.
+  *   - `inputLog` — per-input newly-covered branches; drives `inputs.csv`.
   *
   * Parameterised over the input type `A`.
   */
@@ -25,7 +22,7 @@ final case class SessionReport[A](
     totalInputs: Int,
     methodTree: Option[MethodTree],
     sourceBranchCounter: BranchCounter,
-    branchesByLine: Map[Int, BranchSummary],
+    branches: Vector[BranchOutcome],
     inputLog: Vector[InputRecord[A]],
     growthCurve: Vector[Int],
     saturationInputIndex: Option[Int],

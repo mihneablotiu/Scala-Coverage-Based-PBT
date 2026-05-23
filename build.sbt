@@ -20,19 +20,8 @@ lazy val engine = (project in file("engine"))
       "org.scoverage"  %% "scalac-scoverage-serializer" % "2.5.2",
       "org.scoverage"  %% "scalac-scoverage-reporter"   % "2.5.2",
       "org.scoverage"  %% "scalac-scoverage-domain"     % "2.5.2",
-      "org.scoverage"  %% "scalac-scoverage-runtime"    % "2.5.2",
-      "org.jacoco"     %  "org.jacoco.core"             % "0.8.14",
-      "org.jacoco"     %  "org.jacoco.agent"            % "0.8.14",
-      "org.jacoco"     %  "org.jacoco.agent"            % "0.8.14" classifier "runtime"
-    ),
-    javaOptions ++= {
-      val agentJar = update.value.allFiles.find { f =>
-        f.getName.startsWith("org.jacoco.agent-") && f.getName.endsWith("-runtime.jar")
-      }.getOrElse(sys.error("JaCoCo agent runtime jar not found"))
-      Seq(
-        s"-javaagent:${agentJar.getAbsolutePath}=includes=benchmark.*,output=none"
-      )
-    }
+      "org.scoverage"  %% "scalac-scoverage-runtime"    % "2.5.2"
+    )
   )
 
 lazy val root = (project in file("."))

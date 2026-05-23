@@ -15,7 +15,7 @@ import java.nio.file.Path
   * Instantiate one per source file (or per `(source, outBase)` pair). Each `run` call resolves the
   * per-method report directory as `outBase / methodName`.
   *
-  * Knows **nothing about the driven side** — JaCoCo, scoverage, Scalameta, the writer. Its only
+  * Knows **nothing about the driven side** — scoverage, Scalameta, the writer. Its only
   * collaborator is the injected [[TestRunnerHandler]], which it forwards to with the filesystem
   * context plugged in. Composition (constructing the handler with its driven adapters) happens in
   * the app's composition root.
