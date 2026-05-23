@@ -165,6 +165,66 @@ object IntBench {
     else "scalene"
   }
 
+  // ── Deeply nested: leaves compound 3-4 filters in sequence ───────────────
+
+  /** Single-`Int` deeply nested classification. Four levels of filtering — sign, magnitude,
+    * number-theoretic property, then divisibility — produce eight outcomes, of which five
+    * require both a large magnitude *and* a rare structural property to hold. Random typically
+    * reaches `non-positive`, `small-positive`, `large-other`, and the `large-thousand-*` arms
+    * sometimes; the perfect-square and palindromic sub-trees are effectively unreachable.
+    */
+  def deepIntClassify(n: Int): String =
+    if (n > 0) {
+      if (n > 1000) {
+        if (isSquare(n.toLong)) {
+          if (n % 7 == 0) "large-square-mult-7"
+          else "large-square-other"
+        } else if (isDigitPalindrome(n.toLong)) {
+          if (n % 2 == 0) "large-palindrome-even"
+          else "large-palindrome-odd"
+        } else if (n % 1000 == 0) {
+          if (n % 7 == 0) "large-thousand-mult-7"
+          else "large-thousand-other"
+        } else "large-other"
+      } else "small-positive"
+    } else "non-positive"
+
+  /** Two-`Int` deeply nested classification. Three sign-then-magnitude levels narrow the
+    * `(a, b)` pair, then the deepest level asks for a structural relationship between two
+    * independent draws (equality, divisibility). The equality arms can hit when both draws
+    * land on the same boundary special (e.g. both `Int.MaxValue`), but the divisibility
+    * arms inside the "both large" gate are vanishing.
+    */
+  def deepIntPair(a: Int, b: Int): String =
+    if (a > 0 && b > 0) {
+      if (a > 1000 && b > 1000) {
+        if (a == b) "equal-large-positive"
+        else if (a % b == 0) "a-multiple-of-b"
+        else if (b % a == 0) "b-multiple-of-a"
+        else "coprime-like"
+      } else "small-positive-pair"
+    } else if (a < 0 && b < 0) {
+      if (a < -1000 && b < -1000) {
+        if (a == b) "equal-large-negative"
+        else "distinct-large-negative"
+      } else "small-negative-pair"
+    } else "mixed-signs-or-zero"
+
+  /** Three-`Int` deeply nested classification. Sign filter → additive dependency → triangle
+    * inequality → triangle subtype. The whole "valid triangle" sub-tree is unreachable under
+    * uniform random `Int` (same reasoning as [[triangleType]]), so the inner equilateral /
+    * isoceles / scalene leaves are *all* unreached — plus the `additively-dependent` arm.
+    */
+  def deepIntTriple(a: Int, b: Int, c: Int): String =
+    if (a > 0 && b > 0 && c > 0) {
+      if (a + b == c || a + c == b || b + c == a) "additively-dependent"
+      else if (a + b > c && a + c > b && b + c > a) {
+        if (a == b && b == c) "valid-equilateral"
+        else if (a == b || b == c || a == c) "valid-isoceles"
+        else "valid-scalene"
+      } else "fails-triangle-inequality"
+    } else "has-non-positive"
+
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   private def isSquare(n: Long): Boolean = {
@@ -175,5 +235,10 @@ object IntBench {
   private def isCube(n: Long): Boolean = {
     val r = math.cbrt(n.toDouble).round
     r * r * r == n
+  }
+
+  private def isDigitPalindrome(n: Long): Boolean = {
+    val s = n.abs.toString
+    s == s.reverse
   }
 }

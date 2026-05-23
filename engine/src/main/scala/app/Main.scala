@@ -87,6 +87,13 @@ object Main extends IOApp.Simple {
     _ <- bench[(Int, Int, Int)](ints, "triangleType", Strategy.Random)(
       (IntBench.triangleType _).tupled
     )
+    _ <- bench(ints, "deepIntClassify", Strategy.Random)(IntBench.deepIntClassify)
+    _ <- bench[(Int, Int)](ints, "deepIntPair", Strategy.Random)(
+      (IntBench.deepIntPair _).tupled
+    )
+    _ <- bench[(Int, Int, Int)](ints, "deepIntTriple", Strategy.Random)(
+      (IntBench.deepIntTriple _).tupled
+    )
 
     // ListBench — structural-rarity gradient across one or two lists.
     _ <- bench(lists, "isEmpty", Strategy.Random)(ListBench.isEmpty)
@@ -111,6 +118,10 @@ object Main extends IOApp.Simple {
     )
     _ <- bench[(List[Int], Int)](lists, "findTarget", Strategy.Random)(
       (ListBench.findTarget _).tupled
+    )
+    _ <- bench(lists, "deepListShape", Strategy.Random)(ListBench.deepListShape)
+    _ <- bench[(List[Int], List[Int])](lists, "deepListRelation", Strategy.Random)(
+      (ListBench.deepListRelation _).tupled
     )
   } yield ()
 }

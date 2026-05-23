@@ -147,4 +147,42 @@ object ListBench {
     else if (xs.head == target) "head-match"
     else if (xs.tail.contains(target)) "interior-match"
     else "not-found"
+
+  // ── Deeply nested: leaves compound 3-4 structural filters in sequence ────
+
+  /** Single-list deeply nested classification. Filters by size (≥ 5 only), then by uniform
+    * sign across all elements, then by sortedness, then by distinctness. Under random
+    * `List[Int]`, getting a size-5+ list whose every element is positive is already ~3% per
+    * input; getting that *and* it being sorted is another 1/n! on top. The leaves inside the
+    * "all-positive sorted" sub-tree, and the entire "all-negative sorted" sub-tree, are
+    * effectively unreachable.
+    */
+  def deepListShape(xs: List[Int]): String =
+    if (xs.size < 5) "tiny"
+    else if (xs.forall(_ > 0)) {
+      if (xs == xs.sorted) {
+        if (xs.distinct.size == xs.size) "strictly-ascending-positive"
+        else "ascending-with-duplicates-positive"
+      } else if (xs == xs.sorted.reverse) "descending-positive"
+      else "unsorted-positive"
+    } else if (xs.forall(_ < 0)) {
+      if (xs == xs.sorted) "ascending-negative"
+      else "unsorted-negative"
+    } else "mixed-signs"
+
+  /** Two-list deeply nested relationship. Filters by emptiness, then by size equality, then
+    * by full-content match, reverse match, multiset match, and finally a head-match check.
+    * The inner content arms (`identical`, `reverse-of`, `same-multiset`) all require
+    * position-by-position value coincidences between independent draws — unreachable under
+    * full `Int` for non-trivial sizes.
+    */
+  def deepListRelation(xs: List[Int], ys: List[Int]): String =
+    if (xs.isEmpty || ys.isEmpty) "trivial"
+    else if (xs.size == ys.size) {
+      if (xs == ys) "identical"
+      else if (xs == ys.reverse) "reverse-of"
+      else if (xs.sorted == ys.sorted) "same-multiset"
+      else if (xs.head == ys.head) "head-match"
+      else "different-content"
+    } else "different-sizes"
 }
