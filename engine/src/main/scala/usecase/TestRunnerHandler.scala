@@ -32,9 +32,9 @@ import scala.util.Try
   * Two pragmatic compromises are necessary to make this shape work alongside `IO`-typed driven
   * adapters (since `Prop.forAll`'s body is sync):
   *
-  *   1. The body calls `tracker.measure(...).unsafeRunSync()` etc. The bridge is contained to
-  *      this one method, runs on the blocking thread pool via `IO.blocking`, and the IO ports
-  *      themselves do quick sync file I/O underneath.
+  *   1. The body calls `tracker.measure(...).unsafeRunSync()` etc. The bridge is contained to this
+  *      one method, runs on the blocking thread pool via `IO.blocking`, and the IO ports themselves
+  *      do quick sync file I/O underneath.
   *   2. A method-local `var feedback` for the running accumulator. Single-threaded inside
   *      `Test.check`'s sequential body; can't escape this method.
   *
@@ -95,8 +95,8 @@ final class TestRunnerHandler(
     feedback
   }
 
-  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) →
-    * new state.
+  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) → new
+    * state.
     */
   private def step[A](
       state: SessionFeedback[A],

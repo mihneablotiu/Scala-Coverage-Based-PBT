@@ -39,9 +39,9 @@ object FileSystemCoverageReportWriter {
       val data = outDir.resolve("data")
       for {
         _ <- IO {
-          Files.createDirectories(visuals)
-          Files.createDirectories(data)
-        }
+               Files.createDirectories(visuals)
+               Files.createDirectories(data)
+             }
         _ <- writeFile(outDir, "summary.txt", renderSummary(report))
         _ <- writeFile(visuals, "coverage.dot", renderDot(report))
         _ <- writeFile(visuals, "growth.svg", renderGrowthSvg(report))
