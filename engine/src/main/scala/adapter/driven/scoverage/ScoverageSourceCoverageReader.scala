@@ -30,14 +30,17 @@ object ScoverageSourceCoverageReader {
     private lazy val staticCoverage: Option[scoverage.domain.Coverage] =
       Option.when(coverageFile.exists())(Serializer.deserialize(coverageFile, sutRoot.toFile))
 
-    /** One-shot side effect: wipes stale measurement files on first invocation. Scala's
-      * `lazy val` gives us thread-safe atomic single-execution — `cleanStaleData` can be called
-      * from every `handle()` and only the first call actually wipes. Required because scoverage's
-      * `Invoker` caches `FileWriter`s after the first SUT execution, so deleting later orphans them.
+    /** One-shot side effect: wipes stale measurement files on first invocation. Scala's `lazy val`
+      * gives us thread-safe atomic single-execution — `cleanStaleData` can be called from every
+      * `handle()` and only the first call actually wipes. Required because scoverage's `Invoker`
+      * caches `FileWriter`s after the first SUT execution, so deleting later orphans them.
       */
     private lazy val cleanedOnce: Unit =
       if (Files.isDirectory(dataDir))
-        Files.list(dataDir).iterator().asScala
+        Files
+          .list(dataDir)
+          .iterator()
+          .asScala
           .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
           .foreach(Files.deleteIfExists)
 
