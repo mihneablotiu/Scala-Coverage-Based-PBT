@@ -1,6 +1,7 @@
 package usecase
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import domain.{
   BranchSummary,
   BranchTree,
@@ -12,7 +13,7 @@ import domain.{
   SessionReport,
   Strategy
 }
-import org.scalacheck.{rng, Arbitrary, Gen, Test}
+import org.scalacheck.{Arbitrary, Gen, Prop, Test}
 import port.driven.{
   BranchCoverageTracker,
   BranchTreeBuilder,
@@ -25,15 +26,21 @@ import scala.util.Try
 
 /** Use case for one fuzz session.
   *
-  * An IO loop that mirrors `Test.check`'s recipe — same linear size schedule, same `seed.next`
-  * thread, same `Gen.doPureApply(prms, seed)` per iteration — but composed in IO so the driven
-  * adapters (which legitimately return IO since they read/write files) plug in naturally. State
-  * across iterations is the immutable [[SessionFeedback]] folded through the pure [[step]]
-  * function via tail-recursive `iterate`.
+  * The fuzz loop is `Prop.forAll` + `Test.check` — the same shape you'd write for any normal
+  * ScalaCheck test. ScalaCheck owns the loop, size schedule, seed thread, and input generation.
   *
-  * Future-proofing for guided: replace the `Gen[A]` selected for `Strategy.Guided` with a real
-  * coverage-driven generator. Today it's a `Gen.delay` over the running `state`, so the data
-  * channel is already wired.
+  * Two pragmatic compromises are necessary to make this shape work alongside `IO`-typed driven
+  * adapters (since `Prop.forAll`'s body is sync):
+  *
+  *   1. The body calls `tracker.measure(...).unsafeRunSync()` etc. The bridge is contained to
+  *      this one method, runs on the blocking thread pool via `IO.blocking`, and the IO ports
+  *      themselves do quick sync file I/O underneath.
+  *   2. A method-local `var feedback` for the running accumulator. Single-threaded inside
+  *      `Test.check`'s sequential body; can't escape this method.
+  *
+  * Future-proofing for guided: the `Gen[A]` for [[Strategy.Guided]] is a `Gen.delay` that closes
+  * over the running `feedback`, so a real coverage-driven generator plugs in without touching the
+  * loop or any port signature.
   */
 final class TestRunnerHandler(
     tracker: BranchCoverageTracker,
@@ -58,34 +65,34 @@ final class TestRunnerHandler(
     _        <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
   } yield ()
 
-  /** IO loop replicating `Test.check`'s recipe. */
   private def runScalaCheck[A](
       sourceFile: Path,
       methodName: String,
       strategy: Strategy,
       property: A => Boolean
-  )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = {
+  )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = IO.blocking {
     val sourceFileName = sourceFile.getFileName.toString
-    val total = params.minSuccessfulTests
-    val span = params.maxSize - params.minSize
+    var feedback = SessionFeedback.empty[A]
 
-    def iterate(state: SessionFeedback[A], seed: rng.Seed): IO[SessionFeedback[A]] =
-      if (state.iteration >= total) IO.pure(state)
-      else {
-        val size = Math.round(params.minSize.toDouble + span.toDouble * state.iteration / total).toInt
-        val gp = Gen.Parameters.default.withSize(size)
-        val input = arb.arbitrary.doPureApply(gp, seed).retrieve.get
-        for {
-          _   <- IO.whenA(strategy == Strategy.Guided)(IO.println(s"[guided] iter=${state.iteration}"))
-          _   <- IO(Try(property(input)))
-          m   <- tracker.measure(sourceFileName, methodName)
-          src <- sourceCoverage.methodCoverage(sourceFile, methodName)
-          out <- iterate(step(state, input, m, src.branchCounter.covered), seed.next)
-        } yield out
-      }
+    val gen: Gen[A] = strategy match {
+      case Strategy.Random => arb.arbitrary
+      case Strategy.Guided =>
+        // Re-evaluated on every iteration — gives a real guided strategy access to `feedback`.
+        Gen.delay {
+          println(s"[guided] iter=${feedback.iteration}")
+          arb.arbitrary
+        }
+    }
 
-    IO(params.initialSeed.getOrElse(rng.Seed.random()))
-      .flatMap(iterate(SessionFeedback.empty[A], _))
+    val prop = Prop.forAll(gen) { input =>
+      Try(property(input))
+      val m = tracker.measure(sourceFileName, methodName).unsafeRunSync()
+      val src = sourceCoverage.methodCoverage(sourceFile, methodName).unsafeRunSync()
+      feedback = step(feedback, input, m, src.branchCounter.covered)
+      true
+    }
+    Test.check(params, prop)
+    feedback
   }
 
   /** Pure transition: previous state + (input, measurement, source-level cumulative covered) →
