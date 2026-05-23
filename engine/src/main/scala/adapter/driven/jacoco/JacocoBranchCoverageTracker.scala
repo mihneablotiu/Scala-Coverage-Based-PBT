@@ -74,8 +74,7 @@ object JacocoBranchCoverageTracker {
           (m.getFirstLine to m.getLastLine).iterator.flatMap { ln =>
             val line = m.getLine(ln)
             val total = line.getBranchCounter.getTotalCount
-            if (total > 0) Some(ln -> BranchCounter(line.getBranchCounter.getCoveredCount, total))
-            else None
+            Option.when(total > 0)(ln -> BranchCounter(line.getBranchCounter.getCoveredCount, total))
           }
         }
         .toMap

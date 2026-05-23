@@ -11,18 +11,12 @@ import scala.meta._
 /** Builds a [[BranchTree]] for one named method by parsing the source file with Scalameta and
   * deep-walking the method body.
   *
-  * The walker has two modes:
+  * `visit` matches known branch constructs (`Term.If`, `Term.Match`, `Term.While`,
+  * `Term.PartialFunction`) and emits a `BranchTree.Branch`. For anything else, `descend` recurses
+  * into every structural child via Scalameta's `tree.children` — that's what catches branches
+  * buried in lambda arguments, `val` RHSes, non-tail block statements, etc.
   *
-  *   - `visit` matches known branch constructs (`Term.If`, `Term.Match`, `Term.While`,
-  *     `Term.PartialFunction`, …) and produces a `BranchTree.Branch`.
-  *   - For anything else, `descend` recurses into every structural child via Scalameta's
-  *     `tree.children`. That's what makes the walker find branches buried inside lambda arguments,
-  *     `val` RHSes, non-tail block statements, infix calls, and so on — the cases the old shallow
-  *     walker missed.
-  *
-  * **Adding a new branchy construct** (e.g. `Term.Try`, `Term.ForYield` with filters) is a single
-  * new case in `visit` plus one new `branchOf*` method. No domain or renderer changes — both treat
-  * every branch uniformly via [[BranchTree.Branch]]'s `kind` string.
+  * **Adding a new branchy construct** = one new case in `visit`. No domain or renderer changes.
   */
 object ScalametaBranchTreeBuilder {
 
@@ -48,8 +42,6 @@ object ScalametaBranchTreeBuilder {
     }
   }
 
-  // ── Package / class context ────────────────────────────────────────
-
   private def ancestors(t: Tree): Iterator[Tree] =
     Iterator.iterate(t.parent)(_.flatMap(_.parent)).takeWhile(_.isDefined).map(_.get)
 
@@ -65,37 +57,38 @@ object ScalametaBranchTreeBuilder {
       }
       .getOrElse("")
 
-  // ── The walker ─────────────────────────────────────────────────────
-
-  /** Produce a [[BranchTree]] for `tree`. Returns a `Branch` if `tree` is a recognised branch
-    * construct, a `Sequence` if it contains multiple branchy descendants, or a `Leaf` if it has
-    * none. Delegates the "look deep, not shallow" work to [[descend]].
+  /** Returns a `Branch` for a recognised construct, a `Sequence` if `tree` contains multiple
+    * branchy descendants, or a `Leaf` if it contains none.
     */
   private def visit(tree: Tree): BranchTree = tree match {
-    case t: Term.If              => ifBranch(t)
-    case t: Term.Match           => matchBranch(t)
-    case t: Term.While           => whileBranch(t)
-    case t: Term.PartialFunction => partialBranch(t)
-    case other                   => descend(other)
+    case t: Term.If =>
+      BranchTree.Branch(posOf(t), "if", exprOf(t.cond),
+        List(BranchTree.Arm("then", visit(t.thenp)), BranchTree.Arm("else", visit(t.elsep))))
+    case t: Term.Match =>
+      BranchTree.Branch(posOf(t), "match", exprOf(t.expr),
+        t.casesBlock.cases.toList.map(armOf))
+    case t: Term.While =>
+      BranchTree.Branch(posOf(t), "while", exprOf(t.expr),
+        List(BranchTree.Arm("body", visit(t.body))))
+    case t: Term.PartialFunction =>
+      BranchTree.Branch(posOf(t), "partial", BranchTree.Expr(posOf(t), "⟨arg⟩"),
+        t.cases.toList.map(armOf))
+    case other => descend(other)
   }
 
-  /** Recurse into every structural child of `tree`, collect what visits produce, drop the trees
-    * that have no branches inside them, and return:
-    *
-    *   - the single child if there's exactly one branchy result,
-    *   - a [[BranchTree.Sequence]] if there are several,
-    *   - a [[BranchTree.Leaf]] for `tree` itself if there are none.
-    *
-    * Nested `Sequence`s are flattened so a Sequence never directly contains another Sequence — that
-    * keeps the renderer's job trivial.
+  /** Recurse into every structural child of `tree`, collect branchy results, flatten nested
+    * sequences, and return the single child / a Sequence / a Leaf as appropriate.
     */
   private def descend(tree: Tree): BranchTree = {
-    val visited = tree.children.iterator.map(visit).toList
-    val flattened = visited.flatMap {
-      case BranchTree.Sequence(_, cs) => cs
-      case n                          => List(n)
-    }
-    flattened.filter(hasBranch) match {
+    val branchy = tree.children.iterator
+      .map(visit)
+      .flatMap {
+        case BranchTree.Sequence(_, cs) => cs
+        case n                          => List(n)
+      }
+      .filter(hasBranch)
+      .toList
+    branchy match {
       case Nil           => BranchTree.Leaf(posOf(tree), textOf(tree))
       case single :: Nil => single
       case many          => BranchTree.Sequence(posOf(tree), many)
@@ -108,54 +101,13 @@ object ScalametaBranchTreeBuilder {
     case _: BranchTree.Leaf         => false
   }
 
-  // ── Branch constructors (one per recognised construct) ─────────────
-
-  private def ifBranch(t: Term.If): BranchTree.Branch =
-    BranchTree.Branch(
-      pos = posOf(t),
-      kind = "if",
-      label = exprOf(t.cond),
-      arms = List(
-        BranchTree.Arm("then", visit(t.thenp)),
-        BranchTree.Arm("else", visit(t.elsep))
-      )
-    )
-
-  private def matchBranch(t: Term.Match): BranchTree.Branch =
-    BranchTree.Branch(
-      pos = posOf(t),
-      kind = "match",
-      label = exprOf(t.expr),
-      arms = t.casesBlock.cases.toList.map(armOf)
-    )
-
-  private def whileBranch(t: Term.While): BranchTree.Branch =
-    BranchTree.Branch(
-      pos = posOf(t),
-      kind = "while",
-      label = exprOf(t.expr),
-      arms = List(BranchTree.Arm("body", visit(t.body)))
-    )
-
-  private def partialBranch(t: Term.PartialFunction): BranchTree.Branch =
-    BranchTree.Branch(
-      pos = posOf(t),
-      kind = "partial",
-      label = BranchTree.Expr(posOf(t), "⟨arg⟩"),
-      arms = t.cases.toList.map(armOf)
-    )
-
   private def armOf(c: Case): BranchTree.Arm = {
     val patText = textOf(c.pat)
     val label = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
     BranchTree.Arm(label, visit(c.body))
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────
-
   private def exprOf(t: Tree): BranchTree.Expr = BranchTree.Expr(posOf(t), textOf(t))
-
   private def posOf(t: Tree): Pos = Pos(t.pos.start)
-
   private def textOf(t: Tree): String = t.toString.replaceAll("\\s+", " ").trim.take(80)
 }
