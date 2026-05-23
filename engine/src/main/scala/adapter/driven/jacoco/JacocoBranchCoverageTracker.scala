@@ -1,6 +1,5 @@
 package adapter.driven.jacoco
 
-import cats.effect.IO
 import domain.{BranchCounter, CoverageMeasurement}
 import org.jacoco.agent.rt.RT
 import org.jacoco.core.analysis.{Analyzer, CoverageBuilder}
@@ -19,10 +18,6 @@ import scala.jdk.CollectionConverters._
   *     line.
   *   - Probe → source projection is done by JaCoCo's `Analyzer`, which walks the original bytecode
   *     and yields a per-method, per-line `BranchCounter` (covered/total).
-  *
-  * Per-direction attribution (`then` vs `else`) is *not* in JaCoCo's stable public API — that's why
-  * downstream consumers see only line- level counters, and per-AST-node colouring is done via
-  * scoverage instead.
   */
 object JacocoBranchCoverageTracker {
 
@@ -33,12 +28,12 @@ object JacocoBranchCoverageTracker {
     private lazy val agent = RT.getAgent
     private val cumulativeStore = new ExecutionDataStore
 
-    override def reset: IO[Unit] = IO {
+    override def reset(): Unit = {
       agent.reset()
       cumulativeStore.reset()
     }
 
-    override def measure(sourceFileName: String, methodName: String): IO[CoverageMeasurement] = IO {
+    override def measure(sourceFileName: String, methodName: String): CoverageMeasurement = {
       val perInputStore = readDelta()
       perInputStore.getContents.forEach(d => cumulativeStore.put(d))
       CoverageMeasurement(
@@ -74,9 +69,7 @@ object JacocoBranchCoverageTracker {
           (m.getFirstLine to m.getLastLine).iterator.flatMap { ln =>
             val line = m.getLine(ln)
             val total = line.getBranchCounter.getTotalCount
-            Option.when(total > 0)(
-              ln -> BranchCounter(line.getBranchCounter.getCoveredCount, total)
-            )
+            Option.when(total > 0)(ln -> BranchCounter(line.getBranchCounter.getCoveredCount, total))
           }
         }
         .toMap

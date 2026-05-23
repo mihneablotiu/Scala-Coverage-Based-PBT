@@ -1,6 +1,5 @@
 package port.driven
 
-import cats.effect.IO
 import domain.CoverageMeasurement
 
 /** Runtime tracking of branch-level coverage for one method.
@@ -10,6 +9,6 @@ import domain.CoverageMeasurement
   *     state (since the last `reset`).
   */
 trait BranchCoverageTracker {
-  def reset: IO[Unit]
-  def measure(sourceFile: String, methodName: String): IO[CoverageMeasurement]
+  def reset(): Unit
+  def measure(sourceFile: String, methodName: String): CoverageMeasurement
 }

@@ -1,6 +1,5 @@
 package adapter.driven.scoverage
 
-import cats.effect.IO
 import domain.{BranchCounter, MethodSourceCoverage, Pos}
 import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
@@ -25,31 +24,24 @@ object ScoverageSourceCoverageReader {
     private val dataDir = sutRoot.resolve(DataSubdir)
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
 
-    /** Deserialised once on first read — the static statement map doesn't change during a JVM run.
-      */
+    /** Deserialised once on first read — the static statement map doesn't change during a JVM run. */
     private lazy val staticCoverage: Option[scoverage.domain.Coverage] =
       Option.when(coverageFile.exists())(Serializer.deserialize(coverageFile, sutRoot.toFile))
 
-    /** One-shot side effect: wipes stale measurement files on first invocation. Scala's `lazy val`
-      * gives us thread-safe atomic single-execution — `cleanStaleData` can be called from every
+    /** One-shot side effect: wipes stale measurement files on first invocation. `lazy val` gives
+      * us thread-safe atomic single-execution — `cleanStaleData` can be called from every
       * `handle()` and only the first call actually wipes. Required because scoverage's `Invoker`
       * caches `FileWriter`s after the first SUT execution, so deleting later orphans them.
       */
     private lazy val cleanedOnce: Unit =
       if (Files.isDirectory(dataDir))
-        Files
-          .list(dataDir)
-          .iterator()
-          .asScala
+        Files.list(dataDir).iterator().asScala
           .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
           .foreach(Files.deleteIfExists)
 
-    override def cleanStaleData: IO[Unit] = IO(cleanedOnce)
+    override def cleanStaleData(): Unit = cleanedOnce
 
-    override def methodCoverage(
-        sourceFile: Path,
-        methodName: String
-    ): IO[MethodSourceCoverage] = IO {
+    override def methodCoverage(sourceFile: Path, methodName: String): MethodSourceCoverage =
       staticCoverage.fold(MethodSourceCoverage.Empty) { coverage =>
         val sourceFileName = sourceFile.getFileName.toString
         val firedIds = readFiredIds
@@ -66,7 +58,6 @@ object ScoverageSourceCoverageReader {
             methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet
         )
       }
-    }
 
     private def readFiredIds: Set[Int] =
       IOUtils.invoked(IOUtils.findMeasurementFiles(dataDir.toFile).toSeq).iterator.map(_._1).toSet

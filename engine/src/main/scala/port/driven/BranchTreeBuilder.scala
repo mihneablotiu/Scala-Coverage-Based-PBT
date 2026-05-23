@@ -1,6 +1,5 @@
 package port.driven
 
-import cats.effect.IO
 import domain.MethodTree
 
 import java.nio.file.Path
@@ -9,5 +8,5 @@ import java.nio.file.Path
   * enclosing package, class and branchy body — or `None` if the method is not found.
   */
 trait BranchTreeBuilder {
-  def build(sourceFile: Path, methodName: String): IO[Option[MethodTree]]
+  def build(sourceFile: Path, methodName: String): Option[MethodTree]
 }

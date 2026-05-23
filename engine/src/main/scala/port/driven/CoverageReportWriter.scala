@@ -1,6 +1,5 @@
 package port.driven
 
-import cats.effect.IO
 import domain.SessionReport
 
 import java.nio.file.Path
@@ -9,5 +8,5 @@ import java.nio.file.Path
   * Adapters decide the formats. Parameterised over the input type `A` of the report.
   */
 trait CoverageReportWriter {
-  def write[A](report: SessionReport[A], outDir: Path): IO[Unit]
+  def write[A](report: SessionReport[A], outDir: Path): Unit
 }
