@@ -1,130 +1,76 @@
 package benchmark.int
 
-/** `Int`-input benchmark — increasing difficulty across the file.
+import benchmark.util.NumberProps
+
+/** `Int`-input benchmark — value-rarity gradient, ordered shallow → deep.
   *
-  * Under uniform `Arbitrary[Int]` ScalaCheck mixes in **boundary specials**: `0`, `1`, `-1`,
-  * `Int.MinValue`, `Int.MaxValue`. Predicates aligned with these specials are easy for random;
-  * everything else falls on a gradient from moderate (modular arithmetic) to effectively
-  * unreachable (number-theoretic properties of *large* values, value coincidences between
-  * independent draws, three-side structural constraints).
+  * Under uniform `Arbitrary[Int]` ScalaCheck mixes in boundary specials (`0`, `1`, `-1`,
+  * `Int.MinValue`, `Int.MaxValue`); predicates aligned with them are easy. Predicates that depend
+  * on **structural properties of the number** (primality, Fibonacci membership, perfect powers,
+  * palindromic digits) hold for only a sparse subset of `Int`, none of which coincide with the
+  * specials beyond `MaxValue` (which is a Mersenne prime). Compounded across nesting levels,
+  * these properties produce deep arms that random PBT cannot reach.
   *
-  * Sections, top to bottom: trivial → easy → moderate → multi-integer → number properties →
-  * specific-literal showcases → compound multi-integer.
+  * Sections, top to bottom: trivial → easy → medium (single number properties) → medium-hard
+  * (multi-integer relationships and primality bands) → hard (compound multi-condition trees).
   */
 object IntBench {
 
-  // ── Trivial: random saturates ────────────────────────────────────────────
+  // ── Trivial baseline: random saturates ───────────────────────────────────
 
   def isPositive(n: Int): String =
     if (n > 0) "positive" else "non-positive"
 
-  def parity(n: Int): String =
-    if (n % 2 == 0) "even" else "odd"
-
   // ── Easy: structural arms reachable via boundary specials ────────────────
 
-  /** Three outcomes; `zero` hits because `0` is a boundary special. */
+  /** Three outcomes; `zero` arm hits because `0` is a boundary special. */
   def sign(n: Int): String =
     if (n > 0) "positive"
     else if (n < 0) "negative"
     else "zero"
 
-  /** Two arms; `huge` requires the magnitude to exceed 10⁹ (~53% under uniform `Int`). */
-  def magnitudeClass(n: Int): String =
-    if (n.toLong.abs > 1_000_000_000L) "huge" else "modest"
+  // ── Modular arithmetic: rare arms without specific-value literals ────────
 
-  // ── Moderate: modular arithmetic ─────────────────────────────────────────
-
-  /** Three arms. `divisible` (~1%) and `lucky` (~0.5%) are borderline in 100 inputs. */
+  /** Three arms; `divisible` (~1%) and `lucky` (~0.5%) are borderline in 100 inputs. */
   def mod97(n: Int): String =
     if (n % 97 == 0) "divisible"
     else if (n % 97 == 13) "lucky"
     else "ordinary"
 
-  /** Two arms; `round` needs a non-zero multiple of 1000 (~0.1%). */
+  /** Two arms; `round` requires `n` a non-zero multiple of 1000 (~0.1%). */
   def divisibleByThousand(n: Int): String =
     if (n != 0 && n % 1000 == 0) "round" else "other"
 
-  // ── Multi-integer: value coincidences between independent draws ──────────
+  // ── Single number properties: 3-4 arms each, ~1 unreachable ──────────────
 
-  /** Three arms; `equal` is reachable via boundary specials but covers a ~2⁻³² slice otherwise.
+  /** Trivial range captures small boundary specials; for multi-digit `n`, palindromic-digit
+    * values are very sparse.
     */
-  def compare(a: Int, b: Int): String =
-    if (a == b) "equal"
-    else if (a > b) "first-bigger"
-    else "second-bigger"
+  def isPalindromeNumber(n: Int): String = {
+    val s = n.toLong.abs.toString
+    if (s.length <= 2) "trivial"
+    else if (NumberProps.isDigitPalindrome(n.toLong)) "palindrome"
+    else "non-palindrome"
+  }
 
-  /** Three arms; `zero-sum` needs `a == -b` — hit only when both draws are boundary specials
-    * that cancel (e.g. `(1, -1)`).
-    */
-  def sumSign(a: Int, b: Int): String =
-    if (a + b > 0) "positive-sum"
-    else if (a + b < 0) "negative-sum"
-    else "zero-sum"
-
-  /** Five arms over two coordinates; the four open quadrants are ~25% each, `axis` is the
-    * `x == 0 || y == 0` slice (boundary-reachable, but represents a sub-2⁻³¹ fraction).
-    */
-  def quadrant(x: Int, y: Int): String =
-    if (x > 0 && y > 0) "I"
-    else if (x < 0 && y > 0) "II"
-    else if (x < 0 && y < 0) "III"
-    else if (x > 0 && y < 0) "IV"
-    else "axis"
-
-  // ── Hard: number-theoretic properties (structural, no literal matches) ───
-
-  /** Four arms. The trivial range (`n < 4`) captures boundary specials `0`, `1`. For
-    * `n >= 4`, perfect squares are sparse (~√n out of n) — `perfect-square` is unreachable.
-    */
+  /** Trivial range captures `0`, `1`; for `n >= 4`, perfect squares are ~√n / n — sparse. */
   def isPerfectSquare(n: Int): String =
     if (n < 0) "negative"
     else if (n < 4) "trivial"
-    else if (isSquare(n.toLong)) "perfect-square"
+    else if (NumberProps.isSquare(n.toLong)) "perfect-square"
     else "not-square"
 
-  /** Four arms. The trivial range (`|n| < 8`) captures boundary specials. For larger `|n|`,
-    * perfect cubes are extremely sparse — `perfect-cube` is unreachable.
-    */
-  def isPerfectCube(n: Int): String =
-    if (n > -8 && n < 8) "trivial"
-    else if (isCube(n.toLong)) "perfect-cube"
-    else "not-cube"
-
-  /** Four arms. The trivial range (`n <= 1`) captures `0`, `1`, `-1`. For `n > 1`, powers of
-    * two are 30 values in `[2, 2³¹)` — `power-of-two` is unreachable under uniform sampling.
+  /** Trivial range captures `0`, `1`, `-1`; for `n > 1`, only 30 powers of two in `Int` range —
+    * effectively unreachable.
     */
   def isPowerOfTwo(n: Int): String =
     if (n <= 1) "trivial"
     else if ((n & (n - 1)) == 0) "power-of-two"
     else "not-power"
 
-  /** Three arms. The trivial range (`|n|` ≤ 2 digits) captures small boundary specials. For
-    * multi-digit `n`, palindromic-digit values are very sparse — `palindrome` is unreachable.
-    */
-  def isPalindromeNumber(n: Int): String = {
-    val s = n.toLong.abs.toString
-    if (s.length <= 2) "trivial"
-    else if (s == s.reverse) "palindrome"
-    else "non-palindrome"
-  }
+  // ── Match with literals (acknowledged showcase) ──────────────────────────
 
-  // ── Multi-integer relationships (structural) ─────────────────────────────
-
-  /** Four arms. The trivial range (`|a|` ≤ 1 or `|b|` ≤ 1) captures boundary-special pairs.
-    * For larger magnitudes, `b | a` and `a | b` are vanishing under independent uniform draws.
-    */
-  def divisibilityRelation(a: Int, b: Int): String =
-    if (a.toLong.abs <= 1L || b.toLong.abs <= 1L) "trivial"
-    else if (a % b == 0) "b-divides-a"
-    else if (b % a == 0) "a-divides-b"
-    else "no-divides"
-
-  // ── Specific-literal showcases (deliberately few) ────────────────────────
-
-  /** Five-arm `match` — two literal arms (`0` reachable via boundary, `42` not), three numeric
-    * guards.
-    */
+  /** Five-arm `match`. `0` reachable via boundary special, `42` not. */
   def classify(n: Int): String = n match {
     case 0                  => "zero"
     case 42                 => "answer"
@@ -133,9 +79,7 @@ object IntBench {
     case _                  => "small-positive"
   }
 
-  /** Five arms; literal arms `42` and `1729` are unreachable, `-1` is boundary-reachable. The
-    * cleanest "random can't hit specific values" showcase.
-    */
+  /** Five arms; `42`, `1729` are non-boundary literals (unreached), `-1` boundary (reached). */
   def magicNumbers(n: Int): String =
     if (n == 42) "answer"
     else if (n == 1729) "ramanujan"
@@ -143,57 +87,81 @@ object IntBench {
     else if (n < 0) "negative"
     else "ordinary"
 
-  // ── Compound multi-integer (structural) ──────────────────────────────────
+  // ── Medium-hard: number-theoretic property + magnitude band ──────────────
 
-  /** Triangle classification from three side lengths. Five arms:
-    *
-    *   - `invalid` — at least one non-positive side (~87.5% under uniform `Int`).
-    *   - `degenerate` — fails the triangle inequality; the common case among all-positive
-    *     triples because random 32-bit values almost always have one side dwarfing the other
-    *     two or sums that overflow.
-    *   - `equilateral` (a == b == c, P ≈ 2⁻⁶⁴) — effectively unreachable.
-    *   - `isoceles` (two equal, P ≈ 3·2⁻³²) — effectively unreachable.
-    *   - `scalene` — what's left; vanishing under uniform `Int`.
-    *
-    * The strongest "random can't construct" thesis case in this file.
+  /** Three magnitude bands, primality inside each. Small primes (2..97) and medium primes
+    * (100..9999) sit in input ranges with no boundary specials, so they're unreachable; only the
+    * large band's `large-prime` arm is hit (via random large primes; `MaxValue` itself is the
+    * Mersenne prime M31).
     */
-  def triangleType(a: Int, b: Int, c: Int): String = {
+  def isPrime(n: Int): String =
+    if (n < 2) "below-two"
+    else if (n < 100) {
+      if (NumberProps.isPrime(n)) "small-prime"
+      else "small-composite"
+    } else if (n < 10000) {
+      if (NumberProps.isPrime(n)) "medium-prime"
+      else "medium-composite"
+    } else {
+      if (NumberProps.isPrime(n)) "large-prime"
+      else "large-composite"
+    }
+
+  /** Trivial captures `0`, `1`; for `n >= 2`, Fibonacci members are 30 values in `Int` range and
+    * none coincide with boundary specials, so the `*-fib` arms are unreachable.
+    */
+  def isFibonacci(n: Int): String =
+    if (n < 0) "negative"
+    else if (n < 2) "trivial"
+    else if (NumberProps.isFibonacci(n)) {
+      if (n < 100) "small-fib"
+      else if (n < 10000) "medium-fib"
+      else "large-fib"
+    } else "non-fib"
+
+  // ── Multi-integer relationships ──────────────────────────────────────────
+
+  /** Four arms. The trivial range (`|a|` ≤ 1 or `|b|` ≤ 1) captures boundary-special pairs.
+    * For larger magnitudes, `b | a` and `a | b` are vanishing under independent uniform draws.
+    */
+  def divisibilityRelation(a: Int, b: Int): String =
+    if (a.toLong.abs <= 1L || b.toLong.abs <= 1L) "trivial"
+    else if (a % b == 0) "b-divides-a"
+    else if (b % a == 0) "a-multiple-of-b-rev"
+    else "no-divides"
+
+  /** Three-integer compound classification: a magnitude floor, then an "all-prime" gate,
+    * then equality structure within the all-prime sub-tree. Random uniform `Int` triples
+    * almost never have all three elements prime (`P ≈ 0.05³`), so the entire all-prime
+    * sub-tree — and its `all-equal-primes`, `two-equal-primes`, `distinct-primes` leaves
+    * — are unreachable.
+    */
+  def tripleProperty(a: Int, b: Int, c: Int): String =
+    if (a < 2 || b < 2 || c < 2) "trivial"
+    else if (NumberProps.isPrime(a) && NumberProps.isPrime(b) && NumberProps.isPrime(c)) {
+      if (a == b && b == c) "all-equal-primes"
+      else if (a == b || b == c || a == c) "two-equal-primes"
+      else "distinct-primes"
+    } else if (NumberProps.isPrime(a) || NumberProps.isPrime(b) || NumberProps.isPrime(c))
+      "some-prime"
+    else "no-primes"
+
+  // ── Hard: compound multi-condition trees with deeper nesting ─────────────
+
+  /** Triangle classification from three side lengths. Random uniform `Int` rarely produces
+    * triples that satisfy the triangle inequality, so the entire `valid-*` sub-tree is
+    * unreachable.
+    */
+  def triangleType(a: Int, b: Int, c: Int): String =
     if (a <= 0 || b <= 0 || c <= 0) "invalid"
     else if (a + b <= c || a + c <= b || b + c <= a) "degenerate"
     else if (a == b && b == c) "equilateral"
     else if (a == b || b == c || a == c) "isoceles"
     else "scalene"
-  }
 
-  // ── Deeply nested: leaves compound 3-4 filters in sequence ───────────────
-
-  /** Single-`Int` deeply nested classification. Four levels of filtering — sign, magnitude,
-    * number-theoretic property, then divisibility — produce eight outcomes, of which five
-    * require both a large magnitude *and* a rare structural property to hold. Random typically
-    * reaches `non-positive`, `small-positive`, `large-other`, and the `large-thousand-*` arms
-    * sometimes; the perfect-square and palindromic sub-trees are effectively unreachable.
-    */
-  def deepIntClassify(n: Int): String =
-    if (n > 0) {
-      if (n > 1000) {
-        if (isSquare(n.toLong)) {
-          if (n % 7 == 0) "large-square-mult-7"
-          else "large-square-other"
-        } else if (isDigitPalindrome(n.toLong)) {
-          if (n % 2 == 0) "large-palindrome-even"
-          else "large-palindrome-odd"
-        } else if (n % 1000 == 0) {
-          if (n % 7 == 0) "large-thousand-mult-7"
-          else "large-thousand-other"
-        } else "large-other"
-      } else "small-positive"
-    } else "non-positive"
-
-  /** Two-`Int` deeply nested classification. Three sign-then-magnitude levels narrow the
-    * `(a, b)` pair, then the deepest level asks for a structural relationship between two
-    * independent draws (equality, divisibility). The equality arms can hit when both draws
-    * land on the same boundary special (e.g. both `Int.MaxValue`), but the divisibility
-    * arms inside the "both large" gate are vanishing.
+  /** Sign → magnitude pair → equality/divisibility. The "equal" arms can hit via paired boundary
+    * specials (e.g. both `MaxValue`); the divisibility arms inside the both-large gate are
+    * vanishing.
     */
   def deepIntPair(a: Int, b: Int): String =
     if (a > 0 && b > 0) {
@@ -210,10 +178,28 @@ object IntBench {
       } else "small-negative-pair"
     } else "mixed-signs-or-zero"
 
-  /** Three-`Int` deeply nested classification. Sign filter → additive dependency → triangle
-    * inequality → triangle subtype. The whole "valid triangle" sub-tree is unreachable under
-    * uniform random `Int` (same reasoning as [[triangleType]]), so the inner equilateral /
-    * isoceles / scalene leaves are *all* unreached — plus the `additively-dependent` arm.
+  /** Deepest single-int tree: sign → magnitude → number-theoretic property → divisibility.
+    * The perfect-square and palindromic-digit sub-trees are unreachable for large random `n`,
+    * which makes 9+ source branches unreachable.
+    */
+  def deepIntClassify(n: Int): String =
+    if (n > 0) {
+      if (n > 1000) {
+        if (NumberProps.isSquare(n.toLong)) {
+          if (n % 7 == 0) "large-square-mult-7"
+          else "large-square-other"
+        } else if (NumberProps.isDigitPalindrome(n.toLong)) {
+          if (n % 2 == 0) "large-palindrome-even"
+          else "large-palindrome-odd"
+        } else if (n % 1000 == 0) {
+          if (n % 7 == 0) "large-thousand-mult-7"
+          else "large-thousand-other"
+        } else "large-other"
+      } else "small-positive"
+    } else "non-positive"
+
+  /** Deepest three-int tree: positive-triple → additive dependency → triangle inequality →
+    * triangle subtype. The valid-triangle sub-tree is unreachable in full.
     */
   def deepIntTriple(a: Int, b: Int, c: Int): String =
     if (a > 0 && b > 0 && c > 0) {
@@ -224,21 +210,4 @@ object IntBench {
         else "valid-scalene"
       } else "fails-triangle-inequality"
     } else "has-non-positive"
-
-  // ── Helpers ──────────────────────────────────────────────────────────────
-
-  private def isSquare(n: Long): Boolean = {
-    val r = math.sqrt(n.toDouble).toLong
-    r * r == n
-  }
-
-  private def isCube(n: Long): Boolean = {
-    val r = math.cbrt(n.toDouble).round
-    r * r * r == n
-  }
-
-  private def isDigitPalindrome(n: Long): Boolean = {
-    val s = n.abs.toString
-    s == s.reverse
-  }
 }

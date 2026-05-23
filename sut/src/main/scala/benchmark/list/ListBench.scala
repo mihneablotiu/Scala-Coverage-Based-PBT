@@ -1,22 +1,23 @@
 package benchmark.list
 
-/** `List[Int]`-input benchmark — increasing difficulty across the file.
+import benchmark.util.NumberProps
+
+/** `List[Int]`-input benchmark — structural-rarity gradient, ordered shallow → deep.
   *
   * Under default `Arbitrary[List[Int]]` the size grows from 0 to 100 across the run; each element
-  * is drawn from `Arbitrary[Int]` (full 32-bit range plus boundary specials `0`, `1`, `-1`,
-  * `MinValue`, `MaxValue`). The structurally hard cases for random PBT are:
+  * is full-range `Int` plus boundary specials. The structurally hard cases for random PBT are:
   *
-  *   - **Value coincidences** between independent positions (`head == last`, `xs == xs.reverse`,
-  *     `xs == xs.sorted`).
+  *   - **Position coincidences** (`head == last`, `xs == xs.reverse`, `xs.sum == 0`).
   *   - **Multi-list relationships** (`xs == ys.reverse`, `xs.sorted == ys.sorted`).
-  *   - **Properties at non-trivial sizes** — sortedness, strict sortedness, palindromicity, all
-  *     requiring `size ≥ K` guards so the trivial small-size cases don't dominate.
+  *   - **Properties at non-trivial sizes** — sortedness/palindromicity with `size ≥ K` guards.
+  *   - **Element-wise number-theoretic properties** (all-prime, sorted-prime-positives).
   *
-  * Sections, top to bottom: trivial → easy → moderate → list properties → multi-list.
+  * Sections: trivial → moderate → list properties → multi-list relationships → primality →
+  * deepest compound trees.
   */
 object ListBench {
 
-  // ── Trivial: random saturates ────────────────────────────────────────────
+  // ── Trivial baselines ────────────────────────────────────────────────────
 
   def isEmpty(xs: List[Int]): String =
     if (xs.isEmpty) "empty" else "non-empty"
@@ -28,23 +29,7 @@ object ListBench {
     case _            => "large"
   }
 
-  // ── Easy: structural classifiers with boundary-reachable arms ────────────
-
-  /** Four arms — `zero-head` reachable via boundary special `0` in the head position. */
-  def firstClass(xs: List[Int]): String =
-    if (xs.isEmpty) "empty"
-    else if (xs.head > 0) "positive-head"
-    else if (xs.head < 0) "negative-head"
-    else "zero-head"
-
-  /** Four arms; small lists give all-positive / all-negative cheaply (size 1 already does it). */
-  def allSameSign(xs: List[Int]): String =
-    if (xs.isEmpty) "empty"
-    else if (xs.forall(_ > 0)) "all-positive"
-    else if (xs.forall(_ < 0)) "all-negative"
-    else "mixed"
-
-  // ── Moderate: value coincidences and sum-based properties ────────────────
+  // ── Moderate: value coincidences and aggregation ─────────────────────────
 
   /** Four arms; `zero-sum` (`xs.sum == 0`) needs a value coincidence under full `Int` —
     * effectively unreachable.
@@ -55,18 +40,8 @@ object ListBench {
     else if (xs.sum > 0) "positive-sum"
     else "negative-sum"
 
-  /** Five arms. `ends-equal` (head == last) needs a value coincidence between two list
-    * positions; possible via repeated boundary specials, vanishing otherwise.
-    */
-  def headTailRelation(xs: List[Int]): String =
-    if (xs.isEmpty) "empty"
-    else if (xs.size == 1) "singleton"
-    else if (xs.head == xs.last) "ends-equal"
-    else if (xs.head > xs.last) "head-bigger"
-    else "tail-bigger"
-
-  /** Four arms; `narrow` and `uniform` need every element to fall inside a tight range.
-    * `uniform` (`max == min` for `size ≥ 2`) is effectively unreachable.
+  /** Four arms; `narrow` needs the spread to be inside a 10⁹ window. `uniform` (`max == min`
+    * for `size ≥ 2`) is effectively unreachable.
     */
   def extremesGap(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
@@ -74,54 +49,33 @@ object ListBench {
     else if (xs.max.toLong - xs.min.toLong > 0L) "narrow"
     else "uniform"
 
-  // ── Hard: list properties at non-trivial sizes ───────────────────────────
+  // ── List shape properties ────────────────────────────────────────────────
 
-  /** Three arms; `size < 2` skips the vacuous case so the `sorted` arm reflects an actual
-    * ordering between two distinct positions. Reachable for short sizes (P = 0.5 at size 2),
-    * vanishing as size grows.
-    */
-  def isSorted(xs: List[Int]): String =
-    if (xs.size < 2) "trivial"
-    else if (xs == xs.sorted) "sorted"
-    else "unsorted"
-
-  /** Three arms; requires `size ≥ 5` so short-list near-misses don't dominate. Strictly
-    * increasing under uniform `Int` has P ≈ 1/n! averaged across the schedule — borderline at
-    * best.
-    */
-  def isStrictlySorted(xs: List[Int]): String =
-    if (xs.size < 5) "trivial"
-    else if (xs.lazyZip(xs.tail).forall(_ < _)) "strict-sorted"
-    else "not-strict-sorted"
-
-  /** Three arms; `size >= 2` skips the vacuous case. `all-equal` needs every element identical
-    * — vanishing under full `Int`.
+  /** Three arms; `size ≥ 2` skips the vacuous case. `all-equal` needs every element identical —
+    * vanishing under full `Int`.
     */
   def allEqual(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
     else if (xs.distinct.size == 1) "all-equal"
     else "mixed-values"
 
-  /** Four arms. Both `palindrome` (`xs == xs.reverse`) and `ends-match` (`head == last`) need
-    * mirrored-position value coincidences — effectively unreachable for `size ≥ 2` under full
-    * `Int`.
-    */
+  /** Three arms; `size ≥ 5` strict ordering is ~1/n! averaged across the schedule. */
+  def isStrictlySorted(xs: List[Int]): String =
+    if (xs.size < 5) "trivial"
+    else if (xs.lazyZip(xs.tail).forall(_ < _)) "strict-sorted"
+    else "not-strict-sorted"
+
+  /** Four arms. `palindrome` and `ends-match` both need mirrored-position value coincidences. */
   def palindromeClass(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
     else if (xs == xs.reverse) "palindrome"
     else if (xs.head == xs.last) "ends-match"
     else "asymmetric"
 
-  // ── Multi-list relationships (structural, no literals) ───────────────────
+  // ── Multi-list relationships ─────────────────────────────────────────────
 
-  /** Three arms over two lists; all reachable via the size schedule. */
-  def lengthCompare(xs: List[Int], ys: List[Int]): String =
-    if (xs.size > ys.size) "first-longer"
-    else if (xs.size < ys.size) "second-longer"
-    else "same-length"
-
-  /** Four arms; `is-reverse` (`xs == ys.reverse`) needs every position-pair to coincide between
-    * independent draws — effectively unreachable for non-trivial sizes.
+  /** Four arms; `is-reverse` needs full position-by-position coincidence with the reverse of an
+    * independent draw — unreachable.
     */
   def isReverseOf(xs: List[Int], ys: List[Int]): String =
     if (xs.isEmpty || ys.isEmpty) "trivial"
@@ -129,8 +83,8 @@ object ListBench {
     else if (xs == ys.reverse) "is-reverse"
     else "unrelated"
 
-  /** Four arms; `same-multiset` (`xs.sorted == ys.sorted`) needs the two lists to be
-    * permutations of each other — vanishing under independent draws over full `Int`.
+  /** Four arms; `same-multiset` needs the two lists to be permutations of each other under
+    * independent draws — vanishing.
     */
   def haveSameMultiset(xs: List[Int], ys: List[Int]): String =
     if (xs.isEmpty || ys.isEmpty) "trivial"
@@ -138,24 +92,54 @@ object ListBench {
     else if (xs.sorted == ys.sorted) "same-multiset"
     else "different-multiset"
 
-  /** Four arms over a list and a target. `head-match` is reachable via boundary specials
-    * (target == 0 and xs.head == 0); `interior-match` (target somewhere other than the head)
-    * needs the target to coincide with a list element — vanishing under independent draws.
+  // ── Element-wise primality (medium-hard) ─────────────────────────────────
+
+  /** Five arms via nested guards. `all-prime` (every element prime, size ≥ 3) is ~0.05ⁿ —
+    * unreachable. `multiple-primes` and `single-prime` are reachable but rare (`MaxValue` is
+    * itself the Mersenne prime, so chooseNum's bias toward boundary specials occasionally pulls
+    * in a prime).
     */
-  def findTarget(xs: List[Int], target: Int): String =
-    if (xs.isEmpty) "empty-list"
-    else if (xs.head == target) "head-match"
-    else if (xs.tail.contains(target)) "interior-match"
-    else "not-found"
+  def allPrime(xs: List[Int]): String =
+    if (xs.size < 3) "tiny"
+    else if (xs.forall(NumberProps.isPrime)) {
+      if (xs == xs.sorted) "ascending-primes"
+      else "unsorted-primes"
+    } else if (xs.count(NumberProps.isPrime) >= 2) "multiple-primes"
+    else if (xs.exists(NumberProps.isPrime)) "single-prime"
+    else "no-primes"
 
-  // ── Deeply nested: leaves compound 3-4 structural filters in sequence ────
+  /** Six outcomes, deeper nesting: size ≥ 3 → uniform-positive → all-prime → sorted. Compound
+    * conditions (size + positive + prime + sorted) make the deep arms unreachable.
+    */
+  def primeListShape(xs: List[Int]): String =
+    if (xs.size < 3) "tiny"
+    else if (xs.forall(_ > 0)) {
+      if (xs.forall(NumberProps.isPrime)) {
+        if (xs == xs.sorted) "sorted-prime-positives"
+        else "unsorted-prime-positives"
+      } else if (xs.exists(NumberProps.isPrime)) "positives-with-some-prime"
+      else "positives-no-prime"
+    } else "non-positive-or-mixed"
 
-  /** Single-list deeply nested classification. Filters by size (≥ 5 only), then by uniform
-    * sign across all elements, then by sortedness, then by distinctness. Under random
-    * `List[Int]`, getting a size-5+ list whose every element is positive is already ~3% per
-    * input; getting that *and* it being sorted is another 1/n! on top. The leaves inside the
-    * "all-positive sorted" sub-tree, and the entire "all-negative sorted" sub-tree, are
-    * effectively unreachable.
+  // ── Hard: deepest compound trees ─────────────────────────────────────────
+
+  /** Two-list deeply nested relationship. Non-empty → size match → full-content / reverse /
+    * multiset / head match. The first three inner arms all require position-by-position value
+    * coincidences between independent draws — unreachable.
+    */
+  def deepListRelation(xs: List[Int], ys: List[Int]): String =
+    if (xs.isEmpty || ys.isEmpty) "trivial"
+    else if (xs.size == ys.size) {
+      if (xs == ys) "identical"
+      else if (xs == ys.reverse) "reverse-of"
+      else if (xs.sorted == ys.sorted) "same-multiset"
+      else if (xs.head == ys.head) "head-match"
+      else "different-content"
+    } else "different-sizes"
+
+  /** Deepest single-list tree: size ≥ 5 → uniform sign → sortedness → distinctness. The all-
+    * positive and all-negative sub-trees are reached very rarely (small sizes only); their
+    * sortedness leaves are unreachable.
     */
   def deepListShape(xs: List[Int]): String =
     if (xs.size < 5) "tiny"
@@ -169,20 +153,4 @@ object ListBench {
       if (xs == xs.sorted) "ascending-negative"
       else "unsorted-negative"
     } else "mixed-signs"
-
-  /** Two-list deeply nested relationship. Filters by emptiness, then by size equality, then
-    * by full-content match, reverse match, multiset match, and finally a head-match check.
-    * The inner content arms (`identical`, `reverse-of`, `same-multiset`) all require
-    * position-by-position value coincidences between independent draws — unreachable under
-    * full `Int` for non-trivial sizes.
-    */
-  def deepListRelation(xs: List[Int], ys: List[Int]): String =
-    if (xs.isEmpty || ys.isEmpty) "trivial"
-    else if (xs.size == ys.size) {
-      if (xs == ys) "identical"
-      else if (xs == ys.reverse) "reverse-of"
-      else if (xs.sorted == ys.sorted) "same-multiset"
-      else if (xs.head == ys.head) "head-match"
-      else "different-content"
-    } else "different-sizes"
 }
