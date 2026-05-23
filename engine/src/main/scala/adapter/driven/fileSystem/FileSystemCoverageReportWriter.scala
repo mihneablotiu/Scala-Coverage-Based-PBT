@@ -1,5 +1,6 @@
 package adapter.driven.fileSystem
 
+import cats.effect.IO
 import domain.{BranchCounter, BranchSummary, BranchTree, MethodTree, Pos, SessionReport}
 import port.driven.CoverageReportWriter
 
@@ -33,22 +34,24 @@ object FileSystemCoverageReportWriter {
 
   private final class Live extends CoverageReportWriter {
 
-    override def write[A](report: SessionReport[A], outDir: Path): Unit = {
+    override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = {
       val visuals = outDir.resolve("visuals")
       val data = outDir.resolve("data")
-      Files.createDirectories(visuals)
-      Files.createDirectories(data)
-      writeFile(outDir, "summary.txt", renderSummary(report))
-      writeFile(visuals, "coverage.dot", renderDot(report))
-      writeFile(visuals, "growth.svg", renderGrowthSvg(report))
-      writeFile(data, "coverage.json", renderJson(report))
-      writeFile(data, "inputs.csv", renderInputsCsv(report))
+      for {
+        _ <- IO {
+          Files.createDirectories(visuals)
+          Files.createDirectories(data)
+        }
+        _ <- writeFile(outDir, "summary.txt", renderSummary(report))
+        _ <- writeFile(visuals, "coverage.dot", renderDot(report))
+        _ <- writeFile(visuals, "growth.svg", renderGrowthSvg(report))
+        _ <- writeFile(data, "coverage.json", renderJson(report))
+        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report))
+      } yield ()
     }
 
-    private def writeFile(dir: Path, name: String, content: String): Unit = {
-      Files.writeString(dir.resolve(name), content, StandardCharsets.UTF_8)
-      ()
-    }
+    private def writeFile(dir: Path, name: String, content: String): IO[Unit] =
+      IO(Files.writeString(dir.resolve(name), content, StandardCharsets.UTF_8)).void
   }
 
   // ────────────────────────────────────────────────────────────────

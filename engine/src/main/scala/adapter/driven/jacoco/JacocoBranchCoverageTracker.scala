@@ -1,5 +1,6 @@
 package adapter.driven.jacoco
 
+import cats.effect.IO
 import domain.{BranchCounter, CoverageMeasurement}
 import org.jacoco.agent.rt.RT
 import org.jacoco.core.analysis.{Analyzer, CoverageBuilder}
@@ -28,12 +29,12 @@ object JacocoBranchCoverageTracker {
     private lazy val agent = RT.getAgent
     private val cumulativeStore = new ExecutionDataStore
 
-    override def reset(): Unit = {
+    override def reset: IO[Unit] = IO {
       agent.reset()
       cumulativeStore.reset()
     }
 
-    override def measure(sourceFileName: String, methodName: String): CoverageMeasurement = {
+    override def measure(sourceFileName: String, methodName: String): IO[CoverageMeasurement] = IO {
       val perInputStore = readDelta()
       perInputStore.getContents.forEach(d => cumulativeStore.put(d))
       CoverageMeasurement(

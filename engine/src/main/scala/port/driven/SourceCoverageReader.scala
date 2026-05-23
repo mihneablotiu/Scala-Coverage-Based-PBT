@@ -1,5 +1,6 @@
 package port.driven
 
+import cats.effect.IO
 import domain.MethodSourceCoverage
 
 import java.nio.file.Path
@@ -14,11 +15,11 @@ import java.nio.file.Path
 trait SourceCoverageReader {
 
   /** Source-level coverage snapshot for the given method at the moment of call. */
-  def methodCoverage(sourceFile: Path, methodName: String): MethodSourceCoverage
+  def methodCoverage(sourceFile: Path, methodName: String): IO[MethodSourceCoverage]
 
   /** Removes stale runtime data so the first session sees a clean slate. Must be called **once,
     * before any SUT code runs in this JVM** — scoverage's `Invoker` caches `FileWriter`s after
     * the first SUT execution, so deleting files later would orphan them.
     */
-  def cleanStaleData(): Unit
+  def cleanStaleData: IO[Unit]
 }

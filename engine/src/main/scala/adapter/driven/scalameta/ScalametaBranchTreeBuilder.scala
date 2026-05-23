@@ -1,5 +1,6 @@
 package adapter.driven.scalameta
 
+import cats.effect.IO
 import domain.{BranchTree, MethodTree, Pos}
 import port.driven.BranchTreeBuilder
 
@@ -23,7 +24,7 @@ object ScalametaBranchTreeBuilder {
 
   private final class Live extends BranchTreeBuilder {
 
-    override def build(sourceFile: Path, methodName: String): Option[MethodTree] = {
+    override def build(sourceFile: Path, methodName: String): IO[Option[MethodTree]] = IO {
       val text = Files.readString(sourceFile, StandardCharsets.UTF_8)
       text.parse[Source].toOption.flatMap { src =>
         src

@@ -1,5 +1,6 @@
 package adapter.driven.scoverage
 
+import cats.effect.IO
 import domain.{BranchCounter, MethodSourceCoverage, Pos}
 import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
@@ -39,9 +40,12 @@ object ScoverageSourceCoverageReader {
           .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
           .foreach(Files.deleteIfExists)
 
-    override def cleanStaleData(): Unit = cleanedOnce
+    override def cleanStaleData: IO[Unit] = IO(cleanedOnce)
 
-    override def methodCoverage(sourceFile: Path, methodName: String): MethodSourceCoverage =
+    override def methodCoverage(
+        sourceFile: Path,
+        methodName: String
+    ): IO[MethodSourceCoverage] = IO {
       staticCoverage.fold(MethodSourceCoverage.Empty) { coverage =>
         val sourceFileName = sourceFile.getFileName.toString
         val firedIds = readFiredIds
@@ -58,6 +62,7 @@ object ScoverageSourceCoverageReader {
             methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet
         )
       }
+    }
 
     private def readFiredIds: Set[Int] =
       IOUtils.invoked(IOUtils.findMeasurementFiles(dataDir.toFile).toSeq).iterator.map(_._1).toSet

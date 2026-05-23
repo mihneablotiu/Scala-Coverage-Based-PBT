@@ -12,7 +12,7 @@ import domain.{
   SessionReport,
   Strategy
 }
-import org.scalacheck.{Arbitrary, Gen, Prop, Test}
+import org.scalacheck.{rng, Arbitrary, Gen, Test}
 import port.driven.{
   BranchCoverageTracker,
   BranchTreeBuilder,
@@ -25,13 +25,15 @@ import scala.util.Try
 
 /** Use case for one fuzz session.
   *
-  * The session is just a `Prop.forAll` driven by `Test.check` — the same as any normal ScalaCheck
-  * test, with one extra side-effect inside the property body that records coverage. ScalaCheck
-  * owns the loop, the size schedule, the seed thread, and the input generation.
+  * An IO loop that mirrors `Test.check`'s recipe — same linear size schedule, same `seed.next`
+  * thread, same `Gen.doPureApply(prms, seed)` per iteration — but composed in IO so the driven
+  * adapters (which legitimately return IO since they read/write files) plug in naturally. State
+  * across iterations is the immutable [[SessionFeedback]] folded through the pure [[step]]
+  * function via tail-recursive `iterate`.
   *
-  * Guided strategy hook: the `Gen[A]` handed to `forAll` for [[Strategy.Guided]] is a `Gen.delay`
-  * that closes over the running feedback, so a real coverage-driven generator can be plugged in
-  * without touching the loop.
+  * Future-proofing for guided: replace the `Gen[A]` selected for `Strategy.Guided` with a real
+  * coverage-driven generator. Today it's a `Gen.delay` over the running `state`, so the data
+  * channel is already wired.
   */
 final class TestRunnerHandler(
     tracker: BranchCoverageTracker,
@@ -46,40 +48,44 @@ final class TestRunnerHandler(
       outDir: Path,
       methodName: String,
       strategy: Strategy
-  )(property: A => Boolean): IO[Unit] = IO.blocking {
-    sourceCoverage.cleanStaleData()
-    tracker.reset()
+  )(property: A => Boolean): IO[Unit] = for {
+    _        <- sourceCoverage.cleanStaleData
+    _        <- tracker.reset
+    feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
+    tree     <- treeBuilder.build(sourceFile, methodName)
+    src      <- sourceCoverage.methodCoverage(sourceFile, methodName)
+    _        <- warnOnDrift(methodName, tree, src)
+    _        <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
+  } yield ()
+
+  /** IO loop replicating `Test.check`'s recipe. */
+  private def runScalaCheck[A](
+      sourceFile: Path,
+      methodName: String,
+      strategy: Strategy,
+      property: A => Boolean
+  )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = {
     val sourceFileName = sourceFile.getFileName.toString
+    val total = params.minSuccessfulTests
+    val span = params.maxSize - params.minSize
 
-    // Local accumulator. Mutated only inside Test.check's single-threaded body below; never
-    // escapes this method. The mutation is the price of using `Prop.forAll`'s sync signature
-    // (which returns Boolean, not a state-threading effect).
-    var feedback = SessionFeedback.empty[A]
+    def iterate(state: SessionFeedback[A], seed: rng.Seed): IO[SessionFeedback[A]] =
+      if (state.iteration >= total) IO.pure(state)
+      else {
+        val size = Math.round(params.minSize.toDouble + span.toDouble * state.iteration / total).toInt
+        val gp = Gen.Parameters.default.withSize(size)
+        val input = arb.arbitrary.doPureApply(gp, seed).retrieve.get
+        for {
+          _   <- IO.whenA(strategy == Strategy.Guided)(IO.println(s"[guided] iter=${state.iteration}"))
+          _   <- IO(Try(property(input)))
+          m   <- tracker.measure(sourceFileName, methodName)
+          src <- sourceCoverage.methodCoverage(sourceFile, methodName)
+          out <- iterate(step(state, input, m, src.branchCounter.covered), seed.next)
+        } yield out
+      }
 
-    val gen: Gen[A] = strategy match {
-      case Strategy.Random => implicitly[Arbitrary[A]].arbitrary
-      case Strategy.Guided =>
-        // Re-evaluated on every iteration — gives a real guided strategy access to the running
-        // `feedback` to decide what to emit next. Placeholder for now: log and delegate.
-        Gen.delay {
-          println(formatFeedback(feedback))
-          implicitly[Arbitrary[A]].arbitrary
-        }
-    }
-
-    val prop = Prop.forAll(gen) { input =>
-      Try(property(input))
-      val m = tracker.measure(sourceFileName, methodName)
-      val srcCov = sourceCoverage.methodCoverage(sourceFile, methodName)
-      feedback = step(feedback, input, m, srcCov.branchCounter.covered)
-      true
-    }
-    Test.check(params, prop)
-
-    val tree = treeBuilder.build(sourceFile, methodName)
-    val src = sourceCoverage.methodCoverage(sourceFile, methodName)
-    warnOnDrift(methodName, tree, src)
-    writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
+    IO(params.initialSeed.getOrElse(rng.Seed.random()))
+      .flatMap(iterate(SessionFeedback.empty[A], _))
   }
 
   /** Pure transition: previous state + (input, measurement, source-level cumulative covered) →
@@ -106,23 +112,20 @@ final class TestRunnerHandler(
     )
   }
 
-  private def formatFeedback[A](state: SessionFeedback[A]): String =
-    f"[guided] iter=${state.iteration}%-3d  lines=${state.cumulativeCoverage.size}%-2d  " +
-      f"lastInput=${state.history.lastOption.fold("—")(_.input.toString)}"
-
   private def warnOnDrift(
       methodName: String,
       tree: Option[MethodTree],
       src: MethodSourceCoverage
-  ): Unit = {
+  ): IO[Unit] = {
     val astArms = tree.fold(0)(t => BranchTree.armCount(t.body))
     val scov = src.branchCounter.total
-    if (astArms != 0 && scov != 0 && astArms != scov)
-      println(
+    IO.unlessA(astArms == 0 || scov == 0 || astArms == scov) {
+      IO.println(
         s"[warn] $methodName: source-level branch drift — scoverage reports $scov branch arm(s), " +
           s"BranchTree models $astArms. Picture is missing decision points; add the construct " +
           s"to ScalametaBranchTreeBuilder.visit."
       )
+    }
   }
 
   private def buildReport[A](
