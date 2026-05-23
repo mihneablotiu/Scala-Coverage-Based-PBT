@@ -45,7 +45,6 @@ svg: ## Render every coverage.dot file produced by `make run` to SVG.
 # ── Cleaning ───────────────────────────────────────────────────────────
 clean-reports: ## Remove $(REPORTS_DIR) and stale scoverage measurement files.
 	@rm -rf $(REPORTS_DIR)
-	@rm -rf $(SCOV_DATA_DIR)/by-method
 	@find $(SCOV_DATA_DIR) -name 'scoverage.measurements.*' -delete 2>/dev/null || true
 
 clean: clean-reports ## sbt clean + clean-reports.

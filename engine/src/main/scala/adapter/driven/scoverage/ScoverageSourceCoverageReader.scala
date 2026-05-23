@@ -6,29 +6,23 @@ import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
 import scoverage.serialize.Serializer
 
-import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters._
 
 /** scoverage-backed source-level coverage reader.
   *
-  *   - `methodCoverage` reads scoverage's runtime state live. Cheap: the static map is cached
-  *     in a `lazy val`, the measurement files are small append-only logs.
-  *   - `splitMeasurementsByMethod` writes a per-method TSV file under
-  *     `by-method/<methodName>.measurements` for user inspection. Side artifact, not in the data
-  *     path.
+  * `methodCoverage` reads scoverage's runtime state live. Cheap: the static map is cached in a
+  * `lazy val`, the measurement files are small append-only logs.
   */
 object ScoverageSourceCoverageReader {
 
   private val DataSubdir = "target/scala-2.13/scoverage-data"
-  private val ByMethodSubdir = "by-method"
 
   def apply(sutRoot: Path): SourceCoverageReader = new Live(sutRoot)
 
   private final class Live(sutRoot: Path) extends SourceCoverageReader {
 
     private val dataDir = sutRoot.resolve(DataSubdir)
-    private val byMethodDir = dataDir.resolve(ByMethodSubdir)
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
 
     /** Deserialised once on first read — the static statement map doesn't change during a JVM run. */
@@ -44,8 +38,6 @@ object ScoverageSourceCoverageReader {
       Files.list(dataDir).iterator().asScala
         .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
         .foreach(Files.deleteIfExists)
-      Files.createDirectories(byMethodDir)
-      Files.list(byMethodDir).iterator().asScala.foreach(Files.deleteIfExists)
     }
 
     override def methodCoverage(
@@ -72,33 +64,5 @@ object ScoverageSourceCoverageReader {
 
     private def readFiredIds: Set[Int] =
       IOUtils.invoked(IOUtils.findMeasurementFiles(dataDir.toFile).toSeq).iterator.map(_._1).toSet
-
-    override def splitMeasurementsByMethod(
-        sourceFile: Path,
-        methodName: String
-    ): IO[Unit] = IO.whenA(coverageFile.exists())(writePerMethodFile(sourceFile, methodName))
-
-    private def writePerMethodFile(sourceFile: Path, methodName: String): IO[Unit] = IO {
-      // Fresh deserialisation so `coverage.apply` (which mutates the static map's count fields)
-      // doesn't pollute the cached `staticCoverage`.
-      val coverage = Serializer.deserialize(coverageFile, sutRoot.toFile)
-      coverage.apply(IOUtils.invoked(IOUtils.findMeasurementFiles(dataDir.toFile).toSeq))
-
-      val sourceFileName = sourceFile.getFileName.toString
-      val methodStmts = coverage.statements.iterator
-        .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
-        .toList
-        .sortBy(_.id)
-
-      Files.createDirectories(byMethodDir)
-      val outFile = byMethodDir.resolve(s"$methodName.measurements")
-      val header =
-        s"# scoverage measurements for method '$methodName' in $sourceFileName\n" +
-          "# columns: stmt_id\\tpos\\tline\\tis_branch\\tcount\n"
-      val rows = methodStmts
-        .map(s => s"${s.id}\t${s.start}\t${s.line}\t${s.branch}\t${s.count}")
-        .mkString("\n")
-      Files.writeString(outFile, header + rows + "\n", StandardCharsets.UTF_8)
-    }
   }
 }

@@ -47,7 +47,6 @@ final class TestRunnerHandler(
     feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
     tree <- treeBuilder.build(sourceFile, methodName)
     src <- sourceCoverage.methodCoverage(sourceFile, methodName)
-    _ <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
     _ <- warnOnDrift(methodName, tree, src)
     _ <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
   } yield ()

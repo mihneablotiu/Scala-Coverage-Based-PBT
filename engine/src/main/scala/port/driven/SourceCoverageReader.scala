@@ -17,12 +17,6 @@ trait SourceCoverageReader {
   /** Source-level coverage snapshot for the given method at the moment of call. */
   def methodCoverage(sourceFile: Path, methodName: String): IO[MethodSourceCoverage]
 
-  /** Writes a per-method TSV extract of scoverage's runtime data under
-    * `by-method/<methodName>.measurements` for user inspection. Not used by the framework's data
-    * path — `methodCoverage` reads scoverage live.
-    */
-  def splitMeasurementsByMethod(sourceFile: Path, methodName: String): IO[Unit]
-
   /** Removes stale runtime data so the first session sees a clean slate. Must be called **once,
     * before any SUT code runs in this JVM** — scoverage's `Invoker` caches `FileWriter`s after
     * the first SUT execution, so deleting files later would orphan them.
