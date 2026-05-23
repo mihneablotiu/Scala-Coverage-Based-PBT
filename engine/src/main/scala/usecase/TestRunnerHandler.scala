@@ -145,9 +145,13 @@ final class TestRunnerHandler(
     val firstHits: Map[Pos, Int] = feedback.history.iterator
       .flatMap(rec => rec.newlyCoveredBranches.iterator.map(_ -> rec.index))
       .toMap
+    val labels: Map[Pos, String] =
+      tree.fold(Map.empty[Pos, String])(t => BranchTree.collectLabels(t.body))
     val branches = src.branchLines.toVector
       .sortBy { case (p, _) => p.offset }
-      .map { case (pos, line) => BranchOutcome(pos, line, firstHits.get(pos)) }
+      .map { case (pos, line) =>
+        BranchOutcome(pos, line, labels.getOrElse(pos, "?"), firstHits.get(pos))
+      }
     SessionReport(
       methodName = methodName,
       sourceFile = sourceFile,
