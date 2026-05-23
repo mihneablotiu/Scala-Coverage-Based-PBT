@@ -26,8 +26,8 @@ import scala.util.Try
 /** Use case for one fuzz session.
   *
   * Drives an IO-based loop matching `Test.check`'s semantics exactly — same size schedule, same
-  * `seed.next` thread, same `Gen.pureApply` per iteration. State across iterations is the
-  * immutable [[SessionFeedback]] folded through a pure [[step]] function.
+  * `seed.next` thread, same `Gen.pureApply` per iteration. State across iterations is the immutable
+  * [[SessionFeedback]] folded through a pure [[step]] function.
   */
 final class TestRunnerHandler(
     tracker: BranchCoverageTracker,
@@ -43,6 +43,7 @@ final class TestRunnerHandler(
       methodName: String,
       strategy: Strategy
   )(property: A => Boolean): IO[Unit] = for {
+    _ <- sourceCoverage.cleanStaleData
     _ <- tracker.reset
     feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
     tree <- treeBuilder.build(sourceFile, methodName)
@@ -93,8 +94,8 @@ final class TestRunnerHandler(
     }
   }
 
-  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) →
-    * new state. The chart and the headline counter speak the same source-level units.
+  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) → new
+    * state. The chart and the headline counter speak the same source-level units.
     */
   private def step[A](
       state: SessionFeedback[A],

@@ -62,17 +62,28 @@ object ScalametaBranchTreeBuilder {
     */
   private def visit(tree: Tree): BranchTree = tree match {
     case t: Term.If =>
-      BranchTree.Branch(posOf(t), "if", exprOf(t.cond),
-        List(BranchTree.Arm("then", visit(t.thenp)), BranchTree.Arm("else", visit(t.elsep))))
+      BranchTree.Branch(
+        posOf(t),
+        "if",
+        exprOf(t.cond),
+        List(BranchTree.Arm("then", visit(t.thenp)), BranchTree.Arm("else", visit(t.elsep)))
+      )
     case t: Term.Match =>
-      BranchTree.Branch(posOf(t), "match", exprOf(t.expr),
-        t.casesBlock.cases.toList.map(armOf))
+      BranchTree.Branch(posOf(t), "match", exprOf(t.expr), t.casesBlock.cases.toList.map(armOf))
     case t: Term.While =>
-      BranchTree.Branch(posOf(t), "while", exprOf(t.expr),
-        List(BranchTree.Arm("body", visit(t.body))))
+      BranchTree.Branch(
+        posOf(t),
+        "while",
+        exprOf(t.expr),
+        List(BranchTree.Arm("body", visit(t.body)))
+      )
     case t: Term.PartialFunction =>
-      BranchTree.Branch(posOf(t), "partial", BranchTree.Expr(posOf(t), "⟨arg⟩"),
-        t.cases.toList.map(armOf))
+      BranchTree.Branch(
+        posOf(t),
+        "partial",
+        BranchTree.Expr(posOf(t), "⟨arg⟩"),
+        t.cases.toList.map(armOf)
+      )
     case other => descend(other)
   }
 
