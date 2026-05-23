@@ -36,11 +36,13 @@ object Main extends IOApp.Simple {
   private val testParams: Test.Parameters =
     Test.Parameters.default.withInitialSeed(rng.Seed(0L))
 
-  // ── Use case, built with the driven adapters injected ──────────────────
+  // ── Driven adapters built once, injected ───────────────────────────────
+  private val sourceCoverage = ScoverageSourceCoverageReader(SutRoot)
+
   private val handler: TestRunnerHandler = new TestRunnerHandler(
     tracker = JacocoBranchCoverageTracker(ClassesDir),
     treeBuilder = ScalametaBranchTreeBuilder(),
-    sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
+    sourceCoverage = sourceCoverage,
     writer = FileSystemCoverageReportWriter(),
     params = testParams
   )
@@ -51,9 +53,11 @@ object Main extends IOApp.Simple {
   private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
 
   // ── Benchmarks ─────────────────────────────────────────────────────────
-  // Each block is the property body — exactly what you'd write inside `Prop.forAll`.
-  // The engine resolves the `Arbitrary[A]` for the lambda parameter type.
+  // `cleanStaleData` runs once at the very start (scoverage's runtime caches `FileWriter`s
+  // after the first SUT execution — wiping has to happen before that). Each block below is
+  // the property body — same shape as a normal ScalaCheck `forAll`.
   override val run: IO[Unit] = for {
+    _ <- sourceCoverage.cleanStaleData
     _ <- bools.runTests("identity", Strategy.Random) { (b: Boolean) =>
       BoolBench.identity(b); true
     }

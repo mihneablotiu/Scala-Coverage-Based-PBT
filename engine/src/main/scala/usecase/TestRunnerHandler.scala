@@ -1,9 +1,7 @@
 package usecase
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import domain.{
-  BranchCounter,
   BranchSummary,
   BranchTree,
   CoverageMeasurement,
@@ -14,7 +12,7 @@ import domain.{
   SessionReport,
   Strategy
 }
-import org.scalacheck.{Arbitrary, Gen, Prop, Test}
+import org.scalacheck.{rng, Arbitrary, Gen, Test}
 import port.driven.{
   BranchCoverageTracker,
   BranchTreeBuilder,
@@ -23,18 +21,14 @@ import port.driven.{
 }
 
 import java.nio.file.Path
+import scala.util.Try
 
 /** Use case for one fuzz session.
   *
-  * Drives **ScalaCheck's `Test.check`** against the SUT method — random strategy plugs the implicit
-  * `Arbitrary[A].arbitrary` into `Prop.forAll`, guided strategy plugs a stateful `Gen[A]` that
-  * reads from a shared session accumulator. Either way, every iteration's input is the same one
-  * ScalaCheck would produce inside `Prop.forAll`'s loop; the only thing the engine adds is a
-  * coverage-tracking step inside the property body.
-  *
-  * Constructed with its four driven ports + the `Test.Parameters` (run config: iteration count,
-  * size schedule, seed). Knows nothing about *which* file or output path is being targeted — those
-  * are the driving adapter's job, passed in per-call.
+  * Drives an IO-based loop that **matches `Test.check`'s semantics exactly** — same linear size
+  * schedule, same `seed.next` thread, same `Gen.pureApply` per iteration — but stays IO-monadic
+  * throughout so the JaCoCo tracker (whose `measure` is `IO`) composes naturally. State across
+  * iterations is the immutable [[SessionFeedback]] folded through the pure [[step]] function.
   */
 final class TestRunnerHandler(
     tracker: BranchCoverageTracker,
@@ -50,59 +44,85 @@ final class TestRunnerHandler(
       methodName: String,
       strategy: Strategy
   )(property: A => Boolean): IO[Unit] = for {
-    _ <- sourceCoverage.cleanStaleData
-    _ <- tracker.reset
-    acc <- runScalaCheck(sourceFile, methodName, strategy, property)
-    tree <- treeBuilder.build(sourceFile, methodName)
-    _ <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
-    src <- sourceCoverage.methodCoverage(sourceFile, methodName)
-    _ <- warnOnDrift(methodName, tree, src)
-    _ <- writer.write(buildReport(sourceFile, methodName, acc, tree, src), outDir)
+    _        <- tracker.reset
+    feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
+    tree     <- treeBuilder.build(sourceFile, methodName)
+    _        <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
+    src      <- sourceCoverage.methodCoverage(sourceFile, methodName)
+    _        <- warnOnDrift(methodName, tree, src)
+    _        <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
   } yield ()
 
-  /** Run ScalaCheck's `Test.check` for `params.minSuccessfulTests` iterations. The property body
-    * runs the SUT, measures coverage via JaCoCo, and records each input in `acc`. Wrapped in
-    * `IO.blocking` because `Test.check` is synchronous.
+  /** Manual IO loop replicating `Test.check`'s per-iteration recipe:
+    *   - size = `round(minSize + (maxSize - minSize) * iter / minSuccessfulTests)`
+    *   - seed advances via `seed.next` between iterations
+    *   - input = `gen.pureApply(Gen.Parameters.default.withSize(size), seed)`
     */
   private def runScalaCheck[A](
       sourceFile: Path,
       methodName: String,
       strategy: Strategy,
       property: A => Boolean
-  )(implicit arb: Arbitrary[A]): IO[SessionAccumulator[A]] = IO.blocking {
-    val acc = new SessionAccumulator[A]
+  )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = {
     val sourceFileName = sourceFile.getFileName.toString
+    val total = params.minSuccessfulTests
 
-    val gen: Gen[A] = strategy match {
-      case Strategy.Random => arb.arbitrary
-      case Strategy.Guided => guidedGen(acc, arb.arbitrary)
+    def sizeFor(iter: Int): Int = {
+      val span = params.maxSize - params.minSize
+      Math.round(params.minSize.toDouble + span.toDouble * iter / total).toInt
     }
 
-    val prop = Prop.forAll(gen) { input =>
-      try property(input)
-      catch { case _: Throwable => () }
-      val m = tracker.measure(sourceFileName, methodName).unsafeRunSync()
-      acc.observe(input, m)
-      true
+    def pickInput(state: SessionFeedback[A], seed: rng.Seed): IO[A] = {
+      // Same invocation path Prop.forAll uses internally — `doPureApply(params, seed)`.
+      val gp = Gen.Parameters.default.withSize(sizeFor(state.iteration))
+      val randomInput = arb.arbitrary.doPureApply(gp, seed).retrieve.get
+      strategy match {
+        case Strategy.Random => IO.pure(randomInput)
+        case Strategy.Guided => IO.println(formatFeedback(state)).as(randomInput)
+      }
     }
-    Test.check(params, prop)
-    acc
+
+    def loop(remaining: Int, state: SessionFeedback[A], seed: rng.Seed): IO[SessionFeedback[A]] =
+      if (remaining == 0) IO.pure(state)
+      else
+        for {
+          input  <- pickInput(state, seed)
+          _      <- IO(Try(property(input)))
+          m      <- tracker.measure(sourceFileName, methodName)
+          result <- loop(remaining - 1, step(state, input, m), seed.next)
+        } yield result
+
+    IO(params.initialSeed.getOrElse(rng.Seed.random())).flatMap { seed =>
+      loop(total, SessionFeedback.empty[A], seed)
+    }
   }
 
-  /** Placeholder coverage-guided generator. Wrapped in `Gen.delay` so it's re-evaluated on every
-    * ScalaCheck iteration, giving it a chance to inspect `acc.snapshot` (the cumulative feedback so
-    * far) before deciding what to emit. Today it just prints the feedback and delegates to the
-    * random `Gen` — real selection / mutation logic plugs in here.
-    */
-  private def guidedGen[A](acc: SessionAccumulator[A], random: Gen[A]): Gen[A] = Gen.delay {
-    val f = acc.snapshot
-    val covered = f.cumulativeCoverage.values.iterator.map(_.covered).sum
-    val total = f.cumulativeCoverage.values.iterator.map(_.total).sum
-    val lastInput = f.history.lastOption.fold("—")(_.input.toString)
-    println(
-      f"[guided] iter=${f.iteration}%-3d  coverage=$covered/$total  lines=${f.cumulativeCoverage.size}%-2d  lastInput=$lastInput"
+  /** Pure transition: previous state + (input, measurement) → new state. */
+  private def step[A](
+      state: SessionFeedback[A],
+      input: A,
+      m: CoverageMeasurement
+  ): SessionFeedback[A] = {
+    val exercised = m.perInput.iterator.collect { case (l, c) if c.covered > 0 => l }.toSet
+    val idx = state.iteration
+    SessionFeedback(
+      history = state.history :+ InputRecord(idx, input, exercised),
+      cumulativeCoverage = m.cumulative,
+      hitCountsByLine = exercised.foldLeft(state.hitCountsByLine)((acc, l) =>
+        acc.updated(l, acc.getOrElse(l, 0) + 1)
+      ),
+      firstHitsByLine = exercised.foldLeft(state.firstHitsByLine)((acc, l) =>
+        acc.updatedWith(l)(_.orElse(Some(idx)))
+      ),
+      growthCurve = state.growthCurve :+ m.cumulative.values.iterator.map(_.covered).sum
     )
-    random
+  }
+
+  private def formatFeedback[A](state: SessionFeedback[A]): String = {
+    val covered = state.cumulativeCoverage.values.iterator.map(_.covered).sum
+    val total = state.cumulativeCoverage.values.iterator.map(_.total).sum
+    val lastInput = state.history.lastOption.fold("—")(_.input.toString)
+    f"[guided] iter=${state.iteration}%-3d  coverage=$covered/$total  lines=${state.cumulativeCoverage.size}%-2d  lastInput=$lastInput"
   }
 
   private def warnOnDrift(
@@ -124,63 +144,31 @@ final class TestRunnerHandler(
   private def buildReport[A](
       sourceFile: Path,
       methodName: String,
-      acc: SessionAccumulator[A],
+      feedback: SessionFeedback[A],
       tree: Option[MethodTree],
       src: MethodSourceCoverage
   ): SessionReport[A] = {
-    val f = acc.snapshot
-    val finalCovered = f.growthCurve.lastOption.getOrElse(0)
+    val finalCovered = feedback.growthCurve.lastOption.getOrElse(0)
     val saturation =
-      if (f.growthCurve.isEmpty) None else Some(f.growthCurve.indexOf(finalCovered))
-    val branches = f.cumulativeCoverage.iterator.map { case (line, c) =>
+      Option.when(feedback.growthCurve.nonEmpty)(feedback.growthCurve.indexOf(finalCovered))
+    val branches = feedback.cumulativeCoverage.iterator.map { case (line, c) =>
       line -> BranchSummary(
         c,
-        f.hitCountsByLine.getOrElse(line, 0),
-        f.firstHitsByLine.get(line)
+        feedback.hitCountsByLine.getOrElse(line, 0),
+        feedback.firstHitsByLine.get(line)
       )
     }.toMap
     SessionReport(
       methodName = methodName,
       sourceFile = sourceFile,
-      totalInputs = f.iteration,
+      totalInputs = feedback.iteration,
       methodTree = tree,
       sourceBranchCounter = src.branchCounter,
       branchesByLine = branches,
-      inputLog = f.history,
-      growthCurve = f.growthCurve,
+      inputLog = feedback.history,
+      growthCurve = feedback.growthCurve,
       saturationInputIndex = saturation,
       coveredPositions = src.coveredPositions
     )
   }
-}
-
-/** Mutable accumulator: the property body calls `observe` each iteration; `snapshot` produces an
-  * immutable [[SessionFeedback]] for downstream consumers (report builder, guided strategy).
-  */
-private final class SessionAccumulator[A] {
-  private val history = scala.collection.mutable.ArrayBuffer.empty[InputRecord[A]]
-  private var cumulative: Map[Int, BranchCounter] = Map.empty
-  private val hitCounts = scala.collection.mutable.Map.empty[Int, Int]
-  private val firstHits = scala.collection.mutable.Map.empty[Int, Int]
-  private val growth = scala.collection.mutable.ArrayBuffer.empty[Int]
-
-  def observe(input: A, m: CoverageMeasurement): Unit = {
-    val exercised = m.perInput.iterator.collect { case (l, c) if c.covered > 0 => l }.toSet
-    val idx = history.length
-    history += InputRecord(idx, input, exercised)
-    cumulative = m.cumulative
-    exercised.foreach { l =>
-      hitCounts.update(l, hitCounts.getOrElse(l, 0) + 1)
-      if (!firstHits.contains(l)) firstHits.update(l, idx)
-    }
-    growth += m.cumulative.values.iterator.map(_.covered).sum
-  }
-
-  def snapshot: SessionFeedback[A] = SessionFeedback(
-    history = history.toVector,
-    cumulativeCoverage = cumulative,
-    hitCountsByLine = hitCounts.toMap,
-    firstHitsByLine = firstHits.toMap,
-    growthCurve = growth.toVector
-  )
 }

@@ -8,7 +8,6 @@ import scoverage.serialize.Serializer
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
-import java.util.concurrent.atomic.AtomicBoolean
 import scala.jdk.CollectionConverters._
 
 /** scoverage-backed source-level coverage reader, organised around **per-method measurement
@@ -48,18 +47,17 @@ object ScoverageSourceCoverageReader {
     private val dataDir      = sutRoot.resolve(DataSubdir)
     private val byMethodDir  = dataDir.resolve(ByMethodSubdir)
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
-    private val cleanedOnce  = new AtomicBoolean(false)
 
-    /** Idempotent within one JVM. First call wipes both scoverage's runtime measurement files
-      * and our per-method files; subsequent calls are no-ops (required because scoverage caches
-      * `FileWriter`s after the first SUT execution — deleting later would orphan them).
+    /** Call **once, before any SUT code runs in this JVM** (scoverage's `Invoker` caches
+      * `FileWriter`s after the first SUT execution — deleting later would orphan them). The app
+      * composition root calls this exactly once at startup, so the adapter itself holds no latch.
       */
     override def cleanStaleData: IO[Unit] = for {
-      shouldClean <- IO(cleanedOnce.compareAndSet(false, true) && Files.isDirectory(dataDir))
-      _           <- IO.whenA(shouldClean)(deleteStaleArtifacts)
+      exists <- IO(Files.isDirectory(dataDir))
+      _      <- IO.whenA(exists)(deleteStaleArtifacts())
     } yield ()
 
-    private def deleteStaleArtifacts: IO[Unit] = IO {
+    private def deleteStaleArtifacts(): IO[Unit] = IO {
       Files
         .list(dataDir)
         .iterator()

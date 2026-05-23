@@ -79,29 +79,25 @@ object FileSystemCoverageReportWriter {
   // ────────────────────────────────────────────────────────────────
 
   private def renderDot[A](r: SessionReport[A]): String = {
-    val nodes = new StringBuilder
-    val edges = new StringBuilder
     val total = r.sourceBranchCounter
-
     val pkg = r.methodTree.map(_.packageName).filter(_.nonEmpty).getOrElse("<root>")
     val cls = r.methodTree
       .map(_.className)
       .filter(_.nonEmpty)
       .getOrElse(r.sourceFile.getFileName.toString.stripSuffix(".scala"))
 
-    nodes.append(boxNode("report", White, reportLabel(r, total), penwidth = 2))
-    nodes.append(boxNode("pkg", PackageFill, packageLabel(pkg, total)))
-    nodes.append(
-      boxNode("cls", ClassFill, classLabel(cls, r.sourceFile.getFileName.toString, total))
-    )
-    nodes.append(boxNode("method", White, methodLabel(r.methodName, total), penwidth = 2))
-    edges.append("  report -> pkg;\n")
-    edges.append("  pkg -> cls;\n")
-    edges.append("  cls -> method;\n")
+    val initial = DotState.empty
+      .addNode(boxNode("report", White, reportLabel(r, total), penwidth = 2))
+      .addNode(boxNode("pkg", PackageFill, packageLabel(pkg, total)))
+      .addNode(boxNode("cls", ClassFill, classLabel(cls, r.sourceFile.getFileName.toString, total)))
+      .addNode(boxNode("method", White, methodLabel(r.methodName, total), penwidth = 2))
+      .addEdge("  report -> pkg;\n")
+      .addEdge("  pkg -> cls;\n")
+      .addEdge("  cls -> method;\n")
 
-    r.methodTree.foreach { mt =>
-      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", nodes, edges)
-    }
+    val finalState = r.methodTree.foldLeft(initial)((s, mt) =>
+      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", s)
+    )
 
     s"""digraph "${r.methodName}" {
        |  rankdir=TB;
@@ -109,9 +105,23 @@ object FileSystemCoverageReportWriter {
        |  node [fontname="Helvetica", fontsize=11, color="$Border"];
        |  edge [color="$Border", arrowsize=0.7, fontname="Helvetica", fontsize=9];
        |
-       |${nodes.toString}
-       |${edges.toString}}
+       |${finalState.nodes.mkString}
+       |${finalState.edges.mkString}}
        |""".stripMargin
+  }
+
+  /** Immutable accumulator threaded through [[TreeRenderer.render]]. `freshId` returns the next
+    * id together with a new state carrying the incremented counter; `addNode`/`addEdge` append
+    * to the respective vectors.
+    */
+  private final case class DotState(nextId: Int, nodes: Vector[String], edges: Vector[String]) {
+    def freshId: (String, DotState) = (s"t$nextId", copy(nextId = nextId + 1))
+    def addNode(node: String): DotState = copy(nodes = nodes :+ node)
+    def addEdge(edge: String): DotState = copy(edges = edges :+ edge)
+  }
+
+  private object DotState {
+    val empty: DotState = DotState(1, Vector.empty, Vector.empty)
   }
 
   /** Walks a [[BranchTree]] and emits one DOT node per source node. Three cases, one each:
@@ -125,38 +135,36 @@ object FileSystemCoverageReportWriter {
     *   - [[BranchTree.Leaf]] — terminal expression, coloured by position lookup.
     */
   private final class TreeRenderer(coveredPositions: Set[Pos]) {
-    private var counter = 0
-    private def freshId(): String = { counter += 1; s"t$counter" }
 
     def render(
         tree: BranchTree,
         parentId: String,
         edgeLabel: String,
-        nodes: StringBuilder,
-        edges: StringBuilder
-    ): Unit = tree match {
+        state: DotState
+    ): DotState = tree match {
       case b @ BranchTree.Branch(_, kind, label, arms) =>
-        val id = freshId()
+        val (id, s1) = state.freshId
         val reached = BranchTree.isReached(b, coveredPositions)
         val fill = stateColour(reached, NodeCovered, NodeMissed, NodeUnknown)
-        nodes.append(boxNode(id, fill, branchyLabel(kind, label, reached)))
-        edge(parentId, id, edgeLabel, edges)
-        arms.foreach(a => render(a.body, id, a.label, nodes, edges))
+        val s2 = s1
+          .addNode(boxNode(id, fill, branchyLabel(kind, label, reached)))
+          .addEdge(edgeString(parentId, id, edgeLabel))
+        arms.foldLeft(s2)((s, a) => render(a.body, id, a.label, s))
 
       case BranchTree.Sequence(_, children) =>
-        children.foreach(c => render(c, parentId, edgeLabel, nodes, edges))
+        children.foldLeft(state)((s, c) => render(c, parentId, edgeLabel, s))
 
       case BranchTree.Leaf(pos, text) =>
-        val id = freshId()
+        val (id, s1) = state.freshId
         val covered = coveredPositions(pos)
         val fill = stateColour(covered, LeafCovered, LeafMissed, LeafUnknown)
-        nodes.append(diamondNode(id, fill, leafLabel(text, covered)))
-        edge(parentId, id, edgeLabel, edges)
+        s1.addNode(diamondNode(id, fill, leafLabel(text, covered)))
+          .addEdge(edgeString(parentId, id, edgeLabel))
     }
 
-    private def edge(parent: String, id: String, label: String, edges: StringBuilder): Unit = {
+    private def edgeString(parent: String, id: String, label: String): String = {
       val attr = if (label.isEmpty) "" else s""" [label="${htmlEscape(label)}"]"""
-      edges.append(s"  $parent -> $id$attr;\n")
+      s"  $parent -> $id$attr;\n"
     }
 
     /** Three-state picker: covered / missed / unknown. "Unknown" only applies when scoverage
@@ -279,18 +287,20 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  /** Build a step-shaped polyline for the discrete growth curve. */
+  /** Build a step-shaped polyline for the discrete growth curve. Folds `(prevY, partials)` —
+    * `prevY` tracks the y of the previous point so we emit a horizontal step before each
+    * level change; `partials` accumulates the `x,y` pairs that ultimately get space-joined.
+    */
   private def stepPolyline(curve: Vector[Int], xC: Int => Double, yC: Int => Double): String = {
-    val sb = new StringBuilder
-    var prevY = yC(0)
-    curve.zipWithIndex.foreach { case (cov, i) =>
-      val x = xC(i); val y = yC(cov)
-      if (i == 0) sb.append(f"$x%.1f,$prevY%.1f ")
-      if (y != prevY) sb.append(f"$x%.1f,$prevY%.1f ")
-      sb.append(f"$x%.1f,$y%.1f ")
-      prevY = y
+    val (_, parts) = curve.zipWithIndex.foldLeft((yC(0), Vector.empty[String])) {
+      case ((prevY, acc), (cov, i)) =>
+        val x = xC(i)
+        val y = yC(cov)
+        val first = Option.when(i == 0)(f"$x%.1f,$prevY%.1f").toVector
+        val step = Option.when(y != prevY)(f"$x%.1f,$prevY%.1f").toVector
+        (y, acc ++ first ++ step :+ f"$x%.1f,$y%.1f")
     }
-    sb.toString.trim
+    parts.mkString(" ")
   }
 
   // ────────────────────────────────────────────────────────────────

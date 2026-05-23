@@ -2,11 +2,9 @@ package domain
 
 /** Read-only view of everything observed so far in a fuzz session.
   *
-  * Handed to the coverage-guided generator before each iteration so it can choose its next input
-  * with full knowledge of what prior inputs exercised. Random ignores it.
-  *
-  * The use case also uses this type as its own running accumulator, so "loop state" and "what the
-  * generator sees" are the same value. Parameterised over the input type `A`.
+  * The use case folds an immutable instance through a pure `step` function across iterations, so
+  * "loop state" and "what the guided generator sees" are the same value. Parameterised over the
+  * input type `A`.
   */
 final case class SessionFeedback[A](
     history: Vector[InputRecord[A]],
@@ -16,4 +14,9 @@ final case class SessionFeedback[A](
     growthCurve: Vector[Int]
 ) {
   def iteration: Int = history.size
+}
+
+object SessionFeedback {
+  def empty[A]: SessionFeedback[A] =
+    SessionFeedback[A](Vector.empty, Map.empty, Map.empty, Map.empty, Vector.empty)
 }
