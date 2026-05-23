@@ -44,13 +44,13 @@ final class TestRunnerHandler(
       methodName: String,
       strategy: Strategy
   )(property: A => Boolean): IO[Unit] = for {
-    _        <- tracker.reset
+    _ <- tracker.reset
     feedback <- runScalaCheck(sourceFile, methodName, strategy, property)
-    tree     <- treeBuilder.build(sourceFile, methodName)
-    _        <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
-    src      <- sourceCoverage.methodCoverage(sourceFile, methodName)
-    _        <- warnOnDrift(methodName, tree, src)
-    _        <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
+    tree <- treeBuilder.build(sourceFile, methodName)
+    _ <- sourceCoverage.splitMeasurementsByMethod(sourceFile, methodName)
+    src <- sourceCoverage.methodCoverage(sourceFile, methodName)
+    _ <- warnOnDrift(methodName, tree, src)
+    _ <- writer.write(buildReport(sourceFile, methodName, feedback, tree, src), outDir)
   } yield ()
 
   /** Manual IO loop replicating `Test.check`'s per-iteration recipe:
@@ -86,10 +86,11 @@ final class TestRunnerHandler(
       if (remaining == 0) IO.pure(state)
       else
         for {
-          input  <- pickInput(state, seed)
-          _      <- IO(Try(property(input)))
-          m      <- tracker.measure(sourceFileName, methodName)
-          result <- loop(remaining - 1, step(state, input, m), seed.next)
+          input <- pickInput(state, seed)
+          _ <- IO(Try(property(input)))
+          m <- tracker.measure(sourceFileName, methodName)
+          srcCov <- sourceCoverage.liveBranchCounter(sourceFile, methodName)
+          result <- loop(remaining - 1, step(state, input, m, srcCov.covered), seed.next)
         } yield result
 
     IO(params.initialSeed.getOrElse(rng.Seed.random())).flatMap { seed =>
@@ -97,11 +98,16 @@ final class TestRunnerHandler(
     }
   }
 
-  /** Pure transition: previous state + (input, measurement) → new state. */
+  /** Pure transition: previous state + (input, measurement, source-level cumulative covered) →
+    * new state. `srcCovered` is the cumulative count of *source-level* branch arms covered after
+    * this iteration; it's what the growth curve plots, so the chart and the headline counter
+    * speak the same units.
+    */
   private def step[A](
       state: SessionFeedback[A],
       input: A,
-      m: CoverageMeasurement
+      m: CoverageMeasurement,
+      srcCovered: Int
   ): SessionFeedback[A] = {
     val exercised = m.perInput.iterator.collect { case (l, c) if c.covered > 0 => l }.toSet
     val idx = state.iteration
@@ -114,7 +120,7 @@ final class TestRunnerHandler(
       firstHitsByLine = exercised.foldLeft(state.firstHitsByLine)((acc, l) =>
         acc.updatedWith(l)(_.orElse(Some(idx)))
       ),
-      growthCurve = state.growthCurve :+ m.cumulative.values.iterator.map(_.covered).sum
+      growthCurve = state.growthCurve :+ srcCovered
     )
   }
 

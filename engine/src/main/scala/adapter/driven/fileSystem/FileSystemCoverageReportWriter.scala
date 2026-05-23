@@ -110,9 +110,9 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  /** Immutable accumulator threaded through [[TreeRenderer.render]]. `freshId` returns the next
-    * id together with a new state carrying the incremented counter; `addNode`/`addEdge` append
-    * to the respective vectors.
+  /** Immutable accumulator threaded through [[TreeRenderer.render]]. `freshId` returns the next id
+    * together with a new state carrying the incremented counter; `addNode`/`addEdge` append to the
+    * respective vectors.
     */
   private final case class DotState(nextId: Int, nodes: Vector[String], edges: Vector[String]) {
     def freshId: (String, DotState) = (s"t$nextId", copy(nextId = nextId + 1))
@@ -238,7 +238,7 @@ object FileSystemCoverageReportWriter {
     val mL = 80; val mR = 40; val mT = 60; val mB = 70
     val plotW = width - mL - mR; val plotH = height - mT - mB
     val maxX = r.totalInputs.max(1)
-    val maxY = r.branchesByLine.values.map(_.counter.total).sum.max(1)
+    val maxY = r.sourceBranchCounter.total.max(1)
 
     def xC(i: Int): Double = mL + (i.toDouble / maxX) * plotW
     def yC(v: Int): Double = (height - mB) - (v.toDouble / maxY) * plotH
@@ -276,7 +276,7 @@ object FileSystemCoverageReportWriter {
        |  <rect width="$width" height="$height" fill="white"/>
        |  <text x="${width / 2}" y="32" text-anchor="middle" font-size="17" font-weight="bold">${r.methodName} — coverage growth</text>
        |  <text x="${width / 2}" y="${height - 22}" text-anchor="middle" font-size="12">input index</text>
-       |  <text transform="translate(24, ${height / 2}) rotate(-90)" text-anchor="middle" font-size="12">JVM branches covered (cumulative)</text>
+       |  <text transform="translate(24, ${height / 2}) rotate(-90)" text-anchor="middle" font-size="12">source branches covered (cumulative)</text>
        |  <line x1="$mL" y1="$mT" x2="$mL" y2="${height - mB}" stroke="$Border"/>
        |  <line x1="$mL" y1="${height - mB}" x2="${width - mR}" y2="${height - mB}" stroke="$Border"/>
        |$yTicks
@@ -288,8 +288,8 @@ object FileSystemCoverageReportWriter {
   }
 
   /** Build a step-shaped polyline for the discrete growth curve. Folds `(prevY, partials)` —
-    * `prevY` tracks the y of the previous point so we emit a horizontal step before each
-    * level change; `partials` accumulates the `x,y` pairs that ultimately get space-joined.
+    * `prevY` tracks the y of the previous point so we emit a horizontal step before each level
+    * change; `partials` accumulates the `x,y` pairs that ultimately get space-joined.
     */
   private def stepPolyline(curve: Vector[Int], xC: Int => Double, yC: Int => Double): String = {
     val (_, parts) = curve.zipWithIndex.foldLeft((yC(0), Vector.empty[String])) {

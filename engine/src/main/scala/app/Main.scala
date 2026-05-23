@@ -58,6 +58,7 @@ object Main extends IOApp.Simple {
   // the property body — same shape as a normal ScalaCheck `forAll`.
   override val run: IO[Unit] = for {
     _ <- sourceCoverage.cleanStaleData
+
     _ <- bools.runTests("identity", Strategy.Random) { (b: Boolean) =>
       BoolBench.identity(b); true
     }

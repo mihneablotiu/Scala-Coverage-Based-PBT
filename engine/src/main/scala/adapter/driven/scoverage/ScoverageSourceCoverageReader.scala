@@ -15,8 +15,8 @@ import scala.jdk.CollectionConverters._
   *
   * Once `splitMeasurementsByMethod` has run for a method, the framework reads its coverage
   * exclusively from `by-method/<methodName>.measurements` — scoverage's shared `.measurements.*`
-  * files are not touched again. That makes `methodCoverage` a thin file parser instead of having
-  * to deserialize the full SUT statement map and filter every call.
+  * files are not touched again. That makes `methodCoverage` a thin file parser instead of having to
+  * deserialize the full SUT statement map and filter every call.
   *
   * Layout under `<sutRoot>/target/scala-2.13/scoverage-data/`:
   * {{{
@@ -29,12 +29,12 @@ import scala.jdk.CollectionConverters._
   * {{{
   *   stmt_id<TAB>pos<TAB>line<TAB>is_branch<TAB>count
   * }}}
-  * `pos` is the source character offset — enough to rebuild `MethodSourceCoverage` from the
-  * file alone, no need to re-consult scoverage's map.
+  * `pos` is the source character offset — enough to rebuild `MethodSourceCoverage` from the file
+  * alone, no need to re-consult scoverage's map.
   */
 object ScoverageSourceCoverageReader {
 
-  private val DataSubdir     = "target/scala-2.13/scoverage-data"
+  private val DataSubdir = "target/scala-2.13/scoverage-data"
   private val ByMethodSubdir = "by-method"
 
   /** One row of the per-method TSV file. */
@@ -44,9 +44,17 @@ object ScoverageSourceCoverageReader {
 
   private final class Live(sutRoot: Path) extends SourceCoverageReader {
 
-    private val dataDir      = sutRoot.resolve(DataSubdir)
-    private val byMethodDir  = dataDir.resolve(ByMethodSubdir)
+    private val dataDir = sutRoot.resolve(DataSubdir)
+    private val byMethodDir = dataDir.resolve(ByMethodSubdir)
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
+
+    /** Deserialised once on first access — the static statement map doesn't change during a JVM
+      * run, so re-reading on every per-iteration call would be wasteful. `lazy val` defers the
+      * work until the first reader call.
+      */
+    private lazy val staticCoverage: Option[scoverage.domain.Coverage] =
+      if (coverageFile.exists()) Some(Serializer.deserialize(coverageFile, sutRoot.toFile))
+      else None
 
     /** Call **once, before any SUT code runs in this JVM** (scoverage's `Invoker` caches
       * `FileWriter`s after the first SUT execution — deleting later would orphan them). The app
@@ -54,7 +62,7 @@ object ScoverageSourceCoverageReader {
       */
     override def cleanStaleData: IO[Unit] = for {
       exists <- IO(Files.isDirectory(dataDir))
-      _      <- IO.whenA(exists)(deleteStaleArtifacts())
+      _ <- IO.whenA(exists)(deleteStaleArtifacts())
     } yield ()
 
     private def deleteStaleArtifacts(): IO[Unit] = IO {
@@ -68,16 +76,16 @@ object ScoverageSourceCoverageReader {
       Files.list(byMethodDir).iterator().asScala.foreach(Files.deleteIfExists)
     }
 
-    /** Extracts this method's slice of scoverage's runtime data and writes the per-method TSV
-      * file at `by-method/<methodName>.measurements`. No-op if the static `scoverage.coverage`
-      * map isn't on disk (i.e. SUT never compiled with scoverage enabled).
+    /** Extracts this method's slice of scoverage's runtime data and writes the per-method TSV file
+      * at `by-method/<methodName>.measurements`. No-op if the static `scoverage.coverage` map isn't
+      * on disk (i.e. SUT never compiled with scoverage enabled).
       */
     override def splitMeasurementsByMethod(
         sourceFile: Path,
         methodName: String
     ): IO[Unit] = for {
       exists <- IO(coverageFile.exists())
-      _      <- IO.whenA(exists)(writePerMethodFile(sourceFile, methodName))
+      _ <- IO.whenA(exists)(writePerMethodFile(sourceFile, methodName))
     } yield ()
 
     private def writePerMethodFile(sourceFile: Path, methodName: String): IO[Unit] = IO {
@@ -102,9 +110,32 @@ object ScoverageSourceCoverageReader {
       Files.writeString(outFile, header + rows + "\n", StandardCharsets.UTF_8)
     }
 
-    /** Reads the per-method TSV file produced by `splitMeasurementsByMethod` and reconstructs
-      * the snapshot. Returns `MethodSourceCoverage.Empty` if the file isn't there (caller forgot
-      * to split, or SUT had no scoverage data at all).
+    /** Live source-level branch counter, cheap enough to call per fuzz iteration. Reads the
+      * scoverage measurement files (just integer logs, fast) and intersects fired IDs with the
+      * method's branch IDs derived from the cached static map.
+      */
+    override def liveBranchCounter(
+        sourceFile: Path,
+        methodName: String
+    ): IO[BranchCounter] = IO {
+      staticCoverage.fold(BranchCounter(0, 0)) { coverage =>
+        val sourceFileName = sourceFile.getFileName.toString
+        val branchIds = coverage.statements.iterator
+          .filter(s =>
+            s.branch && s.source.endsWith(sourceFileName) && s.location.method == methodName
+          )
+          .map(_.id)
+          .toSet
+        val firedIds = IOUtils
+          .invoked(IOUtils.findMeasurementFiles(dataDir.toFile).toSeq)
+          .map(_._1)
+        BranchCounter(firedIds.intersect(branchIds).size, branchIds.size)
+      }
+    }
+
+    /** Reads the per-method TSV file produced by `splitMeasurementsByMethod` and reconstructs the
+      * snapshot. Returns `MethodSourceCoverage.Empty` if the file isn't there (caller forgot to
+      * split, or SUT had no scoverage data at all).
       */
     override def methodCoverage(
         sourceFile: Path,
@@ -126,11 +157,11 @@ object ScoverageSourceCoverageReader {
         .map { line =>
           val cols = line.split('\t')
           Row(
-            id     = cols(0).toInt,
-            pos    = cols(1).toInt,
-            line   = cols(2).toInt,
+            id = cols(0).toInt,
+            pos = cols(1).toInt,
+            line = cols(2).toInt,
             branch = cols(3).toBoolean,
-            count  = cols(4).toInt
+            count = cols(4).toInt
           )
         }
         .toList
@@ -138,7 +169,7 @@ object ScoverageSourceCoverageReader {
       MethodSourceCoverage(
         branchCounter = BranchCounter(
           covered = branchRows.count(_.count > 0),
-          total   = branchRows.size
+          total = branchRows.size
         ),
         coveredPositions = rows.iterator.filter(_.count > 0).map(r => Pos(r.pos)).toSet
       )
