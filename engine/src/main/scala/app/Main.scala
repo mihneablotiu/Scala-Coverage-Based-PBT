@@ -17,6 +17,13 @@ import java.nio.file.{Path, Paths}
 
 /** Composition root. Wires driven adapters, builds one handler, instantiates one driving adapter
   * per SUT source file, and dispatches each benchmark.
+  *
+  * Multi-parameter SUT methods are dispatched as `bench[(A, B, ...)]` with `(method _).tupled` to
+  * adapt them to the framework's `A => Any` shape. ScalaCheck auto-derives the tuple `Arbitrary`
+  * from the per-element `Arbitrary` instances.
+  *
+  * Benchmark order in each block is **easy → hard**, top to bottom, matching the layout inside
+  * each SUT file.
   */
 object Main extends IOApp.Simple {
 
@@ -51,29 +58,59 @@ object Main extends IOApp.Simple {
     runner.runTests[A](name, strategy)(a => { body(a); true })
 
   override val run: IO[Unit] = for {
+    // BoolBench — anchors the framework on the smallest input type.
     _ <- bench(bools, "identity", Strategy.Random)(BoolBench.identity)
     _ <- bench(bools, "negate", Strategy.Random)(BoolBench.negate)
+    _ <- bench[(Boolean, Boolean, Boolean)](bools, "threeAgree", Strategy.Random)(
+      (BoolBench.threeAgree _).tupled
+    )
 
+    // IntBench — value-rarity gradient across one to three integers.
     _ <- bench(ints, "isPositive", Strategy.Random)(IntBench.isPositive)
     _ <- bench(ints, "parity", Strategy.Random)(IntBench.parity)
     _ <- bench(ints, "sign", Strategy.Random)(IntBench.sign)
-    _ <- bench(ints, "mod97is13", Strategy.Random)(IntBench.mod97is13)
+    _ <- bench(ints, "magnitudeClass", Strategy.Random)(IntBench.magnitudeClass)
+    _ <- bench(ints, "mod97", Strategy.Random)(IntBench.mod97)
     _ <- bench(ints, "divisibleByThousand", Strategy.Random)(IntBench.divisibleByThousand)
-    _ <- bench(ints, "inSmallRange", Strategy.Random)(IntBench.inSmallRange)
+    _ <- bench[(Int, Int)](ints, "compare", Strategy.Random)((IntBench.compare _).tupled)
+    _ <- bench[(Int, Int)](ints, "sumSign", Strategy.Random)((IntBench.sumSign _).tupled)
+    _ <- bench[(Int, Int)](ints, "quadrant", Strategy.Random)((IntBench.quadrant _).tupled)
+    _ <- bench(ints, "isPerfectSquare", Strategy.Random)(IntBench.isPerfectSquare)
+    _ <- bench(ints, "isPerfectCube", Strategy.Random)(IntBench.isPerfectCube)
     _ <- bench(ints, "isPowerOfTwo", Strategy.Random)(IntBench.isPowerOfTwo)
-    _ <- bench(ints, "isMagic", Strategy.Random)(IntBench.isMagic)
-    _ <- bench(ints, "category", Strategy.Random)(IntBench.category)
+    _ <- bench(ints, "isPalindromeNumber", Strategy.Random)(IntBench.isPalindromeNumber)
+    _ <- bench[(Int, Int)](ints, "divisibilityRelation", Strategy.Random)(
+      (IntBench.divisibilityRelation _).tupled
+    )
     _ <- bench(ints, "classify", Strategy.Random)(IntBench.classify)
+    _ <- bench(ints, "magicNumbers", Strategy.Random)(IntBench.magicNumbers)
+    _ <- bench[(Int, Int, Int)](ints, "triangleType", Strategy.Random)(
+      (IntBench.triangleType _).tupled
+    )
 
+    // ListBench — structural-rarity gradient across one or two lists.
     _ <- bench(lists, "isEmpty", Strategy.Random)(ListBench.isEmpty)
-    _ <- bench(lists, "containsZero", Strategy.Random)(ListBench.containsZero)
     _ <- bench(lists, "sizeClass", Strategy.Random)(ListBench.sizeClass)
-    _ <- bench(lists, "firstIsLast", Strategy.Random)(ListBench.firstIsLast)
-    _ <- bench(lists, "allPositive", Strategy.Random)(ListBench.allPositive)
+    _ <- bench(lists, "firstClass", Strategy.Random)(ListBench.firstClass)
+    _ <- bench(lists, "allSameSign", Strategy.Random)(ListBench.allSameSign)
+    _ <- bench(lists, "sumClass", Strategy.Random)(ListBench.sumClass)
+    _ <- bench(lists, "headTailRelation", Strategy.Random)(ListBench.headTailRelation)
+    _ <- bench(lists, "extremesGap", Strategy.Random)(ListBench.extremesGap)
     _ <- bench(lists, "isSorted", Strategy.Random)(ListBench.isSorted)
+    _ <- bench(lists, "isStrictlySorted", Strategy.Random)(ListBench.isStrictlySorted)
     _ <- bench(lists, "allEqual", Strategy.Random)(ListBench.allEqual)
-    _ <- bench(lists, "isPalindrome", Strategy.Random)(ListBench.isPalindrome)
-    _ <- bench(lists, "sumIsSeven", Strategy.Random)(ListBench.sumIsSeven)
-    _ <- bench(lists, "consecutiveTriple", Strategy.Random)(ListBench.consecutiveTriple)
+    _ <- bench(lists, "palindromeClass", Strategy.Random)(ListBench.palindromeClass)
+    _ <- bench[(List[Int], List[Int])](lists, "lengthCompare", Strategy.Random)(
+      (ListBench.lengthCompare _).tupled
+    )
+    _ <- bench[(List[Int], List[Int])](lists, "isReverseOf", Strategy.Random)(
+      (ListBench.isReverseOf _).tupled
+    )
+    _ <- bench[(List[Int], List[Int])](lists, "haveSameMultiset", Strategy.Random)(
+      (ListBench.haveSameMultiset _).tupled
+    )
+    _ <- bench[(List[Int], Int)](lists, "findTarget", Strategy.Random)(
+      (ListBench.findTarget _).tupled
+    )
   } yield ()
 }

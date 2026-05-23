@@ -1,21 +1,19 @@
 package benchmark.int
 
-/** `Int`-input benchmark spanning the **value-rarity** gradient.
+/** `Int`-input benchmark — increasing difficulty across the file.
   *
-  * Each method is annotated with the approximate probability that the "rare" arm fires under a
-  * uniform `Gen.chooseNum(Int.MinValue, Int.MaxValue)`. Expected hits per 100 inputs make the
-  * thesis story concrete:
+  * Under uniform `Arbitrary[Int]` ScalaCheck mixes in **boundary specials**: `0`, `1`, `-1`,
+  * `Int.MinValue`, `Int.MaxValue`. Predicates aligned with these specials are easy for random;
+  * everything else falls on a gradient from moderate (modular arithmetic) to effectively
+  * unreachable (number-theoretic properties of *large* values, value coincidences between
+  * independent draws, three-side structural constraints).
   *
-  *   - **Trivial** (~50%) — both arms cover almost immediately.
-  *   - **Moderate** (10⁻² – 10⁻³) — random saturates within 100 inputs.
-  *   - **Hard** (10⁻⁴ – 10⁻⁸) — random typically misses; coverage-guided needs to win here.
-  *   - **Effectively unreachable** (1/2³²) — neither will hit under uniform sampling; here a guided
-  *     strategy is *forced* to use the coverage signal to construct the rare value, or it loses
-  *     too.
+  * Sections, top to bottom: trivial → easy → moderate → multi-integer → number properties →
+  * specific-literal showcases → compound multi-integer.
   */
 object IntBench {
 
-  // ── Trivial (~50% per arm) ───────────────────────────────────────────────
+  // ── Trivial: random saturates ────────────────────────────────────────────
 
   def isPositive(n: Int): String =
     if (n > 0) "positive" else "non-positive"
@@ -23,62 +21,109 @@ object IntBench {
   def parity(n: Int): String =
     if (n % 2 == 0) "even" else "odd"
 
-  /** Three-way: positive (~50%) / negative (~50%) / zero (1/2³² — vanishing). */
+  // ── Easy: structural arms reachable via boundary specials ────────────────
+
+  /** Three outcomes; `zero` hits because `0` is a boundary special. */
   def sign(n: Int): String =
     if (n > 0) "positive"
     else if (n < 0) "negative"
     else "zero"
 
-  // ── Moderate (~10⁻² – 10⁻³) ──────────────────────────────────────────────
+  /** Two arms; `huge` requires the magnitude to exceed 10⁹ (~53% under uniform `Int`). */
+  def magnitudeClass(n: Int): String =
+    if (n.toLong.abs > 1_000_000_000L) "huge" else "modest"
 
-  /** ~1% — one residue class out of 97. Random hits a few times per 100 inputs. */
-  def mod97is13(n: Int): String =
-    if (n % 97 == 13) "lucky" else "normal"
+  // ── Moderate: modular arithmetic ─────────────────────────────────────────
 
-  /** ~0.1% — non-zero multiples of 1000. Random borderline in 100 inputs. */
+  /** Three arms. `divisible` (~1%) and `lucky` (~0.5%) are borderline in 100 inputs. */
+  def mod97(n: Int): String =
+    if (n % 97 == 0) "divisible"
+    else if (n % 97 == 13) "lucky"
+    else "ordinary"
+
+  /** Two arms; `round` needs a non-zero multiple of 1000 (~0.1%). */
   def divisibleByThousand(n: Int): String =
-    if (n % 1000 == 0) "round" else "other"
+    if (n != 0 && n % 1000 == 0) "round" else "other"
 
-  // ── Hard (~10⁻⁴ – 10⁻⁸) ──────────────────────────────────────────────────
+  // ── Multi-integer: value coincidences between independent draws ──────────
 
-  /** ~2.3·10⁻⁸ — 100 values out of 2³². Random fails in 100 inputs; this is one of the headline
-    * "random's blind spot" cases the thesis is built on.
+  /** Three arms; `equal` is reachable via boundary specials but covers a ~2⁻³² slice otherwise.
     */
-  def inSmallRange(n: Int): String =
-    if (n >= 0 && n < 100) "small" else "outside"
+  def compare(a: Int, b: Int): String =
+    if (a == b) "equal"
+    else if (a > b) "first-bigger"
+    else "second-bigger"
 
-  /** ~7·10⁻⁹ — the 30 positive powers of two representable in `Int`. */
+  /** Three arms; `zero-sum` needs `a == -b` — hit only when both draws are boundary specials
+    * that cancel (e.g. `(1, -1)`).
+    */
+  def sumSign(a: Int, b: Int): String =
+    if (a + b > 0) "positive-sum"
+    else if (a + b < 0) "negative-sum"
+    else "zero-sum"
+
+  /** Five arms over two coordinates; the four open quadrants are ~25% each, `axis` is the
+    * `x == 0 || y == 0` slice (boundary-reachable, but represents a sub-2⁻³¹ fraction).
+    */
+  def quadrant(x: Int, y: Int): String =
+    if (x > 0 && y > 0) "I"
+    else if (x < 0 && y > 0) "II"
+    else if (x < 0 && y < 0) "III"
+    else if (x > 0 && y < 0) "IV"
+    else "axis"
+
+  // ── Hard: number-theoretic properties (structural, no literal matches) ───
+
+  /** Four arms. The trivial range (`n < 4`) captures boundary specials `0`, `1`. For
+    * `n >= 4`, perfect squares are sparse (~√n out of n) — `perfect-square` is unreachable.
+    */
+  def isPerfectSquare(n: Int): String =
+    if (n < 0) "negative"
+    else if (n < 4) "trivial"
+    else if (isSquare(n.toLong)) "perfect-square"
+    else "not-square"
+
+  /** Four arms. The trivial range (`|n| < 8`) captures boundary specials. For larger `|n|`,
+    * perfect cubes are extremely sparse — `perfect-cube` is unreachable.
+    */
+  def isPerfectCube(n: Int): String =
+    if (n > -8 && n < 8) "trivial"
+    else if (isCube(n.toLong)) "perfect-cube"
+    else "not-cube"
+
+  /** Four arms. The trivial range (`n <= 1`) captures `0`, `1`, `-1`. For `n > 1`, powers of
+    * two are 30 values in `[2, 2³¹)` — `power-of-two` is unreachable under uniform sampling.
+    */
   def isPowerOfTwo(n: Int): String =
-    if (n > 0 && (n & (n - 1)) == 0) "power-of-two" else "not"
+    if (n <= 1) "trivial"
+    else if ((n & (n - 1)) == 0) "power-of-two"
+    else "not-power"
 
-  // ── Effectively unreachable for random (1/2³²) ───────────────────────────
-
-  /** The literal-match case. Random will not hit this in any reasonable number of inputs. */
-  def isMagic(n: Int): String =
-    if (n == 42) "answer" else "ordinary"
-
-  // ── Compound: nested ifs with mixed-difficulty arms ──────────────────────
-
-  /** Four nested decision points. The `n == 42` arm is the unreachable one; the rest spread across
-    * easy/moderate. The thesis-relevant question is whether a guided strategy can isolate the rare
-    * arm without sacrificing the easy ones.
+  /** Three arms. The trivial range (`|n|` ≤ 2 digits) captures small boundary specials. For
+    * multi-digit `n`, palindromic-digit values are very sparse — `palindrome` is unreachable.
     */
-  def category(n: Int): String = {
-    if (n > 100) {
-      if (n % 7 == 0) "big-lucky" else "big"
-    } else if (n == 42) "answer"
-    else if (n > 0) "small"
-    else "non-positive"
+  def isPalindromeNumber(n: Int): String = {
+    val s = n.toLong.abs.toString
+    if (s.length <= 2) "trivial"
+    else if (s == s.reverse) "palindrome"
+    else "non-palindrome"
   }
 
-  // ── Multi-arm match: 5 cases, three difficulty tiers ─────────────────────
+  // ── Multi-integer relationships (structural) ─────────────────────────────
 
-  /** Five-arm `match` — exercises non-`if` branch coverage and mixes:
-    *   - two **unreachable** literal arms (`0`, `42` — each 1/2³²),
-    *   - two **easy** wide arms (`< 0` ≈ 50%, `> 10⁶` ≈ 50%),
-    *   - one **rare-but-reachable** arm (`small-positive`, ≈ 2.3·10⁻⁴).
-    *
-    * Good stress test for any branch-arm prioritisation a guided strategy might do.
+  /** Four arms. The trivial range (`|a|` ≤ 1 or `|b|` ≤ 1) captures boundary-special pairs.
+    * For larger magnitudes, `b | a` and `a | b` are vanishing under independent uniform draws.
+    */
+  def divisibilityRelation(a: Int, b: Int): String =
+    if (a.toLong.abs <= 1L || b.toLong.abs <= 1L) "trivial"
+    else if (a % b == 0) "b-divides-a"
+    else if (b % a == 0) "a-divides-b"
+    else "no-divides"
+
+  // ── Specific-literal showcases (deliberately few) ────────────────────────
+
+  /** Five-arm `match` — two literal arms (`0` reachable via boundary, `42` not), three numeric
+    * guards.
     */
   def classify(n: Int): String = n match {
     case 0                  => "zero"
@@ -86,5 +131,49 @@ object IntBench {
     case x if x < 0         => "negative"
     case x if x > 1_000_000 => "big-positive"
     case _                  => "small-positive"
+  }
+
+  /** Five arms; literal arms `42` and `1729` are unreachable, `-1` is boundary-reachable. The
+    * cleanest "random can't hit specific values" showcase.
+    */
+  def magicNumbers(n: Int): String =
+    if (n == 42) "answer"
+    else if (n == 1729) "ramanujan"
+    else if (n == -1) "negative-one"
+    else if (n < 0) "negative"
+    else "ordinary"
+
+  // ── Compound multi-integer (structural) ──────────────────────────────────
+
+  /** Triangle classification from three side lengths. Five arms:
+    *
+    *   - `invalid` — at least one non-positive side (~87.5% under uniform `Int`).
+    *   - `degenerate` — fails the triangle inequality; the common case among all-positive
+    *     triples because random 32-bit values almost always have one side dwarfing the other
+    *     two or sums that overflow.
+    *   - `equilateral` (a == b == c, P ≈ 2⁻⁶⁴) — effectively unreachable.
+    *   - `isoceles` (two equal, P ≈ 3·2⁻³²) — effectively unreachable.
+    *   - `scalene` — what's left; vanishing under uniform `Int`.
+    *
+    * The strongest "random can't construct" thesis case in this file.
+    */
+  def triangleType(a: Int, b: Int, c: Int): String = {
+    if (a <= 0 || b <= 0 || c <= 0) "invalid"
+    else if (a + b <= c || a + c <= b || b + c <= a) "degenerate"
+    else if (a == b && b == c) "equilateral"
+    else if (a == b || b == c || a == c) "isoceles"
+    else "scalene"
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  private def isSquare(n: Long): Boolean = {
+    val r = math.sqrt(n.toDouble).toLong
+    r * r == n
+  }
+
+  private def isCube(n: Long): Boolean = {
+    val r = math.cbrt(n.toDouble).round
+    r * r * r == n
   }
 }
