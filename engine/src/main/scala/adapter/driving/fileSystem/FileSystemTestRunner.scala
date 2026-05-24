@@ -26,9 +26,16 @@ final class FileSystemTestRunner(
     outBase: Path
 ) extends TestRunner {
 
+  /** Output goes to `<outBase> / <sourceFileStem> / <methodName>` so every method's report sits
+    * inside a folder named after its containing SUT class (e.g. `engine/reports/IntBench/isPrime`).
+    */
   override def runTests[A: Arbitrary](
       methodName: String,
       strategy: Strategy
-  )(property: A => Boolean): IO[Unit] =
-    handler.handle(sourceFile, outBase.resolve(methodName), methodName, strategy)(property)
+  )(property: A => Boolean): IO[Unit] = {
+    val stem = sourceFile.getFileName.toString.stripSuffix(".scala")
+    handler.handle(sourceFile, outBase.resolve(stem).resolve(methodName), methodName, strategy)(
+      property
+    )
+  }
 }

@@ -1,5 +1,7 @@
 package benchmark.util
 
+import scala.annotation.tailrec
+
 /** Number-theoretic predicates shared between `IntBench` and `ListBench`. Each is cheap enough
   * to call per fuzz iteration:
   *
@@ -9,6 +11,8 @@ package benchmark.util
   *     `Int`.
   *   - `isSquare` / `isCube` use `math.sqrt` / `math.cbrt` plus an exact integer check.
   *   - `isDigitPalindrome` reverses the decimal-digit string of `abs(n)`.
+  *   - `collatzStepsBounded` runs the Collatz sequence until it reaches 1, capped at `limit`
+  *     iterations (returns `-1` if the cap is hit).
   */
 object NumberProps {
 
@@ -37,6 +41,15 @@ object NumberProps {
   def isDigitPalindrome(n: Long): Boolean = {
     val s = n.abs.toString
     s == s.reverse
+  }
+
+  def collatzStepsBounded(start: Long, limit: Int): Int = {
+    @tailrec def go(x: Long, count: Int): Int =
+      if (x == 1L) count
+      else if (count >= limit) -1
+      else if (x % 2L == 0L) go(x / 2L, count + 1)
+      else go(3L * x + 1L, count + 1)
+    go(start, 0)
   }
 
   private val FibSet: Set[Int] =
