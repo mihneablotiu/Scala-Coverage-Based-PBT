@@ -82,8 +82,9 @@ object BranchTree {
   def collectLabels(tree: BranchTree): Map[Pos, String] = tree match {
     case Leaf(pos, text) =>
       Map(pos -> text)
-    case Sequence(_, children) =>
-      children.foldLeft(Map.empty[Pos, String])((acc, c) => acc ++ collectLabels(c))
+    case Sequence(pos, children) =>
+      val self = Map(pos -> "<block>")
+      children.foldLeft(self)((acc, c) => acc ++ collectLabels(c))
     case Branch(pos, kind, label, arms) =>
       val self = Map(pos -> s"$kind (${label.text})")
       arms.foldLeft(self)((acc, arm) => acc ++ collectLabels(arm.body))

@@ -101,7 +101,14 @@ object ScalametaBranchTreeBuilder {
       .toList
     branchy match {
       case Nil           => BranchTree.Leaf(posOf(tree), textOf(tree))
-      case single :: Nil => single
+      case single :: Nil =>
+        // Term.Block wraps a sequence of statements (val + if + ...); scoverage tags the block's
+        // own position as a branch arm body. Wrap in a Sequence so its position is preserved in
+        // the BranchTree and the report writer can label it instead of falling back to "?".
+        tree match {
+          case _: Term.Block => BranchTree.Sequence(posOf(tree), List(single))
+          case _             => single
+        }
       case many          => BranchTree.Sequence(posOf(tree), many)
     }
   }
