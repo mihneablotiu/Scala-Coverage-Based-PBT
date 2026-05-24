@@ -15,6 +15,7 @@ import domain.{
 }
 import org.scalacheck.{Arbitrary, Gen, Prop, Test}
 import port.driven.{BranchTreeBuilder, CoverageReportWriter, SourceCoverageReader}
+import usecase.strategy.{FeedbackBiasGuidedGen, MutationGuidedGen, RandomGen}
 
 import java.nio.file.Path
 import scala.util.Try
@@ -75,14 +76,12 @@ final class TestRunnerHandler(
   )(implicit arb: Arbitrary[A]): IO[SessionFeedback[A]] = IO.blocking {
     var feedback = SessionFeedback.empty[A]
 
+    // Each strategy lives in its own module under usecase.strategy; adding a new one is a new
+    // case object in Strategy + a new module file + one new arm here.
     val gen: Gen[A] = strategy match {
-      case Strategy.Random => arb.arbitrary
-      case Strategy.Guided =>
-        // Re-evaluated on every iteration — gives a real guided strategy access to `feedback`.
-        Gen.delay {
-          println(s"[guided] iter=${feedback.iteration}")
-          arb.arbitrary
-        }
+      case Strategy.Random             => RandomGen.gen[A](feedback)
+      case Strategy.MutationGuided     => MutationGuidedGen.gen[A](feedback)
+      case Strategy.FeedbackBiasGuided => FeedbackBiasGuidedGen.gen[A](feedback)
     }
 
     val prop = Prop.forAll(gen) { input =>

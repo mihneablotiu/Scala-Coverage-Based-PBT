@@ -8,6 +8,7 @@ import benchmark.bool.BoolBench
 import benchmark.int.IntBench
 import benchmark.list.ListBench
 import cats.effect.{IO, IOApp}
+import cats.syntax.foldable._
 import domain.Strategy
 import org.scalacheck.{rng, Arbitrary, Test}
 import port.driving.TestRunner
@@ -16,12 +17,12 @@ import usecase.TestRunnerHandler
 import java.nio.file.{Path, Paths}
 
 /** Composition root. Wires driven adapters, builds one handler, instantiates one driving adapter
-  * per SUT source file, and dispatches each benchmark.
+  * per SUT source file, and dispatches each benchmark against *every* configured strategy.
   *
-  * Reports are written under `engine/reports/<SourceFileStem>/<methodName>/...` thanks to the
-  * driving adapter resolving the source-file stem (e.g. `IntBench`) as the first segment.
+  * Reports are written under `engine/reports/<SourceStem>/<methodName>/<strategy.name>/...` —
+  * each (method, strategy) pair owns its own folder so the strategy outputs sit side-by-side.
   *
-  * Multi-parameter SUT methods are dispatched as `bench[(A, B, ...)]` with `(method _).tupled`.
+  * Multi-parameter SUT methods are dispatched as `benchAll[(A, B, ...)]` with `(method _).tupled`.
   * Benchmarks are ordered top → bottom by depth and number of unreached arms.
   */
 object Main extends IOApp.Simple {
@@ -48,7 +49,19 @@ object Main extends IOApp.Simple {
   private val ints: TestRunner = new FileSystemTestRunner(handler, IntSrc, ReportsBase)
   private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
 
-  /** Run a benchmark: call the SUT method on each generated input, ignore the return value. */
+  /** The strategies every benchmark gets run against. Adding one here automatically runs every
+    * benchmark under that strategy too — its outputs land in a sibling folder of the existing
+    * `random/` etc.
+    */
+  private val strategies: List[Strategy] = List(
+    Strategy.Random,
+    Strategy.MutationGuided,
+    Strategy.FeedbackBiasGuided
+  )
+
+  /** Run a benchmark against one strategy: call the SUT method on each generated input, ignore
+    * the return value.
+    */
   private def bench[A: Arbitrary](
       runner: TestRunner,
       name: String,
@@ -56,68 +69,75 @@ object Main extends IOApp.Simple {
   )(body: A => Any): IO[Unit] =
     runner.runTests[A](name, strategy)(a => { body(a); true })
 
+  /** Run a benchmark against every configured strategy, in order. */
+  private def benchAll[A: Arbitrary](
+      runner: TestRunner,
+      name: String
+  )(body: A => Any): IO[Unit] =
+    strategies.traverse_(s => bench(runner, name, s)(body))
+
   override val run: IO[Unit] = for {
     // BoolBench — trivial baselines on the smallest input type.
-    _ <- bench(bools, "identity", Strategy.Random)(BoolBench.identity)
-    _ <- bench(bools, "negate", Strategy.Random)(BoolBench.negate)
-    _ <- bench[(Boolean, Boolean, Boolean)](bools, "threeAgree", Strategy.Random)(
+    _ <- benchAll(bools, "identity")(BoolBench.identity)
+    _ <- benchAll(bools, "negate")(BoolBench.negate)
+    _ <- benchAll[(Boolean, Boolean, Boolean)](bools, "threeAgree")(
       (BoolBench.threeAgree _).tupled
     )
 
     // IntBench — saturated → 1 unreached → 2-3 unreached → 4+ unreached.
-    _ <- bench(ints, "isPositive", Strategy.Random)(IntBench.isPositive)
-    _ <- bench(ints, "parity", Strategy.Random)(IntBench.parity)
-    _ <- bench(ints, "sign", Strategy.Random)(IntBench.sign)
-    _ <- bench(ints, "mod97", Strategy.Random)(IntBench.mod97)
-    _ <- bench(ints, "isPalindromeNumber", Strategy.Random)(IntBench.isPalindromeNumber)
-    _ <- bench(ints, "classify", Strategy.Random)(IntBench.classify)
-    _ <- bench(ints, "divisibleByThousand", Strategy.Random)(IntBench.divisibleByThousand)
-    _ <- bench(ints, "signedPerfectSquare", Strategy.Random)(IntBench.signedPerfectSquare)
-    _ <- bench(ints, "parityPlusSquare", Strategy.Random)(IntBench.parityPlusSquare)
-    _ <- bench[(Int, Int)](ints, "divisibilityRelation", Strategy.Random)(
+    _ <- benchAll(ints, "isPositive")(IntBench.isPositive)
+    _ <- benchAll(ints, "parity")(IntBench.parity)
+    _ <- benchAll(ints, "sign")(IntBench.sign)
+    _ <- benchAll(ints, "mod97")(IntBench.mod97)
+    _ <- benchAll(ints, "isPalindromeNumber")(IntBench.isPalindromeNumber)
+    _ <- benchAll(ints, "classify")(IntBench.classify)
+    _ <- benchAll(ints, "divisibleByThousand")(IntBench.divisibleByThousand)
+    _ <- benchAll(ints, "signedPerfectSquare")(IntBench.signedPerfectSquare)
+    _ <- benchAll(ints, "parityPlusSquare")(IntBench.parityPlusSquare)
+    _ <- benchAll[(Int, Int)](ints, "divisibilityRelation")(
       (IntBench.divisibilityRelation _).tupled
     )
-    _ <- bench(ints, "signedPalindrome", Strategy.Random)(IntBench.signedPalindrome)
-    _ <- bench(ints, "magicNumbers", Strategy.Random)(IntBench.magicNumbers)
-    _ <- bench(ints, "isPrime", Strategy.Random)(IntBench.isPrime)
-    _ <- bench(ints, "isFibonacci", Strategy.Random)(IntBench.isFibonacci)
-    _ <- bench(ints, "collatzClass", Strategy.Random)(IntBench.collatzClass)
-    _ <- bench[(Int, Int, Int)](ints, "triangleType", Strategy.Random)(
+    _ <- benchAll(ints, "signedPalindrome")(IntBench.signedPalindrome)
+    _ <- benchAll(ints, "magicNumbers")(IntBench.magicNumbers)
+    _ <- benchAll(ints, "isPrime")(IntBench.isPrime)
+    _ <- benchAll(ints, "isFibonacci")(IntBench.isFibonacci)
+    _ <- benchAll(ints, "collatzClass")(IntBench.collatzClass)
+    _ <- benchAll[(Int, Int, Int)](ints, "triangleType")(
       (IntBench.triangleType _).tupled
     )
-    _ <- bench(ints, "deepIntClassify", Strategy.Random)(IntBench.deepIntClassify)
-    _ <- bench[(Int, Int, Int)](ints, "deepIntTriple", Strategy.Random)(
+    _ <- benchAll(ints, "deepIntClassify")(IntBench.deepIntClassify)
+    _ <- benchAll[(Int, Int, Int)](ints, "deepIntTriple")(
       (IntBench.deepIntTriple _).tupled
     )
 
     // ListBench — saturated → 1 unreached → 2-3 unreached → 4+ unreached.
-    _ <- bench(lists, "isEmpty", Strategy.Random)(ListBench.isEmpty)
-    _ <- bench(lists, "sizeClass", Strategy.Random)(ListBench.sizeClass)
-    _ <- bench(lists, "allSameSign", Strategy.Random)(ListBench.allSameSign)
-    _ <- bench[(List[Int], List[Int])](lists, "lengthCompare", Strategy.Random)(
+    _ <- benchAll(lists, "isEmpty")(ListBench.isEmpty)
+    _ <- benchAll(lists, "sizeClass")(ListBench.sizeClass)
+    _ <- benchAll(lists, "allSameSign")(ListBench.allSameSign)
+    _ <- benchAll[(List[Int], List[Int])](lists, "lengthCompare")(
       (ListBench.lengthCompare _).tupled
     )
-    _ <- bench(lists, "sumClass", Strategy.Random)(ListBench.sumClass)
-    _ <- bench(lists, "isStrictlySorted", Strategy.Random)(ListBench.isStrictlySorted)
-    _ <- bench(lists, "allEqual", Strategy.Random)(ListBench.allEqual)
-    _ <- bench(lists, "extremesGap", Strategy.Random)(ListBench.extremesGap)
-    _ <- bench(lists, "palindromeClass", Strategy.Random)(ListBench.palindromeClass)
-    _ <- bench(lists, "listMaxMin", Strategy.Random)(ListBench.listMaxMin)
-    _ <- bench[(List[Int], List[Int])](lists, "prefixCheck", Strategy.Random)(
+    _ <- benchAll(lists, "sumClass")(ListBench.sumClass)
+    _ <- benchAll(lists, "isStrictlySorted")(ListBench.isStrictlySorted)
+    _ <- benchAll(lists, "allEqual")(ListBench.allEqual)
+    _ <- benchAll(lists, "extremesGap")(ListBench.extremesGap)
+    _ <- benchAll(lists, "palindromeClass")(ListBench.palindromeClass)
+    _ <- benchAll(lists, "listMaxMin")(ListBench.listMaxMin)
+    _ <- benchAll[(List[Int], List[Int])](lists, "prefixCheck")(
       (ListBench.prefixCheck _).tupled
     )
-    _ <- bench[(List[Int], List[Int])](lists, "isReverseOf", Strategy.Random)(
+    _ <- benchAll[(List[Int], List[Int])](lists, "isReverseOf")(
       (ListBench.isReverseOf _).tupled
     )
-    _ <- bench[(List[Int], List[Int])](lists, "haveSameMultiset", Strategy.Random)(
+    _ <- benchAll[(List[Int], List[Int])](lists, "haveSameMultiset")(
       (ListBench.haveSameMultiset _).tupled
     )
-    _ <- bench(lists, "allPrime", Strategy.Random)(ListBench.allPrime)
-    _ <- bench(lists, "primeListShape", Strategy.Random)(ListBench.primeListShape)
-    _ <- bench(lists, "isPermutation", Strategy.Random)(ListBench.isPermutation)
-    _ <- bench[(List[Int], List[Int])](lists, "deepListRelation", Strategy.Random)(
+    _ <- benchAll(lists, "allPrime")(ListBench.allPrime)
+    _ <- benchAll(lists, "primeListShape")(ListBench.primeListShape)
+    _ <- benchAll(lists, "isPermutation")(ListBench.isPermutation)
+    _ <- benchAll[(List[Int], List[Int])](lists, "deepListRelation")(
       (ListBench.deepListRelation _).tupled
     )
-    _ <- bench(lists, "deepListShape", Strategy.Random)(ListBench.deepListShape)
+    _ <- benchAll(lists, "deepListShape")(ListBench.deepListShape)
   } yield ()
 }
