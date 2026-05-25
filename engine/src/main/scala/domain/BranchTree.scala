@@ -6,11 +6,11 @@ package domain
   *
   * Three node kinds, deliberately few:
   *
-  *   - [[Branch]] — a decision point. The construct kind ("if", "match", "while", "try", "partial",
-  *     …) is a free-form `String` discriminator, not a separate ADT variant. The renderer draws
-  *     every branch the same way: a box with `kind` + `label` and one outgoing edge per arm.
-  *     **Adding a new construct is a single new case in the AST walker — this file and the renderer
-  *     don't change.**
+  *   - [[Branch]] — a decision point. The construct kind ("if", "match", "while", "partial", …) is
+  *     a free-form `String` discriminator, not a separate ADT variant. The renderer draws every
+  *     branch the same way: a box with `kind` + `label` and one outgoing edge per arm. **Adding a
+  *     new construct is a single new case in the AST walker — this file and the renderer don't
+  *     change.**
   *   - [[Sequence]] — multiple sibling subtrees rooted at the same parent. Used when a `Term.Block`
   *     contains several branchy statements, or a non-branchy parent (e.g. a `Term.Apply`) hides
   *     multiple branchy descendants.

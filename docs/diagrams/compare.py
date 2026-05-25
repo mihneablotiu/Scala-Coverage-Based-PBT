@@ -278,17 +278,6 @@ def _sort_methods(items: List[Tuple[Tuple[str, str], Dict[str, Report]]],
     return sorted(items, key=key)
 
 
-def _bench_separators(items: List[Tuple[Tuple[str, str], Dict[str, Report]]]) -> List[int]:
-    """Indices in `items` at which the bench label changes (excluding 0)."""
-    seps: List[int] = []
-    last = None
-    for i, ((b, _), _) in enumerate(items):
-        if last is not None and b != last:
-            seps.append(i)
-        last = b
-    return seps
-
-
 def _strategy_chart(
     items: List[Tuple[Tuple[str, str], Dict[str, Report]]],
     extract: Callable[[Report], float],
@@ -299,7 +288,6 @@ def _strategy_chart(
     out: Path,
     marker_fn: Optional[Callable[[str, Report, Dict[str, Report]],
                                   Optional[Tuple[int, str]]]] = None,
-    show_bench_headers: bool = False,
 ) -> None:
     """Horizontal grouped bars: one band per method, three bars per band.
 
@@ -307,35 +295,23 @@ def _strategy_chart(
     a ○-and-label marker on a guided bar — used by the plateau chart to show
     "matched random's coverage at input #N" when the guided strategy went
     above random's ceiling.
-
-    When `show_bench_headers` is set (the suite chart) each new bench gets a
-    horizontal banner above its first method, with the bench name in bold —
-    the same convention thesis figures use when grouping rows by category.
     """
     if not items:
         return
 
     bar_h = 0.30          # one bar's thickness, in data units
     inner_gap = 0.04      # gap between the 3 bars within a band
-    outer_gap = 0.55      # gap between consecutive bands of the same bench
-    header_gap = 1.20     # extra gap before a bench header (only used when banners are on)
+    outer_gap = 0.55      # gap between consecutive bands
 
     band_h = 3 * bar_h + 2 * inner_gap
 
-    # Pre-compute each band's top-y. When bench headers are shown we add
-    # `header_gap` of vertical space before the first band of every bench
-    # (including the very first) to make room for the banner text.
     band_top: List[float] = []
     y = 0.0
-    last_bench: Optional[str] = None
-    for ((bench, _), _) in items:
-        if show_bench_headers and bench != last_bench:
-            y += header_gap
-            last_bench = bench
+    for _ in items:
         band_top.append(y)
         y += band_h + outer_gap
 
-    total_data_h = y - outer_gap  # actual data extent
+    total_data_h = y - outer_gap
     # Figure height — roughly 0.55 inches per band, with a floor for tiny benches.
     fig_h = max(2.6, total_data_h * 0.55 + 1.6)
 
@@ -344,7 +320,7 @@ def _strategy_chart(
     y_ticks: List[float] = []
     y_labels: List[str] = []
 
-    for i, (((bench, method), by_s), bt) in enumerate(zip(items, band_top)):
+    for ((_, method), by_s), bt in zip(items, band_top):
         for j, s in enumerate(STRATEGIES):
             r = by_s.get(s)
             if r is None:
@@ -379,23 +355,6 @@ def _strategy_chart(
     ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT, loc="left", pad=12)
     ax.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
     style_axes(ax)
-
-    # Bench banners + thin separator lines on the suite chart.
-    if show_bench_headers:
-        bench_first_idx: Dict[str, int] = {}
-        for i, ((b, _), _) in enumerate(items):
-            bench_first_idx.setdefault(b, i)
-        for bench, idx in bench_first_idx.items():
-            header_y = band_top[idx] - header_gap * 0.55
-            ax.text(xlim[0] + (xlim[1] - xlim[0]) * 0.005, header_y, bench,
-                    ha="left", va="center", fontsize=11, fontweight="bold",
-                    color=TEXT,
-                    bbox=dict(boxstyle="round,pad=0.32",
-                              facecolor="#ECEFF1", edgecolor=STROKE,
-                              linewidth=0.6))
-            if idx > 0:
-                sep_y = band_top[idx] - header_gap * 0.95
-                ax.axhline(sep_y, color=STROKE, linewidth=0.7, alpha=0.35, zorder=1)
 
     # Legend below the chart. Offset is tuned to scale roughly inversely with
     # figure height so tall charts don't push the legend off the page.
