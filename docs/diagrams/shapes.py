@@ -36,7 +36,6 @@ COLOR_BG      = "#FFFFFF"
 COLOR_NEUTRAL = "#ECEFF1"   # neutral fill — outer container
 
 FONT_BASE     = "Helvetica"
-FONT_MONO     = "Menlo"
 OUT_DIR       = os.path.join(os.path.dirname(__file__), "..", "images")
 
 
@@ -132,28 +131,6 @@ def column(
     )
 
 
-def container(
-    ax,
-    x: float, y: float, w: float, h: float, label: str = "",
-    fill: str = "#FFFFFF", edge: str = COLOR_STROKE,
-    lw: float = 1.8, radius: float = 0.3,
-    label_size: float = 14,
-):
-    """A larger, filled container box (e.g. the Use Case wrapper)."""
-    rect = FancyBboxPatch(
-        (x, y), w, h,
-        boxstyle=f"round,pad=0.0,rounding_size={radius}",
-        facecolor=fill, edgecolor=edge, linewidth=lw,
-    )
-    ax.add_patch(rect)
-    if label:
-        ax.text(
-            x + 0.4, y + h - 0.45, label,
-            ha="left", va="center", fontsize=label_size, fontweight="bold",
-            color=COLOR_TEXT,
-        )
-
-
 def arrow(
     ax,
     x1: float, y1: float, x2: float, y2: float,
@@ -169,13 +146,6 @@ def arrow(
         connectionstyle=connection,
     )
     ax.add_patch(a)
-
-
-def curved_arrow(
-    ax, x1: float, y1: float, x2: float, y2: float,
-    rad: float = 0.3, color: str = COLOR_STROKE, lw: float = 1.6,
-):
-    arrow(ax, x1, y1, x2, y2, color=color, lw=lw, connection=f"arc3,rad={rad}")
 
 
 def label(ax, x: float, y: float, text: str,

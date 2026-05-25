@@ -29,8 +29,8 @@ final class FileSystemTestRunner(
   /** Output goes to `<outBase> / <sourceFileStem> / <methodName> / <strategy.name>` so each
     * (method, strategy) pair lives in its own folder — e.g.
     * `engine/reports/IntBench/isPrime/random/` and
-    * `engine/reports/IntBench/isPrime/mutation-guided/` sit side-by-side under the same
-    * method directory.
+    * `engine/reports/IntBench/isPrime/mutation-guided/` sit side-by-side under the same method
+    * directory.
     */
   override def runTests[A: Arbitrary](
       methodName: String,

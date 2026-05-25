@@ -4,8 +4,8 @@ package benchmark.bool
   *
   * The whole input space for `Boolean` is `{true, false}`, so any predicate over a single `Boolean`
   * has at most 2 inputs to cover. For tuples of `Boolean`s the space is `2ⁿ` and random saturates
-  * essentially immediately. Used to anchor the framework on the simplest input type: if these
-  * don't reach 100%, something is structurally broken.
+  * essentially immediately. Used to anchor the framework on the simplest input type: if these don't
+  * reach 100%, something is structurally broken.
   */
 object BoolBench {
 

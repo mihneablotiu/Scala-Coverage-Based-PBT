@@ -26,9 +26,21 @@ object ScoverageSourceCoverageReader {
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
 
     /** Deserialised once on first read — the static statement map doesn't change during a JVM run.
+      *
+      * Missing `scoverage.coverage` means the SUT was never compiled with `coverageEnabled := true`
+      * (or the data dir was wiped between compile and run). Failing loudly here surfaces the
+      * misconfiguration; silently returning an empty coverage would have every benchmark report
+      * `0 of 0 branches` and look like genuine results.
       */
-    private lazy val staticCoverage: Option[scoverage.domain.Coverage] =
-      Option.when(coverageFile.exists())(Serializer.deserialize(coverageFile, sutRoot.toFile))
+    private lazy val staticCoverage: scoverage.domain.Coverage = {
+      if (!coverageFile.exists())
+        sys.error(
+          s"scoverage data file not found at $coverageFile. The SUT was not compiled with " +
+            "scoverage instrumentation — make sure `coverageEnabled := true` is set on the SUT " +
+            "project and that `sut/compile` ran before this engine."
+        )
+      Serializer.deserialize(coverageFile, sutRoot.toFile)
+    }
 
     /** One-shot wipe of stale measurement files. The `lazy val` gives thread-safe atomic
       * single-execution semantics, so the use case can call `cleanStaleData` at the start of every
@@ -51,19 +63,16 @@ object ScoverageSourceCoverageReader {
         sourceFile: Path,
         methodName: String
     ): IO[MethodSourceCoverage] = IO {
-      staticCoverage.fold(MethodSourceCoverage.Empty) { coverage =>
-        val sourceFileName = sourceFile.getFileName.toString
-        val firedIds = readFiredIds
-        val methodStmts = coverage.statements.iterator
-          .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
-          .toVector
-        MethodSourceCoverage(
-          coveredPositions =
-            methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet,
-          branchLines =
-            methodStmts.iterator.filter(_.branch).map(s => Pos(s.start) -> s.line).toMap
-        )
-      }
+      val sourceFileName = sourceFile.getFileName.toString
+      val firedIds = readFiredIds
+      val methodStmts = staticCoverage.statements.iterator
+        .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
+        .toVector
+      MethodSourceCoverage(
+        coveredPositions =
+          methodStmts.iterator.filter(s => firedIds(s.id)).map(s => Pos(s.start)).toSet,
+        branchLines = methodStmts.iterator.filter(_.branch).map(s => Pos(s.start) -> s.line).toMap
+      )
     }
 
     private def readFiredIds: Set[Int] =

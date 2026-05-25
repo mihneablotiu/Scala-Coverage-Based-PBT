@@ -33,10 +33,14 @@ import scala.util.Try
   *   5. Hand a [[SessionReport]] to the writer.
   *
   * All coverage is source-level — every per-iteration delta comes from diffing the in-session
-  * `coveredBranches` set against scoverage's cumulative state. The one-JVM-per-strategy
-  * orchestration (see `app.Main`) keeps scoverage's cumulative view honest: every benchmark queries
-  * a state that contains only its own contribution, so the diff above is the right "this
-  * iteration's new positions" answer.
+  * `coveredBranches` set against scoverage's cumulative state. Two layers keep that diff honest:
+  *
+  *   - **JVM isolation per strategy** (see `app.Main`): each `runMain` forks a fresh JVM, so
+  *     scoverage's process-global `Invoker` only ever holds one strategy's hits.
+  *   - **Per-method filtering** (see `ScoverageSourceCoverageReader.methodCoverage`): within a JVM,
+  *     scoverage accumulates across every benchmark, but each query is scoped to the asked-for
+  *     `(sourceFile, methodName)`, so a report only ever sees statements that belong to that
+  *     specific method.
   *
   * Two pragmatic compromises bridge ScalaCheck's sync `Prop.forAll` body to the `IO`-typed ports:
   *
@@ -139,8 +143,11 @@ final class TestRunnerHandler(
       src: MethodSourceCoverage
   ): SessionReport[A] = {
     val finalCovered = feedback.growthCurve.lastOption.getOrElse(0)
+    // `indexOf` on an all-zero curve returns 0, which would misleadingly report
+    // "saturated at input #0" for methods where no branch was ever covered. Only
+    // emit a saturation index when the curve actually rose above zero.
     val saturation =
-      Option.when(feedback.growthCurve.nonEmpty)(feedback.growthCurve.indexOf(finalCovered))
+      Option.when(finalCovered > 0)(feedback.growthCurve.indexOf(finalCovered))
     // Each branch's `Pos` appears in at most one record's `newlyCoveredBranches` (the iteration
     // that first covered it), so this flat-map → toMap is unambiguous.
     val firstHits: Map[Pos, Int] = feedback.history.iterator

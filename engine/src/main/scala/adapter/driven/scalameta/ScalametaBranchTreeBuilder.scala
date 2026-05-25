@@ -109,7 +109,7 @@ object ScalametaBranchTreeBuilder {
           case _: Term.Block => BranchTree.Sequence(posOf(tree), List(single))
           case _             => single
         }
-      case many          => BranchTree.Sequence(posOf(tree), many)
+      case many => BranchTree.Sequence(posOf(tree), many)
     }
   }
 

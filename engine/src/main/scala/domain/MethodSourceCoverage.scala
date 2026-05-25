@@ -15,6 +15,7 @@ final case class MethodSourceCoverage(
     coveredPositions: Set[Pos],
     branchLines: Map[Pos, Int]
 ) {
+
   /** Branch positions actually covered — the intersection of "fired positions" and "branches". */
   def coveredBranchPositions: Set[Pos] = coveredPositions.intersect(branchLines.keySet)
 

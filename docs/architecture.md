@@ -166,8 +166,8 @@ contract? Why not just bake it into the use case?*
 
 **What it does.** Takes a Scala source file and a method name, and
 returns the method's enclosing package, class, and a tree of its
-branchy expressions (`if`, `match`, `while`, `try`, partial
-functions, …). Each node carries its source position.
+branchy expressions (`if`, `match`, `while`, partial functions).
+Each node carries its source position.
 
 **Why a port.** Parsing Scala is a heavy lift; we use Scalameta.
 But the *purpose* of this port is not "parse Scala" — it's

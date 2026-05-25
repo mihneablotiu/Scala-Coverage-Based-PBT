@@ -70,14 +70,14 @@ object BranchTree {
     case Sequence(_, children) => children.exists(c => isReached(c, covered))
   }
 
-  /** Walks the tree and records a human-readable description for every node's position. Used by
-    * the report writer to label each scoverage branch position with what it actually represents.
+  /** Walks the tree and records a human-readable description for every node's position. Used by the
+    * report writer to label each scoverage branch position with what it actually represents.
     *
     *   - Each `Leaf(pos, text)` contributes `pos -> text` — the terminal arm's body text (e.g.
     *     `"unsorted"`, `"zero"`).
-    *   - Each `Branch(pos, kind, label, _)` contributes `pos -> s"$kind ($label)"` — the
-    *     construct + condition for a sub-decision (e.g. `"if (xs == xs.sorted)"`). This is what a
-    *     nested `if`'s position scoverage reports as a "branch arm fired" actually means.
+    *   - Each `Branch(pos, kind, label, _)` contributes `pos -> s"$kind ($label)"` — the construct
+    *     + condition for a sub-decision (e.g. `"if (xs == xs.sorted)"`). This is what a nested
+    *     `if`'s position scoverage reports as a "branch arm fired" actually means.
     */
   def collectLabels(tree: BranchTree): Map[Pos, String] = tree match {
     case Leaf(pos, text) =>

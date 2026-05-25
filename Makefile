@@ -20,7 +20,7 @@ STRATEGIES     := random mutation-guided feedback-bias-guided
 help: ## Show this help.
 	@echo "Coverage-based PBT — common commands"
 	@echo
-	@echo "  make all             Run the whole pipeline: clean + build + run + svg"
+	@echo "  make all             ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg"
 	@echo "  make build           Compile all subprojects"
 	@echo "  make run             Run every strategy in $(STRATEGIES), each in its own forked JVM"
 	@echo "  make svg             Render every coverage.dot under $(REPORTS_DIR) to SVG"
@@ -30,7 +30,12 @@ help: ## Show this help.
 	@echo "  make fmt             scalafmt on every Scala source"
 
 # ── One-shot pipeline ──────────────────────────────────────────────────
-all: clean build run svg ## Wipe everything, rebuild, run the suite, render SVGs.
+# `all` is the single command for a fully reproducible from-scratch run: format the source,
+# wipe every build/report artefact, regenerate the architecture diagrams, recompile, run each
+# strategy in its own forked JVM, and render every coverage DOT to SVG. Run serially (do not
+# pass `-j`); the steps have implicit ordering dependencies (fmt before compile, clean before
+# build, run before svg, …).
+all: fmt clean diagrams build run svg ## ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg.
 
 # ── Scala build ────────────────────────────────────────────────────────
 build: ## Compile every subproject.

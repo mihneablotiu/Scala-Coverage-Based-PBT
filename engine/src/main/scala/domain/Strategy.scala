@@ -35,9 +35,10 @@ object Strategy {
     val name = "feedback-bias-guided"
   }
 
-  /** All known strategies, in the order benchmarks should iterate them when a single composition
-    * root runs more than one. Single source of truth for `Strategy.parse` and any external
-    * orchestrator (`Makefile`'s `STRATEGIES` list, tests, …).
+  /** Canonical list of every strategy, in the order they should appear in reports and external
+    * orchestrators. Single source of truth for [[Strategy.parse]] and the Makefile's `STRATEGIES`
+    * list. Adding a new case object here without adding it to `all` would make it unreachable from
+    * the CLI.
     */
   val all: List[Strategy] = List(Random, MutationGuided, FeedbackBiasGuided)
 

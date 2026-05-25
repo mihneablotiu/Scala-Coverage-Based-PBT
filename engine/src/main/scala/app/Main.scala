@@ -20,8 +20,11 @@ import java.nio.file.{Path, Paths}
   * One-JVM-per-strategy is the design choice that keeps the scoverage runtime — which has no notion
   * of a session and accumulates statement hits within a JVM — from leaking one strategy's coverage
   * into the next. Each `engine/runMain app.Main <strategy>` invocation forks a fresh JVM (see
-  * `fork := true` in `build.sbt`), so every benchmark queries a scoverage state that contains only
-  * its own contribution. Multi-strategy orchestration lives in the Makefile.
+  * `fork := true` in `build.sbt`), so the scoverage `Invoker` only ever holds the hits of this
+  * single strategy. Within that JVM, scoverage still accumulates across every benchmark; the
+  * per-benchmark report stays method-scoped because `ScoverageSourceCoverageReader.methodCoverage`
+  * filters statements by `(sourceFile, methodName)`. Multi-strategy orchestration lives in the
+  * Makefile.
   *
   * Reports are written under `engine/reports/<SourceStem>/<methodName>/<strategy.name>/...` — each
   * (method, strategy) pair owns its own folder so the strategy outputs sit side-by-side.
@@ -37,8 +40,13 @@ object Main extends IOApp {
   private val IntSrc: Path = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
   private val ListSrc: Path = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
 
+  /** 100 inputs / seed `0L` — match what the docs claim and survive any future ScalaCheck default
+    * change. Per-strategy reproducibility hinges on these two knobs.
+    */
   private val testParams: Test.Parameters =
-    Test.Parameters.default.withInitialSeed(rng.Seed(0L))
+    Test.Parameters.default
+      .withInitialSeed(rng.Seed(0L))
+      .withMinSuccessfulTests(100)
 
   private val sourceCoverage = ScoverageSourceCoverageReader(SutRoot)
 

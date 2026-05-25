@@ -8,8 +8,8 @@ import benchmark.util.NumberProps
   * Sections:
   *   - **Saturated** (random hits every arm) — trivial baselines.
   *   - **One unreached arm** — single rare condition.
-  *   - **Two or three unreached arms** — structurally rare conditions split into sub-arms so
-  *     the unreached leaves sit in distinct sub-trees.
+  *   - **Two or three unreached arms** — structurally rare conditions split into sub-arms so the
+  *     unreached leaves sit in distinct sub-trees.
   *   - **Four+ unreached arms** — compound trees and algorithm-driven classification.
   */
 object IntBench {
@@ -55,9 +55,9 @@ object IntBench {
 
   // ── Two or three unreached arms, spread across sub-trees ─────────────────
 
-  /** Four arms. Once the `divisible by 1000` filter fires (rare under random), the inner sign
-    * split sends inputs to `positive-round` or `negative-round` — both unreachable, in distinct
-    * sub-trees from `other`.
+  /** Four arms. Once the `divisible by 1000` filter fires (rare under random), the inner sign split
+    * sends inputs to `positive-round` or `negative-round` — both unreachable, in distinct sub-trees
+    * from `other`.
     */
   def divisibleByThousand(n: Int): String =
     if (n == 0) "zero"
@@ -79,8 +79,8 @@ object IntBench {
       else "negative-large-non-square"
     }
 
-  /** Five arms. After the parity split (both reach), the perfect-square check inside each
-    * parity sub-tree is unreachable for large random `n` — so the *two* unreachable arms live in
+  /** Five arms. After the parity split (both reach), the perfect-square check inside each parity
+    * sub-tree is unreachable for large random `n` — so the *two* unreachable arms live in
     * *different* parity sub-trees rather than both on one side.
     */
   def parityPlusSquare(n: Int): String =
@@ -104,8 +104,8 @@ object IntBench {
 
   // ── Four+ unreached arms — compound trees and algorithm-driven ───────────
 
-  /** Four arms. Trivial range captures boundary specials, then palindromic-digit numbers split
-    * by sign — `positive-palindrome` and `negative-palindrome` are both unreached, sitting in
+  /** Four arms. Trivial range captures boundary specials, then palindromic-digit numbers split by
+    * sign — `positive-palindrome` and `negative-palindrome` are both unreached, sitting in
     * different sub-trees of the palindrome branch.
     */
   def signedPalindrome(n: Int): String = {
@@ -117,8 +117,8 @@ object IntBench {
     } else "non-palindrome"
   }
 
-  /** Five arms. `42` and `1729` are non-boundary literals (both unreached); `-1` is boundary.
-    * One unreached arm sits in each of the literal sub-branches.
+  /** Five arms. `42` and `1729` are non-boundary literals (both unreached); `-1` is boundary. One
+    * unreached arm sits in each of the literal sub-branches.
     */
   def magicNumbers(n: Int): String =
     if (n == 42) "answer"
@@ -127,9 +127,9 @@ object IntBench {
     else if (n < 0) "negative"
     else "ordinary"
 
-  /** Single-`Int` with magnitude bands × primality. Small primes and medium primes are
-    * unreachable (their magnitude bands contain no boundary specials); only the large band's
-    * `large-prime` arm hits via the Mersenne-prime `MaxValue`.
+  /** Single-`Int` with magnitude bands × primality. Small primes and medium primes are unreachable
+    * (their magnitude bands contain no boundary specials); only the large band's `large-prime` arm
+    * hits via the Mersenne-prime `MaxValue`.
     */
   def isPrime(n: Int): String =
     if (n < 2) "below-two"
@@ -144,8 +144,8 @@ object IntBench {
       else "large-composite"
     }
 
-  /** Trivial range / Fibonacci membership × magnitude bands. No chooseNum special is Fibonacci
-    * for `n ≥ 2`, so the entire Fibonacci sub-tree is unreachable.
+  /** Trivial range / Fibonacci membership × magnitude bands. No chooseNum special is Fibonacci for
+    * `n ≥ 2`, so the entire Fibonacci sub-tree is unreachable.
     */
   def isFibonacci(n: Int): String =
     if (n < 0) "negative"
@@ -156,12 +156,12 @@ object IntBench {
       else "large-fib"
     } else "non-fib"
 
-  /** Algorithm-driven: Collatz step count classified by `(magnitude band, step count band)`.
-    * The unreached arms are distributed across *multiple* sub-trees:
+  /** Algorithm-driven: Collatz step count classified by `(magnitude band, step count band)`. The
+    * unreached arms are distributed across *multiple* sub-trees:
     *
     *   - the top-level `diverges` (cap reached, very rare);
-    *   - the small-`n` sub-tree (`small-short`, `small-long` — random doesn't produce `n` in
-    *     [2, 100)`);
+    *   - the small-`n` sub-tree (`small-short`, `small-long` — random doesn't produce `n` in [2,
+    *     100)`);
     *   - the medium-`n` sub-tree (`medium-short`, `medium-typical` — `n` in `[100, 10⁶)`);
     *   - inside the large-`n` sub-tree, `large-fast` (Collatz < 100 steps) is also rare.
     */
@@ -182,9 +182,9 @@ object IntBench {
       }
     }
 
-  /** Triangle classification — five outcomes; only `invalid` and `degenerate` reach under
-    * uniform random `Int`. The whole valid-triangle sub-tree (equilateral, isoceles, scalene)
-    * is unreachable.
+  /** Triangle classification — five outcomes; only `invalid` and `degenerate` reach under uniform
+    * random `Int`. The whole valid-triangle sub-tree (equilateral, isoceles, scalene) is
+    * unreachable.
     */
   def triangleType(a: Int, b: Int, c: Int): String =
     if (a <= 0 || b <= 0 || c <= 0) "invalid"

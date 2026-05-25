@@ -57,10 +57,9 @@ object ListBench {
 
   // ── Two or three unreached arms, spread across sub-trees ─────────────────
 
-  /** Five arms. After the `all-equal` filter (very rare for full `Int`), the inner sign split
-    * gives `all-equal-positive` / `all-equal-negative` (both unreachable), and `all-zero` (which
-    * boundary `0`-repeats can hit). The unreached arms are in two distinct sub-arms of the
-    * all-equal branch.
+  /** Five arms. After the `all-equal` filter (very rare for full `Int`), the inner sign split gives
+    * `all-equal-positive` / `all-equal-negative` (both unreachable), and `all-zero` (which boundary
+    * `0`-repeats can hit). The unreached arms are in two distinct sub-arms of the all-equal branch.
     */
   def allEqual(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
@@ -70,8 +69,8 @@ object ListBench {
       else "all-zero"
     } else "mixed-values"
 
-  /** Five arms. `narrow` / `uniform` split inside the medium gap — `uniform` is unreachable
-    * (value coincidence), `narrow` is unreachable (small spread of full-range elements).
+  /** Five arms. `narrow` / `uniform` split inside the medium gap — `uniform` is unreachable (value
+    * coincidence), `narrow` is unreachable (small spread of full-range elements).
     */
   def extremesGap(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
@@ -83,8 +82,8 @@ object ListBench {
       else "medium-gap"
     }
 
-  /** Four arms. `palindrome` and `ends-match` both need mirrored-position value coincidences —
-    * both unreachable; the two unreached arms sit at different depths of the conditional chain.
+  /** Four arms. `palindrome` and `ends-match` both need mirrored-position value coincidences — both
+    * unreachable; the two unreached arms sit at different depths of the conditional chain.
     */
   def palindromeClass(xs: List[Int]): String =
     if (xs.size < 2) "trivial"
@@ -188,10 +187,10 @@ object ListBench {
       else "different-content"
     } else "different-sizes"
 
-  /** Deepest single-list classification — size ≥ 5 / uniform sign / sortedness / distinctness.
-    * The all-positive *and* all-negative sub-trees are both unreached (random rarely produces
-    * size-5 lists with uniform sign); their sortedness leaves contribute 7+ unreached branches
-    * spread across two distinct sub-trees of the outer if.
+  /** Deepest single-list classification — size ≥ 5 / uniform sign / sortedness / distinctness. The
+    * all-positive *and* all-negative sub-trees are both unreached (random rarely produces size-5
+    * lists with uniform sign); their sortedness leaves contribute 7+ unreached branches spread
+    * across two distinct sub-trees of the outer if.
     */
   def deepListShape(xs: List[Int]): String =
     if (xs.size < 5) "tiny"
