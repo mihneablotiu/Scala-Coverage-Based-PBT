@@ -15,15 +15,16 @@ SBT            ?= sbt
 # them. Keep this list aligned with `Strategy.all` in `engine/src/main/scala/domain/Strategy.scala`.
 STRATEGIES     := random mutation-guided feedback-bias-guided
 
-.PHONY: help all build run svg clean clean-reports fmt diagrams
+.PHONY: help all build run svg compare clean clean-reports fmt diagrams
 
 help: ## Show this help.
 	@echo "Coverage-based PBT — common commands"
 	@echo
-	@echo "  make all             ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg"
+	@echo "  make all             ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg + compare"
 	@echo "  make build           Compile all subprojects"
 	@echo "  make run             Run every strategy in $(STRATEGIES), each in its own forked JVM"
 	@echo "  make svg             Render every coverage.dot under $(REPORTS_DIR) to SVG"
+	@echo "  make compare         Cross-strategy comparison charts + markdown table under $(REPORTS_DIR)/_summary/"
 	@echo "  make diagrams        Regenerate the architecture diagrams under docs/images/"
 	@echo "  make clean-reports   Remove $(REPORTS_DIR) and stale scoverage measurements"
 	@echo "  make clean           sbt clean + clean-reports"
@@ -32,10 +33,10 @@ help: ## Show this help.
 # ── One-shot pipeline ──────────────────────────────────────────────────
 # `all` is the single command for a fully reproducible from-scratch run: format the source,
 # wipe every build/report artefact, regenerate the architecture diagrams, recompile, run each
-# strategy in its own forked JVM, and render every coverage DOT to SVG. Run serially (do not
-# pass `-j`); the steps have implicit ordering dependencies (fmt before compile, clean before
-# build, run before svg, …).
-all: fmt clean diagrams build run svg ## ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg.
+# strategy in its own forked JVM, render every coverage DOT to SVG, and emit the cross-strategy
+# comparison charts + markdown table. Run serially (do not pass `-j`); the steps have implicit
+# ordering dependencies (fmt before compile, clean before build, run before svg/compare, …).
+all: fmt clean diagrams build run svg compare ## ABSOLUTELY everything: fmt + clean + diagrams + build + run + svg + compare.
 
 # ── Scala build ────────────────────────────────────────────────────────
 build: ## Compile every subproject.
@@ -60,6 +61,10 @@ svg: ## Render every coverage.dot file produced by `make run` to SVG.
 	  out="$${f%.dot}.svg"; \
 	  dot -Tsvg "$$f" -o "$$out" && echo "wrote $$out"; \
 	done
+
+# ── Cross-strategy comparison ──────────────────────────────────────────
+compare: ## Cross-strategy comparison charts + markdown table from existing reports.
+	@python3 docs/diagrams/compare.py
 
 # ── Cleaning ───────────────────────────────────────────────────────────
 clean-reports: ## Remove $(REPORTS_DIR) and stale scoverage measurement files.
