@@ -8,15 +8,23 @@ REPORTS_DIR    := engine/reports
 SCOV_DATA_DIR  := sut/target/scala-2.13/scoverage-data
 SBT            ?= sbt
 
-.PHONY: help all build run svg clean clean-reports fmt
+# ── Strategies ─────────────────────────────────────────────────────────
+# One JVM per strategy: scoverage's Invoker accumulates statement hits within a JVM and has no
+# notion of a session, so two strategies sharing a JVM would see each other's coverage. Forking
+# the engine once per strategy (via `engine/runMain` with `fork := true` in build.sbt) isolates
+# them. Keep this list aligned with `Strategy.all` in `engine/src/main/scala/domain/Strategy.scala`.
+STRATEGIES     := random mutation-guided feedback-bias-guided
+
+.PHONY: help all build run svg clean clean-reports fmt diagrams
 
 help: ## Show this help.
 	@echo "Coverage-based PBT — common commands"
 	@echo
 	@echo "  make all             Run the whole pipeline: clean + build + run + svg"
 	@echo "  make build           Compile all subprojects"
-	@echo "  make run             Run the benchmark suite (clears $(REPORTS_DIR) first)"
-	@echo "  make svg             Render every coverage.dot under $(REPORTS_DIR)/*/visuals/ to SVG"
+	@echo "  make run             Run every strategy in $(STRATEGIES), each in its own forked JVM"
+	@echo "  make svg             Render every coverage.dot under $(REPORTS_DIR) to SVG"
+	@echo "  make diagrams        Regenerate the architecture diagrams under docs/images/"
 	@echo "  make clean-reports   Remove $(REPORTS_DIR) and stale scoverage measurements"
 	@echo "  make clean           sbt clean + clean-reports"
 	@echo "  make fmt             scalafmt on every Scala source"
@@ -28,18 +36,24 @@ all: clean build run svg ## Wipe everything, rebuild, run the suite, render SVGs
 build: ## Compile every subproject.
 	$(SBT) -no-colors -batch compile
 
-run: clean-reports ## Run the benchmark suite (app.Main in engine).
-	$(SBT) -no-colors -batch "engine/run"
+run: clean-reports ## Run each strategy in its own forked JVM (app.Main per strategy).
+	@# Force a fresh SUT instrumentation. `sbt compile` regenerates `scoverage.coverage` on
+	@# every invocation but only recompiles classes when sources change, so the static
+	@# statement IDs in the coverage file drift apart from the IDs baked into the bytecode
+	@# whenever only engine sources have moved. A clean SUT rebuild keeps both in sync.
+	$(SBT) -no-colors -batch "sut/clean; sut/compile"
+	@for s in $(STRATEGIES); do \
+	  echo "── $$s ──"; \
+	  $(SBT) -no-colors -batch "engine/runMain app.Main $$s" || exit 1; \
+	done
 
 # ── Rendering ──────────────────────────────────────────────────────────
 svg: ## Render every coverage.dot file produced by `make run` to SVG.
 	@command -v dot >/dev/null 2>&1 || { \
 	  echo "graphviz 'dot' not found — install with 'brew install graphviz'"; exit 1; }
-	@for d in $(REPORTS_DIR)/*/visuals/; do \
-	  if [ -f "$$d/coverage.dot" ]; then \
-	    dot -Tsvg "$$d/coverage.dot" -o "$$d/coverage.svg" && \
-	    echo "wrote $$d/coverage.svg"; \
-	  fi; \
+	@find $(REPORTS_DIR) -type f -name 'coverage.dot' | while read -r f; do \
+	  out="$${f%.dot}.svg"; \
+	  dot -Tsvg "$$f" -o "$$out" && echo "wrote $$out"; \
 	done
 
 # ── Cleaning ───────────────────────────────────────────────────────────
@@ -53,3 +67,7 @@ clean: clean-reports ## sbt clean + clean-reports.
 # ── Formatting ─────────────────────────────────────────────────────────
 fmt: ## Apply scalafmt to all Scala sources.
 	$(SBT) -no-colors -batch scalafmtAll
+
+# ── Architecture diagrams ──────────────────────────────────────────────
+diagrams: ## Regenerate every PNG/SVG under docs/images/ from docs/diagrams/*.py.
+	@python3 docs/diagrams/generate.py

@@ -1,7 +1,9 @@
 """Per-iteration feedback cycle — conceptual view.
 
 A closed cycle of four conceptual stages plus the accumulating session
-state at its centre. Role-based labels, no technology names.
+state at its centre. The input-picking stage lives inside the use case
+(it is a plain module, not a driven port), so it is coloured as a
+domain step rather than a port step.
 
 Run: ``python3 docs/diagrams/loop.py``.
 """
@@ -35,9 +37,9 @@ R = 3.5
 # Four cycle nodes around the centre, plus the centre accumulator.
 NODES = [
     # (angle°, title,            subtitle,                 fill,           w,    h)
-    ( 90, "Input Generator",     "pick the next input",    COLOR_PORT,    3.0, 1.3),
+    ( 90, "Pick Input",          "selected strategy",      COLOR_DOMAIN,  3.0, 1.3),
     (  0, "Property",            "exercise the SUT",       COLOR_ADAPTER, 3.0, 1.3),
-    (270, "Coverage",            "what just executed",     COLOR_PORT,    3.0, 1.3),
+    (270, "Coverage Reader",     "snapshot scoverage",     COLOR_PORT,    3.2, 1.3),
     (180, "Session Feedback",    "accumulator + view",     COLOR_DOMAIN,  3.2, 1.3),
 ]
 
@@ -56,14 +58,12 @@ def edge(src, dst, txt):
     sx, sy, sw, sh = positions[src]
     dx, dy, dw, dh = positions[dst]
     ang = math.atan2(dy - sy, dx - sx)
-    # Approximate box-edge stop (assume rectangles)
     pad_s = max(sw, sh) / 2 * 0.90
     pad_d = max(dw, dh) / 2 * 0.90
     x1, y1 = sx + pad_s * math.cos(ang), sy + pad_s * math.sin(ang)
     x2, y2 = dx - pad_d * math.cos(ang), dy - pad_d * math.sin(ang)
     arrow(ax, x1, y1, x2, y2, lw=1.9,
           style="->,head_width=0.4,head_length=0.65")
-    # Label perpendicular to the edge midpoint
     mx, my = (x1 + x2) / 2, (y1 + y2) / 2
     perp = ang + math.pi / 2
     off = 0.45
@@ -82,7 +82,6 @@ EDGES = [
 for s, d, l in EDGES:
     edge(s, d, l)
 
-# Centre annotation: the loop's "thing that grows"
 labeled_box(ax, CX - 1.8, CY - 0.55, 3.6, 1.1,
             title="loop  ×  N",
             subtitle="feedback grows",

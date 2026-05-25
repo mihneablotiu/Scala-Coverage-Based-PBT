@@ -24,28 +24,31 @@ import scala.util.Try
   *
   * Pipeline:
   *
-  *   1. Run the fuzz loop (`Prop.forAll` + `Test.check`), folding an immutable
-  *      [[SessionFeedback]] across iterations.
+  *   1. Run the fuzz loop (`Prop.forAll` + `Test.check`), folding an immutable [[SessionFeedback]]
+  *      across iterations.
   *   2. Parse the source for the method's branch tree (for the picture).
   *   3. Read the final scoverage snapshot (for the headline numbers and per-branch lookup).
   *   4. Warn if scoverage's branch count and the tree's arm count disagree (dev signal that the
   *      Scalameta walker is missing a construct).
   *   5. Hand a [[SessionReport]] to the writer.
   *
-  * All coverage is source-level — every per-iteration delta comes from diffing scoverage's
-  * cumulative state against the running `coveredBranches` set in [[SessionFeedback]].
+  * All coverage is source-level — every per-iteration delta comes from diffing the in-session
+  * `coveredBranches` set against scoverage's cumulative state. The one-JVM-per-strategy
+  * orchestration (see `app.Main`) keeps scoverage's cumulative view honest: every benchmark queries
+  * a state that contains only its own contribution, so the diff above is the right "this
+  * iteration's new positions" answer.
   *
   * Two pragmatic compromises bridge ScalaCheck's sync `Prop.forAll` body to the `IO`-typed ports:
   *
   *   1. `runScalaCheck` runs inside `IO.blocking` and calls `methodCoverage(...).unsafeRunSync()`
   *      inside the prop body. The bridge is contained to that one method, and the IO underneath
   *      does small sync file reads.
-  *   2. A method-local `var feedback` accumulator. Single-threaded inside `Test.check`'s
-  *      sequential body; never escapes this method.
+  *   2. A method-local `var feedback` accumulator. Single-threaded inside `Test.check`'s sequential
+  *      body; never escapes this method.
   *
-  * Future-proofing for guided: the `Gen[A]` for [[Strategy.Guided]] is a `Gen.delay` closure that
-  * sees the running `feedback`, so a real coverage-driven generator plugs in without touching the
-  * loop or any port signature.
+  * Future-proofing for guided strategies: the `Gen[A]` for the `MutationGuided` /
+  * `FeedbackBiasGuided` placeholders is a `Gen.delay` closure that sees the running `feedback`, so
+  * a real coverage-driven generator plugs in without touching the loop or any port signature.
   */
 final class TestRunnerHandler(
     treeBuilder: BranchTreeBuilder,
@@ -95,8 +98,8 @@ final class TestRunnerHandler(
   }
 
   /** Pure transition: previous state + (input, fresh scoverage snapshot) → new state. The diff
-    * between scoverage's cumulative `coveredBranchPositions` and the running set gives this
-    * input's newly-covered set.
+    * between scoverage's cumulative `coveredBranchPositions` and the running set gives this input's
+    * newly-covered set.
     */
   private def step[A](
       state: SessionFeedback[A],
@@ -105,11 +108,10 @@ final class TestRunnerHandler(
   ): SessionFeedback[A] = {
     val nowCovered = src.coveredBranchPositions
     val newlyCovered = nowCovered -- state.coveredBranches
-    val idx = state.iteration
     SessionFeedback(
-      history = state.history :+ InputRecord(idx, input, newlyCovered),
+      history = state.history :+ InputRecord(state.iteration, input, newlyCovered),
       coveredBranches = nowCovered,
-      growthCurve = state.growthCurve :+ src.branchCounter.covered
+      growthCurve = state.growthCurve :+ nowCovered.size
     )
   }
 

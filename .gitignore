@@ -11,9 +11,22 @@ project/project/
 out/
 engine/reports/
 
-# JaCoCo agent dump produced when the runner JVM exits
-jacoco.exec
-
 # Python bytecode from diagram generators
 __pycache__/
 *.pyc
+
+# AI / IDE local configuration
+.cursor/
+.claude/
+
+# Metals & Bloop auto-generated SBT files
+**/metals.sbt
+project/.bloop/
+
+# Environment files / secrets
+.env
+.env.local
+
+# Logs and JVM crash dumps
+*.log
+hs_err_pid*.log

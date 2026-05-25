@@ -95,9 +95,9 @@ object FileSystemCoverageReportWriter {
       .addEdge("  pkg -> cls;\n")
       .addEdge("  cls -> method;\n")
 
-    val finalState = r.methodTree.foldLeft(initial)((s, mt) =>
-      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", s)
-    )
+    val finalState = r.methodTree.fold(initial) { mt =>
+      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", initial)
+    }
 
     s"""digraph "${r.methodName}" {
        |  rankdir=TB;
@@ -336,7 +336,9 @@ object FileSystemCoverageReportWriter {
       .toMap
     val rows = r.inputLog.iterator
       .map { rec =>
-        val outcomes = rec.newlyCoveredBranches.iterator.flatMap(byPos.get).toSeq
+        val outcomes = rec.newlyCoveredBranches.iterator
+          .flatMap(byPos.get)
+          .toSeq
           .sortBy(_.line)
         val inputCell = csvEscape(displayInput(rec.input))
         val lines = outcomes.map(_.line).mkString(";")
@@ -356,7 +358,9 @@ object FileSystemCoverageReportWriter {
     val branches = r.branches
       .map { b =>
         val first = b.firstHitInput.fold("null")(_.toString)
-        s"""    {"pos": ${b.pos.offset}, "line": ${b.line}, "label": "${jsonEscape(b.label)}", "firstHitInput": $first}"""
+        s"""    {"pos": ${b.pos.offset}, "line": ${b.line}, "label": "${jsonEscape(
+            b.label
+          )}", "firstHitInput": $first}"""
       }
       .mkString(",\n")
     val inputs = r.inputLog.iterator
@@ -386,7 +390,6 @@ object FileSystemCoverageReportWriter {
        |}
        |""".stripMargin
   }
-
 
   // ────────────────────────────────────────────────────────────────
   // Helpers
