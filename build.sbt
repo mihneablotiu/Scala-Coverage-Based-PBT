@@ -2,6 +2,18 @@ ThisBuild / version        := "0.0.1"
 ThisBuild / scalaVersion   := "2.13.18"
 ThisBuild / scalafmtConfig := file(".scala-config/.scalafmt.conf")
 
+// Catch dead code automatically: stale code rots quietly otherwise, as the
+// `MethodSourceCoverage.Empty` orphan that survived the fail-fast refactor showed.
+// `-Wunused:imports/privates/locals` flag references the compiler can prove unused;
+// `-Wdead-code` flags unreachable statements. Warnings, not errors, so a transient
+// scratch-file unused import during development doesn't block compile.
+ThisBuild / scalacOptions ++= Seq(
+  "-Wunused:imports",
+  "-Wunused:privates",
+  "-Wunused:locals",
+  "-Wdead-code"
+)
+
 lazy val sut = (project in file("sut"))
   .settings(
     coverageEnabled := true

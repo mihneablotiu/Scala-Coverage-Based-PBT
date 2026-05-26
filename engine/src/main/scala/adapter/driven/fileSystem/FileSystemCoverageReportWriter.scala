@@ -1,7 +1,7 @@
 package adapter.driven.fileSystem
 
 import cats.effect.IO
-import domain.{BranchCounter, BranchTree, MethodTree, Pos, SessionReport}
+import domain.{BranchCounter, BranchTree, Pos, SessionReport}
 import port.driven.CoverageReportWriter
 
 import java.nio.charset.StandardCharsets

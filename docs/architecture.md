@@ -21,9 +21,10 @@ The repository is a single sbt build with two subprojects:
 | `sut`      | The **system under test** — small example methods. Compiled with scoverage instrumentation.           |
 | `engine`   | The **framework** — domain types, ports, adapters, the use case, and the `app.Main` composition root. |
 
-Almost all of the interesting code lives in `engine/`. The SUT is
-about 200 lines of example methods plus a small bag of number-theoretic
-helpers. The composition root (`engine/src/main/scala/app/Main.scala`)
+Almost all of the interesting code lives in `engine/`. The SUT is a
+catalogue of small example methods (grouped by input type — `BoolBench`,
+`IntBench`, `ListBench`) plus a small number-theoretic helper module.
+The composition root (`engine/src/main/scala/app/Main.scala`)
 is the only file in the codebase that imports concrete adapter classes
 and wires them together; it doubles as the `IOApp` entry point. Each
 invocation runs every benchmark against **one** strategy, picked from

@@ -23,8 +23,3 @@ final case class MethodSourceCoverage(
   def branchCounter: BranchCounter =
     BranchCounter(covered = coveredBranchPositions.size, total = branchLines.size)
 }
-
-object MethodSourceCoverage {
-  val Empty: MethodSourceCoverage =
-    MethodSourceCoverage(Set.empty, Map.empty)
-}
