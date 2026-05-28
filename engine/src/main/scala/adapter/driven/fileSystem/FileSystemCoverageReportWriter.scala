@@ -1,7 +1,7 @@
 package adapter.driven.fileSystem
 
 import cats.effect.IO
-import domain.{BranchCounter, BranchTree, Pos, SessionReport}
+import domain.{BranchTree, Pos, SessionReport}
 import port.driven.CoverageReportWriter
 
 import java.nio.charset.StandardCharsets
@@ -35,6 +35,7 @@ object FileSystemCoverageReportWriter {
   private final class Live extends CoverageReportWriter {
 
     override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = {
+      val branches = buildBranches(report)
       val visuals = outDir.resolve("visuals")
       val data = outDir.resolve("data")
       for {
@@ -42,16 +43,38 @@ object FileSystemCoverageReportWriter {
                Files.createDirectories(visuals)
                Files.createDirectories(data)
              }
-        _ <- writeFile(outDir, "summary.txt", renderSummary(report))
+        _ <- writeFile(outDir, "summary.txt", renderSummary(report, branches))
         _ <- writeFile(visuals, "coverage.dot", renderDot(report))
         _ <- writeFile(visuals, "growth.svg", renderGrowthSvg(report))
-        _ <- writeFile(data, "coverage.json", renderJson(report))
-        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report))
+        _ <- writeFile(data, "coverage.json", renderJson(report, branches))
+        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report, branches))
       } yield ()
     }
 
     private def writeFile(dir: Path, name: String, content: String): IO[Unit] =
       IO(Files.writeString(dir.resolve(name), content, StandardCharsets.UTF_8)).void
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Per-branch row, derived once per write
+  // ────────────────────────────────────────────────────────────────
+
+  /** One row per source branch — `(pos, line, label, first-hit input index)`. Used by the summary,
+    * JSON, and CSV renderers; the DOT renderer doesn't need it (it walks the BranchTree directly).
+    */
+  private final case class Row(pos: Pos, line: Int, label: String, firstHitInput: Option[Int])
+
+  private def buildBranches[A](r: SessionReport[A]): Vector[Row] = {
+    val labels =
+      r.methodTree.fold(Map.empty[Pos, String])(t => BranchTree.collectLabels(t.body))
+    // Each branch's pos appears in at most one record's `newlyCoveredBranches` (the iteration
+    // that first covered it), so this flat-map → toMap is unambiguous.
+    val firstHits: Map[Pos, Int] = r.feedback.history.iterator
+      .flatMap(rec => rec.newlyCoveredBranches.iterator.map(_ -> rec.index))
+      .toMap
+    r.coverage.branchLines.toVector
+      .sortBy { case (p, _) => p }
+      .map { case (pos, line) => Row(pos, line, labels.getOrElse(pos, "?"), firstHits.get(pos)) }
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -79,7 +102,6 @@ object FileSystemCoverageReportWriter {
   // ────────────────────────────────────────────────────────────────
 
   private def renderDot[A](r: SessionReport[A]): String = {
-    val total = r.sourceBranchCounter
     val pkg = r.methodTree.map(_.packageName).filter(_.nonEmpty).getOrElse("<root>")
     val cls = r.methodTree
       .map(_.className)
@@ -87,16 +109,24 @@ object FileSystemCoverageReportWriter {
       .getOrElse(r.sourceFile.getFileName.toString.stripSuffix(".scala"))
 
     val initial = DotState.empty
-      .addNode(boxNode("report", White, reportLabel(r, total), penwidth = 2))
-      .addNode(boxNode("pkg", PackageFill, packageLabel(pkg, total)))
-      .addNode(boxNode("cls", ClassFill, classLabel(cls, r.sourceFile.getFileName.toString, total)))
-      .addNode(boxNode("method", White, methodLabel(r.methodName, total), penwidth = 2))
+      .addNode(boxNode("report", White, reportLabel(r), penwidth = 2))
+      .addNode(boxNode("pkg", PackageFill, packageLabel(pkg, r.covered, r.total)))
+      .addNode(
+        boxNode(
+          "cls",
+          ClassFill,
+          classLabel(cls, r.sourceFile.getFileName.toString, r.covered, r.total)
+        )
+      )
+      .addNode(
+        boxNode("method", White, methodLabel(r.methodName, r.covered, r.total), penwidth = 2)
+      )
       .addEdge("  report -> pkg;\n")
       .addEdge("  pkg -> cls;\n")
       .addEdge("  cls -> method;\n")
 
     val finalState = r.methodTree.fold(initial) { mt =>
-      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", initial)
+      new TreeRenderer(r.coverage.coveredPositions).render(mt.body, "method", "", initial)
     }
 
     s"""digraph "${r.methodName}" {
@@ -110,10 +140,7 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  /** Immutable accumulator threaded through [[TreeRenderer.render]]. `freshId` returns the next id
-    * together with a new state carrying the incremented counter; `addNode`/`addEdge` append to the
-    * respective vectors.
-    */
+  /** Immutable accumulator threaded through [[TreeRenderer.render]]. */
   private final case class DotState(nextId: Int, nodes: Vector[String], edges: Vector[String]) {
     def freshId: (String, DotState) = (s"t$nextId", copy(nextId = nextId + 1))
     def addNode(node: String): DotState = copy(nodes = nodes :+ node)
@@ -124,16 +151,7 @@ object FileSystemCoverageReportWriter {
     val empty: DotState = DotState(1, Vector.empty, Vector.empty)
   }
 
-  /** Walks a [[BranchTree]] and emits one DOT node per source node. Three cases, one each:
-    *
-    *   - [[BranchTree.Branch]] — a box with the construct kind ("if" / "match" / "partial" / …) and
-    *     one outgoing edge per arm. Colour is derived from descendant leaves via
-    *     [[BranchTree.isReached]] — uniform across all kinds, so partial functions colour the same
-    *     way as ifs.
-    *   - [[BranchTree.Sequence]] — siblings under one parent edge; emit each child with the same
-    *     parent and edge label.
-    *   - [[BranchTree.Leaf]] — terminal expression, coloured by position lookup.
-    */
+  /** Walks a [[BranchTree]] and emits one DOT node per source node. */
   private final class TreeRenderer(coveredPositions: Set[Pos]) {
 
     def render(
@@ -175,9 +193,9 @@ object FileSystemCoverageReportWriter {
       else if (reached) covered
       else missed
 
-    private def branchyLabel(kind: String, label: BranchTree.Expr, reached: Boolean): String =
+    private def branchyLabel(kind: String, label: String, reached: Boolean): String =
       s"""<font point-size="11"><b>$kind</b></font>""" +
-        s"""<br/><font face="Courier" point-size="11"><b>${htmlEscape(label.text)}</b></font>""" +
+        s"""<br/><font face="Courier" point-size="11"><b>${htmlEscape(label)}</b></font>""" +
         s"""<br/><font point-size="10">${statusBadge(reached, "reached", "not reached")}</font>"""
 
     private def leafLabel(text: String, covered: Boolean): String =
@@ -203,30 +221,33 @@ object FileSystemCoverageReportWriter {
   private def diamondNode(id: String, fill: String, label: String): String =
     s"""  $id [shape=diamond, style="filled", fillcolor="$fill", penwidth=1.5, label=<$label>];\n"""
 
-  private def reportLabel[A](r: SessionReport[A], c: BranchCounter): String = {
-    val sat = r.saturationInputIndex.fold("—")(i => s"#$i")
-    s"""<font point-size="14"><b>Report</b></font><br/>${counterText(
-        c
-      )}<br/><font point-size="10">${r.totalInputs} inputs · saturated at $sat</font>"""
+  private def reportLabel[A](r: SessionReport[A]): String = {
+    val sat = r.saturation.fold("—")(i => s"#$i")
+    s"""<font point-size="14"><b>Report</b></font><br/>${counterText(r.covered, r.total)}""" +
+      s"""<br/><font point-size="10">${r.totalInputs} inputs · saturated at $sat</font>"""
   }
 
-  private def packageLabel(pkg: String, c: BranchCounter): String =
+  private def packageLabel(pkg: String, covered: Int, total: Int): String =
     s"""<font point-size="11"><b>package</b></font><br/><b>${htmlEscape(pkg)}</b><br/>${counterText(
-        c
+        covered,
+        total
       )}"""
 
-  private def classLabel(cls: String, sourceFileName: String, c: BranchCounter): String =
+  private def classLabel(cls: String, sourceFileName: String, covered: Int, total: Int): String =
     s"""<font point-size="11"><b>class</b></font><br/><b>${htmlEscape(cls)}</b>""" +
-      s"""<br/><font point-size="10" face="Courier">$sourceFileName</font><br/>${counterText(c)}"""
+      s"""<br/><font point-size="10" face="Courier">$sourceFileName</font><br/>${counterText(
+          covered,
+          total
+        )}"""
 
-  private def methodLabel(mth: String, c: BranchCounter): String =
+  private def methodLabel(mth: String, covered: Int, total: Int): String =
     s"""<font point-size="11"><b>method</b></font><br/><font point-size="13" face="Courier"><b>${htmlEscape(
         mth
-      )}</b></font><br/>${counterText(c)}"""
+      )}</b></font><br/>${counterText(covered, total)}"""
 
-  private def counterText(c: BranchCounter): String = {
-    val pct = if (c.total == 0) "—" else f"${c.covered * 100.0 / c.total}%.0f%%"
-    s"""<font point-size="11">branches: <b>${c.covered}/${c.total}</b> ($pct)</font>"""
+  private def counterText(covered: Int, total: Int): String = {
+    val pct = if (total == 0) "—" else f"${covered * 100.0 / total}%.0f%%"
+    s"""<font point-size="11">branches: <b>$covered/$total</b> ($pct)</font>"""
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -238,12 +259,12 @@ object FileSystemCoverageReportWriter {
     val mL = 80; val mR = 40; val mT = 60; val mB = 70
     val plotW = width - mL - mR; val plotH = height - mT - mB
     val maxX = r.totalInputs.max(1)
-    val maxY = r.sourceBranchCounter.total.max(1)
+    val maxY = r.total.max(1)
 
     def xC(i: Int): Double = mL + (i.toDouble / maxX) * plotW
     def yC(v: Int): Double = (height - mB) - (v.toDouble / maxY) * plotH
 
-    val pts = stepPolyline(r.growthCurve, xC, yC)
+    val pts = stepPolyline(r.feedback.growthCurve, xC, yC)
 
     val yTicks = (0 to maxY)
       .map { v =>
@@ -263,7 +284,7 @@ object FileSystemCoverageReportWriter {
       }
       .mkString("\n")
 
-    val sat = r.saturationInputIndex
+    val sat = r.saturation
       .map { i =>
         val x = xC(i)
         s"""    <line x1="$x" y1="$mT" x2="$x" y2="${height - mB}" stroke="$Accent" stroke-width="1.5" stroke-dasharray="5,4"/>
@@ -307,12 +328,11 @@ object FileSystemCoverageReportWriter {
   // Summary, CSV, JSON
   // ────────────────────────────────────────────────────────────────
 
-  private def renderSummary[A](r: SessionReport[A]): String = {
-    val total = r.sourceBranchCounter
-    val pct = if (total.total == 0) "—" else f"${total.covered * 100.0 / total.total}%.1f%%"
-    val sat = r.saturationInputIndex.fold("never reached")(i => s"input #$i")
-    val labelWidth = r.branches.iterator.map(_.label.length).maxOption.getOrElse(0)
-    val rows = r.branches
+  private def renderSummary[A](r: SessionReport[A], branches: Vector[Row]): String = {
+    val pct = if (r.total == 0) "—" else f"${r.covered * 100.0 / r.total}%.1f%%"
+    val sat = r.saturation.fold("never reached")(i => s"input #$i")
+    val labelWidth = branches.iterator.map(_.label.length).maxOption.getOrElse(0)
+    val rows = branches
       .map { b =>
         val first = b.firstHitInput.fold("never covered")(i => s"first reached at input #$i")
         f"  - line ${b.line}%3d  ${b.label.padTo(labelWidth, ' ')}  $first"
@@ -322,7 +342,7 @@ object FileSystemCoverageReportWriter {
        |${"=" * 60}
        |Source file:      ${r.sourceFile.getFileName}
        |Total inputs:     ${r.totalInputs}
-       |Source branches:  ${total.covered}/${total.total} ($pct)
+       |Source branches:  ${r.covered}/${r.total} ($pct)
        |Saturated at:     $sat
        |
        |Per source branch:
@@ -330,16 +350,11 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  private def renderInputsCsv[A](r: SessionReport[A]): String = {
-    val byPos: Map[Pos, BranchOutcomeRow] = r.branches.iterator
-      .map(b => b.pos -> BranchOutcomeRow(b.line, b.label))
-      .toMap
-    val rows = r.inputLog.iterator
+  private def renderInputsCsv[A](r: SessionReport[A], branches: Vector[Row]): String = {
+    val byPos: Map[Pos, Row] = branches.iterator.map(b => b.pos -> b).toMap
+    val rows = r.feedback.history.iterator
       .map { rec =>
-        val outcomes = rec.newlyCoveredBranches.iterator
-          .flatMap(byPos.get)
-          .toSeq
-          .sortBy(_.line)
+        val outcomes = rec.newlyCoveredBranches.iterator.flatMap(byPos.get).toSeq.sortBy(_.line)
         val inputCell = csvEscape(displayInput(rec.input))
         val lines = outcomes.map(_.line).mkString(";")
         val labels = csvEscape(outcomes.map(_.label).mkString("; "))
@@ -349,21 +364,17 @@ object FileSystemCoverageReportWriter {
     s"index,input,newBranchCount,newBranchLines,newBranches\n$rows\n"
   }
 
-  private final case class BranchOutcomeRow(line: Int, label: String)
-
-  private def renderJson[A](r: SessionReport[A]): String = {
-    val byPos: Map[Pos, BranchOutcomeRow] = r.branches.iterator
-      .map(b => b.pos -> BranchOutcomeRow(b.line, b.label))
-      .toMap
-    val branches = r.branches
+  private def renderJson[A](r: SessionReport[A], branches: Vector[Row]): String = {
+    val byPos: Map[Pos, Row] = branches.iterator.map(b => b.pos -> b).toMap
+    val branchesJson = branches
       .map { b =>
         val first = b.firstHitInput.fold("null")(_.toString)
-        s"""    {"pos": ${b.pos.offset}, "line": ${b.line}, "label": "${jsonEscape(
+        s"""    {"pos": ${b.pos}, "line": ${b.line}, "label": "${jsonEscape(
             b.label
           )}", "firstHitInput": $first}"""
       }
       .mkString(",\n")
-    val inputs = r.inputLog.iterator
+    val inputs = r.feedback.history.iterator
       .map { rec =>
         val outcomes = rec.newlyCoveredBranches.iterator.flatMap(byPos.get).toSeq.sortBy(_.line)
         val inputStr = jsonEscape(displayInput(rec.input))
@@ -373,17 +384,17 @@ object FileSystemCoverageReportWriter {
         s"""    {"index": ${rec.index}, "input": "$inputStr", "newBranches": [$newBranches]}"""
       }
       .mkString(",\n")
-    val sat = r.saturationInputIndex.fold("null")(_.toString)
+    val sat = r.saturation.fold("null")(_.toString)
     s"""{
        |  "method": "${r.methodName}",
        |  "sourceFile": "${r.sourceFile.getFileName}",
        |  "totalInputs": ${r.totalInputs},
-       |  "sourceBranches": {"covered": ${r.sourceBranchCounter.covered}, "total": ${r.sourceBranchCounter.total}},
+       |  "sourceBranches": {"covered": ${r.covered}, "total": ${r.total}},
        |  "saturationInputIndex": $sat,
        |  "branches": [
-       |$branches
+       |$branchesJson
        |  ],
-       |  "growthCurve": [${r.growthCurve.mkString(", ")}],
+       |  "growthCurve": [${r.feedback.growthCurve.mkString(", ")}],
        |  "inputs": [
        |$inputs
        |  ]

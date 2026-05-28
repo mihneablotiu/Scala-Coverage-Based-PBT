@@ -35,9 +35,9 @@ final class FileSystemTestRunner(
   override def runTests[A: Arbitrary](
       methodName: String,
       strategy: Strategy
-  )(property: A => Boolean): IO[Unit] = {
+  )(exercise: A => Any): IO[Unit] = {
     val stem = sourceFile.getFileName.toString.stripSuffix(".scala")
     val out = outBase.resolve(stem).resolve(methodName).resolve(strategy.name)
-    handler.handle(sourceFile, out, methodName, strategy)(property)
+    handler.handle(sourceFile, out, methodName, strategy)(exercise)
   }
 }

@@ -247,7 +247,7 @@ its output into a folder structured like this:
 engine/reports/
 └── <bench file>/        e.g. IntBench
     └── <method name>/   e.g. mod97
-        └── <strategy>/  e.g. random, mutation-guided, feedback-bias-guided
+        └── <strategy>/  e.g. random, mutation-guided
             ├── summary.txt
             ├── visuals/
             │   ├── coverage.dot

@@ -1,28 +1,29 @@
 package domain
 
+import org.scalacheck.{Arbitrary, Gen}
+
 /** How the fuzz loop picks each input.
   *
-  * The `name` of each strategy doubles as a report-folder segment: every benchmark run under a
-  * given strategy writes to `engine/reports/<SourceStem>/<method>/<strategy.name>/`.
+  * Each case carries its own `name` (which doubles as a report-folder segment — reports land in
+  * `engine/reports/<SourceStem>/<method>/<strategy.name>/`). The default `gen[A]` is uniform random
+  * via `Arbitrary.arbitrary[A]`; any case that needs different behaviour overrides it.
   *
-  *   - [[Strategy.Random]] — uses `Arbitrary[A].arbitrary`, ignores feedback.
-  *   - [[Strategy.MutationGuided]] — *placeholder*. Reserved for a corpus + mutation algorithm
-  *     (AFL-style). The placeholder currently delegates to random.
-  *   - [[Strategy.FeedbackBiasGuided]] — *placeholder*. Reserved for a feedback-aware custom `Gen`
-  *     that biases sampling based on coverage signal. The placeholder currently delegates to
-  *     random.
+  *   - [[Strategy.Random]] — uses the default; the baseline every guided strategy is compared
+  *     against.
+  *   - [[Strategy.MutationGuided]] — *placeholder*. Inherits the default so the per-strategy report
+  *     folders exist side-by-side; only this case's `gen[A]` needs editing when a real
+  *     FuzzChick-style corpus + mutation algorithm lands.
   *
-  * **Adding a new strategy** is mechanical: one new `case object` here with a unique `name`, one
-  * new entry in [[Strategy.all]], one new `usecase/strategy/<Name>Gen.scala` module exposing
-  * `gen[A](feedback)`, one new arm in `TestRunnerHandler.runScalaCheck`'s match, and the new name
-  * in the `STRATEGIES` list in the Makefile. The sealed-trait + exhaustive match means a missing
-  * wire-up is a compile error, not a runtime surprise.
+  * **Adding a new strategy:** one new `case object` here, add it to [[Strategy.all]], add its
+  * `name` to the Makefile's `STRATEGIES` list.
   */
 sealed trait Strategy {
   def name: String
+  def gen[A: Arbitrary]: Gen[A] = Arbitrary.arbitrary[A]
 }
 
 object Strategy {
+
   case object Random extends Strategy {
     val name = "random"
   }
@@ -31,16 +32,11 @@ object Strategy {
     val name = "mutation-guided"
   }
 
-  case object FeedbackBiasGuided extends Strategy {
-    val name = "feedback-bias-guided"
-  }
-
-  /** Canonical list of every strategy, in the order they should appear in reports and external
-    * orchestrators. Single source of truth for [[Strategy.parse]] and the Makefile's `STRATEGIES`
-    * list. Adding a new case object here without adding it to `all` would make it unreachable from
-    * the CLI.
+  /** Canonical list of every strategy, in the order they appear in reports and orchestrators.
+    * Single source of truth for [[parse]] and the Makefile's `STRATEGIES` list — a case object that
+    * isn't here can't be reached from the CLI.
     */
-  val all: List[Strategy] = List(Random, MutationGuided, FeedbackBiasGuided)
+  val all: List[Strategy] = List(Random, MutationGuided)
 
   /** Resolve a strategy by its `name`, or `None` if no case matches. Case-sensitive — names are
     * meant to round-trip through file-system paths and CLI args.

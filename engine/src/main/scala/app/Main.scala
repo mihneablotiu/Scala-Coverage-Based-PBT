@@ -22,7 +22,7 @@ import java.nio.file.{Path, Paths}
   * into the next. Each `engine/runMain app.Main <strategy>` invocation forks a fresh JVM (see
   * `fork := true` in `build.sbt`), so the scoverage `Invoker` only ever holds the hits of this
   * single strategy. Within that JVM, scoverage still accumulates across every benchmark; the
-  * per-benchmark report stays method-scoped because `ScoverageSourceCoverageReader.methodCoverage`
+  * per-benchmark report stays method-scoped because `ScoverageSourceCoverageReader.coverage`
   * filters statements by `(sourceFile, methodName)`. Multi-strategy orchestration lives in the
   * Makefile.
   *
@@ -48,11 +48,9 @@ object Main extends IOApp {
       .withInitialSeed(rng.Seed(0L))
       .withMinSuccessfulTests(100)
 
-  private val sourceCoverage = ScoverageSourceCoverageReader(SutRoot)
-
   private val handler: TestRunnerHandler = new TestRunnerHandler(
     treeBuilder = ScalametaBranchTreeBuilder(),
-    sourceCoverage = sourceCoverage,
+    sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
     writer = FileSystemCoverageReportWriter(),
     params = testParams
   )
@@ -77,7 +75,7 @@ object Main extends IOApp {
     */
   private def runAll(strategy: Strategy): IO[Unit] = {
     def bench[A: Arbitrary](runner: TestRunner, name: String)(body: A => Any): IO[Unit] =
-      runner.runTests[A](name, strategy)(a => { body(a); true })
+      runner.runTests[A](name, strategy)(body)
 
     for {
       _ <- bench(bools, "identity")(BoolBench.identity)

@@ -15,9 +15,10 @@ strategy and writes three flavours of comparison artifacts:
 
 2. **Per-bench detailed comparisons** — two horizontal grouped-bar SVGs per
    bench, under `engine/reports/_summary/by_bench/<Bench>/`:
-     - `coverage.svg`: one row per method, three bars per row (R / M / F),
-       x = max coverage %. Methods sorted by random's coverage descending
-       (best storytelling: easy wins at top, harder methods at bottom).
+     - `coverage.svg`: one row per method, one bar per strategy per row
+       (R / M), x = max coverage %. Methods sorted by random's coverage
+       descending (best storytelling: easy wins at top, harder methods at
+       bottom).
      - `plateau.svg`: same layout, x = saturation input. A small ○ marker
        on guided rows when the guided strategy went *above* random's
        coverage — it sits at the first input at which it matched random's
@@ -27,9 +28,9 @@ strategy and writes three flavours of comparison artifacts:
 
 3. **Per-bench averages** — two grouped-bar SVGs under
    `engine/reports/_summary/`:
-     - `suite_coverage.svg`: 3 bench groups, 3 strategy bars per group,
-       value = aggregate `Σ covered / Σ total` across the bench's methods.
-       The "drill-down" complement to the per-bench detail charts.
+     - `suite_coverage.svg`: 3 bench groups, one strategy bar per group per
+       strategy, value = aggregate `Σ covered / Σ total` across the bench's
+       methods. The "drill-down" complement to the per-bench detail charts.
      - `suite_plateau.svg`: same shape, value = mean saturation input
        across the bench's methods (lower = faster average plateau).
 
@@ -72,18 +73,16 @@ SUMMARY_DIR = REPORTS_DIR / "_summary"
 
 # Canonical strategy order — matches `Strategy.all` in the Scala engine and
 # `STRATEGIES` in the Makefile. Anything not in this list is ignored.
-STRATEGIES: List[str] = ["random", "mutation-guided", "feedback-bias-guided"]
+STRATEGIES: List[str] = ["random", "mutation-guided"]
 
 # Pastel palette shared with `docs/diagrams/shapes.py` for visual coherence.
 COLOR: Dict[str, str] = {
-    "random":               "#90CAF9",
-    "mutation-guided":      "#A5D6A7",
-    "feedback-bias-guided": "#CE93D8",
+    "random":          "#90CAF9",
+    "mutation-guided": "#A5D6A7",
 }
 LABEL: Dict[str, str] = {
-    "random":               "Random",
-    "mutation-guided":      "Mutation-guided",
-    "feedback-bias-guided": "Feedback-bias-guided",
+    "random":          "Random",
+    "mutation-guided": "Mutation-guided",
 }
 STROKE = "#37474F"
 TEXT = "#263238"
@@ -258,9 +257,9 @@ def per_method_chart(bench: str, method: str,
 
 # ── Multi-method horizontal grouped-bar charts ─────────────────────────
 #
-# Every chart below shares the same shape: one row per method, three bars
-# per row (random / mutation-guided / feedback-bias-guided), x-axis = the
-# metric of interest. Methods are sorted by random's value descending so
+# Every chart below shares the same shape: one row per method, one bar per
+# strategy per row (random / mutation-guided), x-axis = the metric of
+# interest. Methods are sorted by random's value descending so
 # the storytelling cascades from "everyone aces this" at the top to
 # "interesting differentiation happens here" at the bottom — the order
 # a thesis figure wants to draw the eye towards.
@@ -300,10 +299,11 @@ def _strategy_chart(
         return
 
     bar_h = 0.30          # one bar's thickness, in data units
-    inner_gap = 0.04      # gap between the 3 bars within a band
+    inner_gap = 0.04      # gap between adjacent bars within a band
     outer_gap = 0.55      # gap between consecutive bands
 
-    band_h = 3 * bar_h + 2 * inner_gap
+    n_strats = len(STRATEGIES)
+    band_h = n_strats * bar_h + (n_strats - 1) * inner_gap
 
     band_top: List[float] = []
     y = 0.0
@@ -642,15 +642,15 @@ def markdown_table(grouped: Dict[Tuple[str, str], Dict[str, Report]],
         "strategy matched random's covered count (— if it never did, or if "
         "random itself covered nothing).",
         "",
-        "> Until the guided strategies are implemented they delegate to random "
-        "with the shared `Test.Parameters.withInitialSeed(0L)`, so every "
-        "strategy generates the same input sequence and the three columns "
-        "match exactly. They will start to diverge as soon as the placeholders "
-        "in `usecase.strategy.{MutationGuidedGen, FeedbackBiasGuidedGen}` are "
-        "replaced with real coverage-aware logic.",
+        "> Until the mutation-guided strategy is implemented it delegates to "
+        "random with the shared `Test.Parameters.withInitialSeed(0L)`, so both "
+        "strategies generate the same input sequence and the two columns "
+        "match exactly. They will start to diverge as soon as the placeholder "
+        "in `Strategy.MutationGuided.gen` is replaced with real coverage-aware "
+        "logic.",
         "",
-        "| Bench | Method | Total | Random | Mutation-guided | Feedback-bias-guided |",
-        "|-------|--------|------:|--------|-----------------|----------------------|",
+        "| Bench | Method | Total | Random | Mutation-guided |",
+        "|-------|--------|------:|--------|-----------------|",
     ]
     for (b, m), by_s in sorted(grouped.items()):
         random_r = by_s.get("random")
@@ -660,7 +660,6 @@ def markdown_table(grouped: Dict[Tuple[str, str], Dict[str, Report]],
             b, m, str(random_r.total),
             cell(random_r),
             cell(by_s.get("mutation-guided"), target_cov=random_r.covered),
-            cell(by_s.get("feedback-bias-guided"), target_cov=random_r.covered),
         ]
         lines.append("| " + " | ".join(row) + " |")
 

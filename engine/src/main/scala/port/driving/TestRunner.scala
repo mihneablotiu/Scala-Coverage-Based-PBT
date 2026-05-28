@@ -11,7 +11,7 @@ import org.scalacheck.Arbitrary
   *
   *   - **which method** to exercise (by name),
   *   - **which strategy** to drive it with (random / coverage-guided),
-  *   - **which property** to assert.
+  *   - **what to do** with each generated input.
   *
   * Anything else — *where* the source lives, *where* the report is written, what runtime config the
   * engine uses — is the adapter's responsibility (typically set as construction-time constants on
@@ -20,10 +20,14 @@ import org.scalacheck.Arbitrary
   * The `[A: Arbitrary]` context bound is the bridge to ScalaCheck: it says "there's a `Gen[A]`
   * resolvable for this type." ScalaCheck auto-derives `Arbitrary` for tuples and most compositions,
   * so a method that takes `(Int, List[Int])` works without extra wiring — `A` is just the tuple.
+  *
+  * `exercise` returns `Any` (in practice `Boolean` or `Unit`); its return value is discarded
+  * because this framework measures coverage, not behaviour. The session reports "what scoverage
+  * recorded" regardless of what the SUT method returned for any given input.
   */
 trait TestRunner {
   def runTests[A: Arbitrary](
       methodName: String,
       strategy: Strategy
-  )(property: A => Boolean): IO[Unit]
+  )(exercise: A => Any): IO[Unit]
 }

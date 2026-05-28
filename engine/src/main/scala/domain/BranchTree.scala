@@ -25,11 +25,13 @@ sealed trait BranchTree {
 
 object BranchTree {
 
-  /** A decision point with `arms.size` labeled outcomes. */
+  /** A decision point with `arms.size` labeled outcomes. `label` is the human-readable condition
+    * text — `"xs.isEmpty"` for an `if`, the scrutinee text for a `match`, etc.
+    */
   final case class Branch(
       pos: Pos,
       kind: String,
-      label: Expr,
+      label: String,
       arms: List[Arm]
   ) extends BranchTree
 
@@ -44,21 +46,6 @@ object BranchTree {
     * that edge.
     */
   final case class Arm(label: String, body: BranchTree)
-
-  /** A sub-expression with its own source position — the condition of an `if`, the scrutinee of a
-    * `match`, etc. Tracked so the writer can place the source text inside the branch's node and (in
-    * principle) colour the condition itself.
-    */
-  final case class Expr(pos: Pos, text: String)
-
-  /** Total source-level branch arms in this tree. Sums `arms.size` over every [[Branch]] reached by
-    * walking the tree. Used by the drift check against scoverage's branch count.
-    */
-  def armCount(tree: BranchTree): Int = tree match {
-    case Branch(_, _, _, arms) => arms.size + arms.iterator.map(a => armCount(a.body)).sum
-    case Sequence(_, children) => children.iterator.map(armCount).sum
-    case Leaf(_, _)            => 0
-  }
 
   /** True iff any descendant leaf's position is in `covered`. Used to colour a branch node — a
     * branch is "reached" iff at least one of its arms was. Uniform across all branch kinds, so
@@ -86,7 +73,7 @@ object BranchTree {
       val self = Map(pos -> "<block>")
       children.foldLeft(self)((acc, c) => acc ++ collectLabels(c))
     case Branch(pos, kind, label, arms) =>
-      val self = Map(pos -> s"$kind (${label.text})")
+      val self = Map(pos -> s"$kind ($label)")
       arms.foldLeft(self)((acc, arm) => acc ++ collectLabels(arm.body))
   }
 }

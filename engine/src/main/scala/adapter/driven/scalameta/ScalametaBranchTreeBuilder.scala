@@ -34,7 +34,6 @@ object ScalametaBranchTreeBuilder {
             MethodTree(
               packageName = enclosingPackage(defn),
               className = enclosingClass(defn),
-              methodName = methodName,
               body = visit(defn.body)
             )
           }
@@ -65,25 +64,20 @@ object ScalametaBranchTreeBuilder {
       BranchTree.Branch(
         posOf(t),
         "if",
-        exprOf(t.cond),
+        textOf(t.cond),
         List(BranchTree.Arm("then", visit(t.thenp)), BranchTree.Arm("else", visit(t.elsep)))
       )
     case t: Term.Match =>
-      BranchTree.Branch(posOf(t), "match", exprOf(t.expr), t.casesBlock.cases.toList.map(armOf))
+      BranchTree.Branch(posOf(t), "match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf))
     case t: Term.While =>
       BranchTree.Branch(
         posOf(t),
         "while",
-        exprOf(t.expr),
+        textOf(t.expr),
         List(BranchTree.Arm("body", visit(t.body)))
       )
     case t: Term.PartialFunction =>
-      BranchTree.Branch(
-        posOf(t),
-        "partial",
-        BranchTree.Expr(posOf(t), "⟨arg⟩"),
-        t.cases.toList.map(armOf)
-      )
+      BranchTree.Branch(posOf(t), "partial", "⟨arg⟩", t.cases.toList.map(armOf))
     case other => descend(other)
   }
 
@@ -125,7 +119,6 @@ object ScalametaBranchTreeBuilder {
     BranchTree.Arm(label, visit(c.body))
   }
 
-  private def exprOf(t: Tree): BranchTree.Expr = BranchTree.Expr(posOf(t), textOf(t))
-  private def posOf(t: Tree): Pos = Pos(t.pos.start)
+  private def posOf(t: Tree): Pos = t.pos.start
   private def textOf(t: Tree): String = t.toString.replaceAll("\\s+", " ").trim.take(80)
 }
