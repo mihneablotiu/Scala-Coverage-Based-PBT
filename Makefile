@@ -12,7 +12,7 @@ SBT            ?= sbt
 # One JVM per strategy: scoverage's Invoker accumulates statement hits within a JVM and has no
 # notion of a session, so two strategies sharing a JVM would see each other's coverage. Forking
 # the engine once per strategy (via `engine/runMain` with `fork := true` in build.sbt) isolates
-# them. Keep this list aligned with `Strategy.all` in `engine/src/main/scala/domain/Strategy.scala`.
+# them. Keep this list aligned with `Strategy.names` in `engine/src/main/scala/domain/Strategy.scala`.
 STRATEGIES     := random mutation-guided
 
 .PHONY: help all build run svg compare clean clean-reports fmt diagrams

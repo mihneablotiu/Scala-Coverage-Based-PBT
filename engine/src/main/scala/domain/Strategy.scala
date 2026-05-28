@@ -2,44 +2,77 @@ package domain
 
 import org.scalacheck.{Arbitrary, Gen}
 
-/** How the fuzz loop picks each input.
+/** How the fuzz loop picks each input, parameterised by the input type `A`.
   *
-  * Each case carries its own `name` (which doubles as a report-folder segment — reports land in
-  * `engine/reports/<SourceStem>/<method>/<strategy.name>/`). The default `gen[A]` is uniform random
-  * via `Arbitrary.arbitrary[A]`; any case that needs different behaviour overrides it.
+  * Each case is a concrete class carrying **exactly the resources it needs** — `Random` only holds
+  * an `Arbitrary[A]`; `MutationGuided` holds an `Arbitrary[A]` plus a `Mutator[A]`. The trait
+  * itself has no type-class bounds, so adding a strategy with a different requirement (e.g.
+  * `Enumerate[A]` for bounded-exhaustive) doesn't ripple a bound through everything else.
   *
-  *   - [[Strategy.Random]] — uses the default; the baseline every guided strategy is compared
-  *     against.
-  *   - [[Strategy.MutationGuided]] — *placeholder*. Inherits the default so the per-strategy report
-  *     folders exist side-by-side; only this case's `gen[A]` needs editing when a real
-  *     FuzzChick-style corpus + mutation algorithm lands.
+  * The `gen(feedback)` method takes the running [[SessionFeedback]] explicitly so coverage-guided
+  * cases can read the past (seeds, growth) when picking the next input. The plumbing — calling
+  * `Gen.delay(strategy.gen(feedback))` on every iteration — lives in `TestRunnerHandler`, so
+  * strategies just describe "given what's happened so far, what's the next `Gen[A]`?"
   *
-  * **Adding a new strategy:** one new `case object` here, add it to [[Strategy.all]], add its
-  * `name` to the Makefile's `STRATEGIES` list.
+  * The `name` doubles as a report-folder segment: reports land in
+  * `engine/reports/<SourceStem>/<method>/<strategy.name>/`.
   */
-sealed trait Strategy {
+sealed trait Strategy[A] {
   def name: String
-  def gen[A: Arbitrary]: Gen[A] = Arbitrary.arbitrary[A]
+  def gen(feedback: SessionFeedback[A]): Gen[A]
 }
 
 object Strategy {
 
-  case object Random extends Strategy {
+  /** Uniform random sampling from `Arbitrary[A]`. The baseline every guided strategy is compared
+    * against — it ignores `feedback` entirely.
+    */
+  final case class Random[A](arb: Arbitrary[A]) extends Strategy[A] {
     val name = "random"
+    def gen(feedback: SessionFeedback[A]): Gen[A] = arb.arbitrary
   }
 
-  case object MutationGuided extends Strategy {
+  /** FuzzChick-flavoured mutation-guided sampling.
+    *
+    *   - **Seeds** are the inputs whose iteration produced at least one newly covered branch — the
+    *     corpus grows monotonically; we never evict, mirroring AFL / FuzzChick (every seed stays a
+    *     potential parent for the rest of the session).
+    *   - **50 / 50 mutate-vs-fresh** (`Gen.frequency(5, 5)`): the random half keeps the search
+    *     ergodic so it can rediscover branches the corpus alone wouldn't drift towards; the mutate
+    *     half exploits what the corpus already knows. With no seeds yet, falls through to uniform
+    *     random.
+    *   - Mutation uses the [[Mutator]] for `A` to produce a "nearby" variant of a uniformly chosen
+    *     seed. The next-iteration feedback tells us whether the variant covered something new
+    *     (becoming a seed in turn) or didn't (ignored).
+    */
+  final case class MutationGuided[A](arb: Arbitrary[A], mut: Mutator[A]) extends Strategy[A] {
     val name = "mutation-guided"
+    def gen(feedback: SessionFeedback[A]): Gen[A] = {
+      val seeds = feedback.history.collect {
+        case r if r.newlyCoveredBranches.nonEmpty => r.input
+      }
+      if (seeds.isEmpty) arb.arbitrary
+      else
+        Gen.frequency(
+          5 -> arb.arbitrary,
+          5 -> Gen.oneOf(seeds).flatMap(mut.mutate)
+        )
+    }
   }
 
-  /** Canonical list of every strategy, in the order they appear in reports and orchestrators.
-    * Single source of truth for [[parse]] and the Makefile's `STRATEGIES` list — a case object that
-    * isn't here can't be reached from the CLI.
+  /** Canonical strategy names, in CLI / report order. Single source of truth for the CLI parser and
+    * the Makefile's `STRATEGIES` list — a strategy that isn't here can't be reached from the CLI.
     */
-  val all: List[Strategy] = List(Random, MutationGuided)
+  val names: List[String] = List("random", "mutation-guided")
 
-  /** Resolve a strategy by its `name`, or `None` if no case matches. Case-sensitive — names are
-    * meant to round-trip through file-system paths and CLI args.
+  /** Materialise a strategy by name for a specific input type `A`. The implicit bounds are the
+    * *union* of what any strategy could need — the CLI doesn't know which one will be picked until
+    * runtime, so every call site has to be able to construct any of them. The per-case classes
+    * still only hold the resources they actually use.
     */
-  def parse(name: String): Option[Strategy] = all.find(_.name == name)
+  def parse[A: Arbitrary: Mutator](name: String): Option[Strategy[A]] = name match {
+    case "random"          => Some(Random(implicitly))
+    case "mutation-guided" => Some(MutationGuided(implicitly, implicitly))
+    case _                 => None
+  }
 }

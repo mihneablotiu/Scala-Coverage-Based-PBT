@@ -8,7 +8,7 @@ import benchmark.bool.BoolBench
 import benchmark.int.IntBench
 import benchmark.list.ListBench
 import cats.effect.{ExitCode, IO, IOApp}
-import domain.Strategy
+import domain.{Mutator, Strategy}
 import org.scalacheck.{rng, Arbitrary, Test}
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
@@ -40,13 +40,16 @@ object Main extends IOApp {
   private val IntSrc: Path = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
   private val ListSrc: Path = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
 
-  /** 100 inputs / seed `0L` — match what the docs claim and survive any future ScalaCheck default
-    * change. Per-strategy reproducibility hinges on these two knobs.
+  /** 1000 inputs / seed `0L` — match what the docs claim and survive any future ScalaCheck default
+    * change. Per-strategy reproducibility hinges on these two knobs. 1000 gives the guided
+    * strategies room to keep mutating around productive seeds long after random saturates; at 100
+    * many benchmarks tied because random plateaued before either strategy had a chance to diverge
+    * meaningfully.
     */
   private val testParams: Test.Parameters =
     Test.Parameters.default
       .withInitialSeed(rng.Seed(0L))
-      .withMinSuccessfulTests(100)
+      .withMinSuccessfulTests(1000)
 
   private val handler: TestRunnerHandler = new TestRunnerHandler(
     treeBuilder = ScalametaBranchTreeBuilder(),
@@ -60,22 +63,24 @@ object Main extends IOApp {
   private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
 
   override def run(args: List[String]): IO[ExitCode] =
-    args.headOption.flatMap(Strategy.parse) match {
-      case Some(strategy) => runAll(strategy).as(ExitCode.Success)
-      case None           => usage.as(ExitCode.Error)
+    args.headOption.filter(Strategy.names.contains) match {
+      case Some(name) => runAll(name).as(ExitCode.Success)
+      case None       => usage.as(ExitCode.Error)
     }
 
-  private val usage: IO[Unit] = {
-    val available = Strategy.all.map(_.name).mkString(", ")
-    IO.println(s"usage: engine/runMain app.Main <strategy>   (available: $available)")
-  }
+  private val usage: IO[Unit] =
+    IO.println(
+      s"usage: engine/runMain app.Main <strategy>   (available: ${Strategy.names.mkString(", ")})"
+    )
 
-  /** Body of one JVM: run every benchmark against the given strategy. `bench` closes over the
-    * strategy so each call site reads as a single benchmark line.
+  /** Body of one JVM: run every benchmark against the strategy picked from the CLI. `bench` is the
+    * per-benchmark factory + dispatcher: it summons the per-type `Arbitrary` and `Mutator`
+    * implicits, materialises a `Strategy[A]` via `Strategy.parse`, and hands it to the runner. The
+    * `.get` is safe because `run` already filtered the name against `Strategy.names`.
     */
-  private def runAll(strategy: Strategy): IO[Unit] = {
-    def bench[A: Arbitrary](runner: TestRunner, name: String)(body: A => Any): IO[Unit] =
-      runner.runTests[A](name, strategy)(body)
+  private def runAll(strategyName: String): IO[Unit] = {
+    def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): IO[Unit] =
+      runner.runTests(name, Strategy.parse[A](strategyName).get)(body)
 
     for {
       _ <- bench(bools, "identity")(BoolBench.identity)

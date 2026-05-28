@@ -25,9 +25,9 @@ final case class SessionFeedback[A](history: Vector[SessionFeedback.InputRecord[
   lazy val growthCurve: Vector[Int] =
     history.scanLeft(0)((c, r) => c + r.newlyCoveredBranches.size).tail
 
-  /** Append a new iteration record. `nowCovered` is scoverage's current cumulative set of covered
-    * branch positions; the delta against the running `coveredBranches` is what this input
-    * contributed.
+  /** Append a new iteration record. `nowCovered` is the cumulative set of *leaf* positions fired so
+    * far (scoverage's hits intersected with the method's leaves by the use case before calling
+    * here); the delta against the running `coveredBranches` is what this input contributed.
     */
   def append(input: A, nowCovered: Set[Pos]): SessionFeedback[A] =
     SessionFeedback(

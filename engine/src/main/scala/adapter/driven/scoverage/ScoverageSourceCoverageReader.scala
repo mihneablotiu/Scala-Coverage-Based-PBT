@@ -1,7 +1,7 @@
 package adapter.driven.scoverage
 
 import cats.effect.IO
-import domain.MethodSourceCoverage
+import domain.Pos
 import port.driven.SourceCoverageReader
 import scoverage.reporter.IOUtils
 import scoverage.serialize.Serializer
@@ -55,16 +55,14 @@ object ScoverageSourceCoverageReader {
       Serializer.deserialize(coverageFile, sutRoot.toFile)
     }
 
-    override def coverage(sourceFile: Path, methodName: String): IO[MethodSourceCoverage] = IO {
+    override def coverage(sourceFile: Path, methodName: String): IO[Set[Pos]] = IO {
       val sourceFileName = sourceFile.getFileName.toString
       val firedIds = readFiredIds
-      val methodStmts = staticCoverage.statements.iterator
+      staticCoverage.statements.iterator
         .filter(s => s.source.endsWith(sourceFileName) && s.location.method == methodName)
-        .toVector
-      MethodSourceCoverage(
-        coveredPositions = methodStmts.iterator.filter(s => firedIds(s.id)).map(_.start).toSet,
-        branchLines = methodStmts.iterator.filter(_.branch).map(s => s.start -> s.line).toMap
-      )
+        .filter(s => firedIds(s.id))
+        .map(_.start)
+        .toSet
     }
 
     private def readFiredIds: Set[Int] =

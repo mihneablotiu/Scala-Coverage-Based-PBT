@@ -59,22 +59,22 @@ object FileSystemCoverageReportWriter {
   // Per-branch row, derived once per write
   // ────────────────────────────────────────────────────────────────
 
-  /** One row per source branch — `(pos, line, label, first-hit input index)`. Used by the summary,
-    * JSON, and CSV renderers; the DOT renderer doesn't need it (it walks the BranchTree directly).
+  /** One row per leaf of the [[BranchTree]] — `(pos, line, label, first-hit input index)`. Used by
+    * the summary, JSON, and CSV renderers; the DOT renderer doesn't need it (it walks the
+    * BranchTree directly and paints both leaves and decision points).
     */
   private final case class Row(pos: Pos, line: Int, label: String, firstHitInput: Option[Int])
 
   private def buildBranches[A](r: SessionReport[A]): Vector[Row] = {
-    val labels =
-      r.methodTree.fold(Map.empty[Pos, String])(t => BranchTree.collectLabels(t.body))
-    // Each branch's pos appears in at most one record's `newlyCoveredBranches` (the iteration
-    // that first covered it), so this flat-map → toMap is unambiguous.
+    // Each leaf's pos appears in at most one record's `newlyCoveredBranches` (the iteration that
+    // first covered it), so this flat-map → toMap is unambiguous.
     val firstHits: Map[Pos, Int] = r.feedback.history.iterator
       .flatMap(rec => rec.newlyCoveredBranches.iterator.map(_ -> rec.index))
       .toMap
-    r.coverage.branchLines.toVector
-      .sortBy { case (p, _) => p }
-      .map { case (pos, line) => Row(pos, line, labels.getOrElse(pos, "?"), firstHits.get(pos)) }
+    r.methodTree
+      .fold(Vector.empty[BranchTree.Leaf])(t => BranchTree.leaves(t.body).toVector)
+      .sortBy(_.pos)
+      .map(l => Row(l.pos, l.line, l.text, firstHits.get(l.pos)))
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ object FileSystemCoverageReportWriter {
       .addEdge("  cls -> method;\n")
 
     val finalState = r.methodTree.fold(initial) { mt =>
-      new TreeRenderer(r.coverage.coveredPositions).render(mt.body, "method", "", initial)
+      new TreeRenderer(r.coveredPositions).render(mt.body, "method", "", initial)
     }
 
     s"""digraph "${r.methodName}" {
@@ -172,7 +172,7 @@ object FileSystemCoverageReportWriter {
       case BranchTree.Sequence(_, children) =>
         children.foldLeft(state)((s, c) => render(c, parentId, edgeLabel, s))
 
-      case BranchTree.Leaf(pos, text) =>
+      case BranchTree.Leaf(pos, _, text) =>
         val (id, s1) = state.freshId
         val covered = coveredPositions(pos)
         val fill = stateColour(covered, LeafCovered, LeafMissed, LeafUnknown)

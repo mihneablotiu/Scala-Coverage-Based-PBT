@@ -159,11 +159,11 @@ The goal of this thesis is to build a small prototype that:
 3. Uses that information to make future tests smarter, so the rare
    branches get reached too.
 
-Steps 1 and 2 are what the code does today. Step 3 is the next
-phase. The framework already has slots for guided strategies (two of
-them, sitting alongside the random baseline), but their bodies still
-just ask for a random input. The plumbing is in place; the smart
-behaviour is the part we're building.
+All three steps are in place today. Step 3 ships as the
+`mutation-guided` strategy sitting alongside the random baseline:
+the loop now feeds the running coverage history back into the
+generator, and inputs that previously covered a new branch are
+re-used as seeds for the next round of variants.
 
 ---
 
@@ -174,27 +174,32 @@ English:
 
 1. We point the framework at our example file of small methods.
 2. For each method, and for each strategy we want to compare
-   (currently three: one random and two "future-guided" placeholders),
-   we ask a number generator for 100 different inputs.
+   (currently two: random and mutation-guided),
+   we ask a number generator for 1000 different inputs.
 3. For each input, we feed it into the method.
 4. As the method runs, an extra layer watches and records *which
    lines of code were executed* on that run.
-5. We collect all 100 observations into a single picture of how well
+5. We collect all 1000 observations into a single picture of how well
    the method's branches were exercised over the whole session.
 6. We write the result to disk in five complementary forms (see
    section 9).
 
-Today the three strategies all behave like random — the two "guided"
-slots exist so we have somewhere to plug a real guided algorithm in
-later without rearranging anything else. So if you compare the
-output folders for the same method under different strategies, you'll
-see essentially the same numbers in each. That's expected; it's what
-"placeholder" means here.
+The two strategies pick inputs differently. **Random** samples
+uniformly from ScalaCheck's `Arbitrary[A]` every iteration and
+ignores past observations entirely. **Mutation-guided** keeps a
+running list of "seeds" — inputs whose iteration covered a
+previously-uncovered branch — and roughly half the time picks a seed
+and asks a `Mutator[A]` type class for a nearby variant (flip a bit,
+bump an int, drop a list tail, swap one tuple component, …); the
+other half falls back to a fresh `Arbitrary[A]` sample. So if you
+compare the output folders for the same method under different
+strategies, you'll see real differences in both *which* branches got
+covered and *how quickly*.
 
-So you can think of the project as a **measuring stick**: we've built
-the part that observes and reports, and we've built the slots that
-the guided variants will live in. The "decide what to do next" part
-of the guided variants is the next step.
+So you can think of the project as a **measuring stick** with two
+calibrated needles: the part that observes and reports is the same
+across strategies, and the part that picks the next input is the
+thing under study.
 
 ---
 
@@ -306,18 +311,17 @@ The thesis is comparing two kinds of testing tools:
 - **Coverage-guided property-based testing**, which is what this
   thesis prototype is being built to demonstrate.
 
-To make a fair comparison you need both. The current code is the
-random baseline plus all the infrastructure (coverage measurement,
-reports, plumbing) that the guided versions will reuse. The next
-step is to write the actual guided strategies — there are two
-slots already in place — and re-run the same experiments, then
-compare the strategies side by side using the folder layout shown
-in section 9.
-
-The expectation — and the part this thesis hopes to demonstrate — is
-that the guided versions reach the rare branches in dramatically
-fewer inputs than random does, on methods of the shape we showed in
-section 8.
+To make a fair comparison you need both, running on the same
+plumbing. The current code is the random baseline plus one guided
+strategy (mutation-guided) plus all the surrounding infrastructure
+— coverage measurement, per-strategy reports, side-by-side
+comparison charts — that lets a researcher quote concrete numbers
+rather than vague impressions. The `engine/reports/_summary/` folder
+collects those numbers in one place; the central observation is that
+on methods of the shape we showed in section 8, the guided variant
+reaches the rare branches in dramatically fewer inputs than random.
+The full chart-by-chart breakdown lives in
+`docs/diagrams/compare.py` and the SVGs it generates.
 
 ---
 

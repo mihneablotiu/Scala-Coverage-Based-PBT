@@ -6,18 +6,19 @@ package domain
   *
   * Three node kinds, deliberately few:
   *
-  *   - [[Branch]] — a decision point. The construct kind ("if", "match", "while", "partial", …) is
-  *     a free-form `String` discriminator, not a separate ADT variant. The renderer draws every
-  *     branch the same way: a box with `kind` + `label` and one outgoing edge per arm. **Adding a
-  *     new construct is a single new case in the AST walker — this file and the renderer don't
-  *     change.**
+  *   - [[Branch]] — a decision point (`if`, `match`, `while`, `partial`, …). The construct kind is
+  *     a free-form `String` discriminator, not a separate ADT variant; the renderer draws every
+  *     branch the same way. **Decision points are not branches in the coverage sense** — they're
+  *     intermediate nodes whose colour just tells the reader "yes, the predicate was evaluated."
+  *     Adding a new construct is a single new case in the AST walker — this file and the renderer
+  *     don't change.
   *   - [[Sequence]] — multiple sibling subtrees rooted at the same parent. Used when a `Term.Block`
   *     contains several branchy statements, or a non-branchy parent (e.g. a `Term.Apply`) hides
   *     multiple branchy descendants.
-  *   - [[Leaf]] — a terminal expression. Coloured by whether its position was invoked.
-  *
-  * Coverage is overlaid by the writer at render time using a `Set[Pos]` of invoked positions; see
-  * [[isReached]].
+  *   - [[Leaf]] — a terminal expression. **This is what "a branch" means for coverage**: every
+  *     `Leaf` is one distinct path through the method body, and `covered / total` always reads as
+  *     "paths exercised / paths in the method". The `line` is the source line of the leaf, kept
+  *     alongside the position so the writer doesn't need a second lookup table.
   */
 sealed trait BranchTree {
   def pos: Pos
@@ -38,8 +39,11 @@ object BranchTree {
   /** Multiple sibling subtrees attached to the same parent. */
   final case class Sequence(pos: Pos, children: List[BranchTree]) extends BranchTree
 
-  /** Terminal expression — its position determines its colour in the picture. */
-  final case class Leaf(pos: Pos, text: String) extends BranchTree
+  /** Terminal expression — one distinct path through the enclosing method. `pos` is the scoverage
+    * key (so the writer can colour it), `line` is the source line for the per-branch summary, and
+    * `text` is the rendered body for both the diamond label and the human-readable label.
+    */
+  final case class Leaf(pos: Pos, line: Int, text: String) extends BranchTree
 
   /** One outcome of a [[Branch]]. `label` is the human-readable edge text ("then", "else",
     * `case Seq(a, b, c)`, "body", "catch IOException", …); `body` is the subtree rendered below
@@ -52,28 +56,34 @@ object BranchTree {
     * partial functions (no condition position) behave the same as ifs.
     */
   def isReached(tree: BranchTree, covered: Set[Pos]): Boolean = tree match {
-    case Leaf(pos, _)          => covered(pos)
+    case Leaf(pos, _, _)       => covered(pos)
     case Branch(_, _, _, arms) => arms.exists(a => isReached(a.body, covered))
     case Sequence(_, children) => children.exists(c => isReached(c, covered))
   }
 
-  /** Walks the tree and records a human-readable description for every node's position. Used by the
-    * report writer to label each scoverage branch position with what it actually represents.
+  /** Every leaf in document order, **provided the tree has at least one decision point**.
     *
-    *   - Each `Leaf(pos, text)` contributes `pos -> text` — the terminal arm's body text (e.g.
-    *     `"unsorted"`, `"zero"`).
-    *   - Each `Branch(pos, kind, label, _)` contributes `pos -> s"$kind ($label)"` — the construct
-    *     + condition for a sub-decision (e.g. `"if (xs == xs.sorted)"`). This is what a nested
-    *     `if`'s position scoverage reports as a "branch arm fired" actually means.
+    * A tree of just a `Leaf` is a non-branching method (`def identity(b: Boolean) = b`); it has one
+    * source-level path but no decision to be exercised, so reporting "1 branch" would be misleading
+    * — we return `Nil`, the report shows `0/0`, and the trivial body falls out of the comparison
+    * entirely.
+    *
+    * The source of truth for "what counts as a branch": the writer's per-branch summary lists
+    * exactly these, and the coverage delta in the use case is computed by intersecting scoverage's
+    * fired positions with `leaves(...).map(_.pos).toSet`.
     */
-  def collectLabels(tree: BranchTree): Map[Pos, String] = tree match {
-    case Leaf(pos, text) =>
-      Map(pos -> text)
-    case Sequence(pos, children) =>
-      val self = Map(pos -> "<block>")
-      children.foldLeft(self)((acc, c) => acc ++ collectLabels(c))
-    case Branch(pos, kind, label, arms) =>
-      val self = Map(pos -> s"$kind ($label)")
-      arms.foldLeft(self)((acc, arm) => acc ++ collectLabels(arm.body))
+  def leaves(tree: BranchTree): List[Leaf] =
+    if (hasBranch(tree)) collectLeaves(tree) else Nil
+
+  private def hasBranch(tree: BranchTree): Boolean = tree match {
+    case _: Branch             => true
+    case Sequence(_, children) => children.exists(hasBranch)
+    case _: Leaf               => false
+  }
+
+  private def collectLeaves(tree: BranchTree): List[Leaf] = tree match {
+    case l: Leaf               => List(l)
+    case Sequence(_, children) => children.flatMap(collectLeaves)
+    case Branch(_, _, _, arms) => arms.flatMap(a => collectLeaves(a.body))
   }
 }

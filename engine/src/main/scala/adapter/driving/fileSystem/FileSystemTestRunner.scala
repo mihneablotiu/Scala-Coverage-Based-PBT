@@ -2,7 +2,6 @@ package adapter.driving.fileSystem
 
 import cats.effect.IO
 import domain.Strategy
-import org.scalacheck.Arbitrary
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
 
@@ -32,9 +31,9 @@ final class FileSystemTestRunner(
     * `engine/reports/IntBench/isPrime/mutation-guided/` sit side-by-side under the same method
     * directory.
     */
-  override def runTests[A: Arbitrary](
+  override def runTests[A](
       methodName: String,
-      strategy: Strategy
+      strategy: Strategy[A]
   )(exercise: A => Any): IO[Unit] = {
     val stem = sourceFile.getFileName.toString.stripSuffix(".scala")
     val out = outBase.resolve(stem).resolve(methodName).resolve(strategy.name)

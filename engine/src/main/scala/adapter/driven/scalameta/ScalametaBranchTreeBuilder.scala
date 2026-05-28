@@ -94,11 +94,11 @@ object ScalametaBranchTreeBuilder {
       .filter(hasBranch)
       .toList
     branchy match {
-      case Nil           => BranchTree.Leaf(posOf(tree), textOf(tree))
+      case Nil           => BranchTree.Leaf(posOf(tree), lineOf(tree), textOf(tree))
       case single :: Nil =>
         // Term.Block wraps a sequence of statements (val + if + ...); scoverage tags the block's
-        // own position as a branch arm body. Wrap in a Sequence so its position is preserved in
-        // the BranchTree and the report writer can label it instead of falling back to "?".
+        // own position as the position of the branch arm. Wrap in a Sequence so the position is
+        // preserved in the BranchTree even though only one structural child is branchy.
         tree match {
           case _: Term.Block => BranchTree.Sequence(posOf(tree), List(single))
           case _             => single
@@ -120,5 +120,9 @@ object ScalametaBranchTreeBuilder {
   }
 
   private def posOf(t: Tree): Pos = t.pos.start
+  // Scalameta lines are 0-based; scoverage and IDE editors are 1-based. Offsetting here means every
+  // downstream consumer ("line 42  trivial …" in the summary, the `line` field in JSON / CSV) reads
+  // the same number you'd see in your editor.
+  private def lineOf(t: Tree): Int = t.pos.startLine + 1
   private def textOf(t: Tree): String = t.toString.replaceAll("\\s+", " ").trim.take(80)
 }

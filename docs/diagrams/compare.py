@@ -2,47 +2,41 @@
 """Strategy comparison artifacts from per-strategy coverage JSON.
 
 Reads `engine/reports/<Bench>/<method>/<strategy>/data/coverage.json` for every
-strategy and writes three flavours of comparison artifacts:
+strategy and writes four flavours of comparison artefacts.
+
+**Per-method and per-bench charts** pack each strategy's headline numbers into
+one bar with a single combined value label:
+
+    `61%  (11/18)  ·  sat #481  ·  → random at #37`
+
+The `→ random at #N` addendum appears only on a *guided* strategy's bar, and
+only when the guided strategy **strictly beat** random's coverage and matched
+random's covered count at an input *other* than its own plateau (when those
+two numbers coincide the `sat #N` already carries that information).
+
+**Aggregate charts** (suite-wide and overall) show coverage *only*: the
+"mean saturation" of a heterogeneous set of methods is a number with no
+intuitive reading — averaging "first input that plateaued" across two- and
+twenty-branch methods doesn't compare like with like. The per-bench /
+per-method views above are where the per-method saturation lives.
 
 1. **Per-method** — one SVG per (Bench, method) at
-   `engine/reports/<Bench>/<method>/comparison.svg`. Two stacked panels:
-     - top: max coverage reached (%) per strategy.
-     - bottom: input index at which each strategy plateaued; a small "○"
-       marker on each guided-strategy row shows the first input at which it
-       matched random's covered count (so you can tell whether a guided
-       strategy reached random's plateau faster, even if their final
-       coverages eventually differ).
+   `engine/reports/<Bench>/<method>/comparison.svg`. Single horizontal panel
+   with one bar per strategy.
 
-2. **Per-bench detailed comparisons** — two horizontal grouped-bar SVGs per
-   bench, under `engine/reports/_summary/by_bench/<Bench>/`:
-     - `coverage.svg`: one row per method, one bar per strategy per row
-       (R / M), x = max coverage %. Methods sorted by random's coverage
-       descending (best storytelling: easy wins at top, harder methods at
-       bottom).
-     - `plateau.svg`: same layout, x = saturation input. A small ○ marker
-       on guided rows when the guided strategy went *above* random's
-       coverage — it sits at the first input at which it matched random's
-       ceiling, so you can read off both "did guided plateau faster?" and
-       "did guided reach random's ceiling sooner than random did?" in one
-       glance.
+2. **Per-bench detailed** — one SVG per bench at
+   `engine/reports/_summary/by_bench/<Bench>/comparison.svg`. One band per
+   method, two bars per band. Methods sorted by random's coverage descending.
 
-3. **Per-bench averages** — two grouped-bar SVGs under
-   `engine/reports/_summary/`:
-     - `suite_coverage.svg`: 3 bench groups, one strategy bar per group per
-       strategy, value = aggregate `Σ covered / Σ total` across the bench's
-       methods. The "drill-down" complement to the per-bench detail charts.
-     - `suite_plateau.svg`: same shape, value = mean saturation input
-       across the bench's methods (lower = faster average plateau).
+3. **Per-bench averages** — `engine/reports/_summary/suite.svg`. Vertical
+   grouped bars: one group per bench, one bar per strategy per group. Bar
+   height = aggregate `Σ covered / Σ total` across the bench's methods.
 
-4. **Suite-wide overall** — two single-group bar SVGs under
-   `engine/reports/_summary/`:
-     - `overall_coverage.svg`: one bar per strategy, value = aggregate
-       coverage across the *entire* suite. The thesis-headline number.
-     - `overall_plateau.svg`: one bar per strategy, value = mean
-       saturation input across every method in the suite.
+4. **Suite-wide overall** — `engine/reports/_summary/overall.svg`. Vertical
+   single-group bars: one bar per strategy, aggregated across every method.
 
-5. **Markdown table** at `engine/reports/_summary/comparison.md` listing every
-   (Bench, method) row with the precise numbers behind the charts.
+5. **Markdown table** at `engine/reports/_summary/comparison.md`, one row per
+   (Bench, method) with the precise numbers behind the charts.
 
 The script is pure post-processing; it never invokes sbt or the engine. Run
 `make compare` (which `make all` also depends on) after `make run`. The
@@ -57,7 +51,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -71,7 +65,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORTS_DIR = REPO_ROOT / "engine" / "reports"
 SUMMARY_DIR = REPORTS_DIR / "_summary"
 
-# Canonical strategy order — matches `Strategy.all` in the Scala engine and
+# Canonical strategy order — matches `Strategy.names` in the Scala engine and
 # `STRATEGIES` in the Makefile. Anything not in this list is ignored.
 STRATEGIES: List[str] = ["random", "mutation-guided"]
 
@@ -162,138 +156,50 @@ def save_svg(fig, out: Path) -> None:
     print(f"wrote {out.relative_to(REPORTS_DIR.parent)}")
 
 
-# ── Per-method chart ──────────────────────────────────────────────────
-def per_method_chart(bench: str, method: str,
-                     by_strategy: Dict[str, Report], out: Path) -> None:
-    """Two-panel SVG: coverage bars + saturation-input bars with markers."""
-    random_r = by_strategy.get("random")
-    if random_r is None:
-        # Without random as the baseline there is no "time to random's plateau"
-        # comparison to draw — skip silently.
-        return
+# ── Combined value label ───────────────────────────────────────────────
+def _combined_label(strategy: str, r: Report,
+                    by_s: Dict[str, Report]) -> str:
+    """The single text element drawn next to a strategy's bar.
 
-    fig, (ax_cov, ax_inp) = plt.subplots(
-        2, 1, figsize=(9, 4.5),
-        gridspec_kw={"height_ratios": [1, 1.15]},
-    )
+    Always carries `cov%  (covered/total)  ·  sat #N`. For a *guided*
+    strategy that strictly beat random's coverage we also append
+    `·  → random at #t` — the input at which the guided strategy first
+    matched random's covered count.
 
-    names = [LABEL[s] for s in STRATEGIES]
-    colors = [COLOR[s] for s in STRATEGIES]
-    y_pos = np.arange(len(STRATEGIES))
+    The addendum is *suppressed* when `t == saturation`: the `sat #N` slot
+    already shows that number, so a second copy would just clutter the row.
+    Random rows never get the addendum (it would be self-referential).
+    """
+    base = f"{r.coverage_pct:.0f}%  ({r.covered}/{r.total})"
+    sat = f"sat #{r.saturation}" if r.saturation is not None else "sat —"
+    label = f"{base}  ·  {sat}"
 
-    # ── Top panel: max coverage % ──────────────────────────────────────
-    pcts = [by_strategy[s].coverage_pct if s in by_strategy else 0.0 for s in STRATEGIES]
-    ax_cov.barh(y_pos, pcts, color=colors, edgecolor=STROKE, linewidth=1.1, zorder=2)
-    for y, p, s in zip(y_pos, pcts, STRATEGIES):
-        r = by_strategy.get(s)
-        suffix = f"  ({r.covered}/{r.total})" if r else ""
-        ax_cov.text(p + 1.5, y, f"{p:.0f}%{suffix}", va="center", fontsize=10, color=TEXT)
-    ax_cov.set_yticks(y_pos)
-    ax_cov.set_yticklabels(names, fontsize=10, color=TEXT)
-    ax_cov.set_xlim(0, 118)
-    ax_cov.set_xlabel("Maximum coverage reached  (%)", fontsize=10, color=TEXT)
-    ax_cov.invert_yaxis()
-    ax_cov.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
-    style_axes(ax_cov)
-    ax_cov.set_title(f"{bench} · {method}", fontsize=13, fontweight="bold",
-                     color=TEXT, loc="left", pad=10)
-
-    # ── Bottom panel: inputs to plateau + cross-strategy markers ───────
-    sats: List[int] = []
-    for s in STRATEGIES:
-        r = by_strategy.get(s)
-        if r is None or r.saturation is None:
-            sats.append(0)
-        else:
-            sats.append(r.saturation)
-
-    ax_inp.barh(y_pos, sats, color=colors, edgecolor=STROKE, linewidth=1.1, zorder=2)
-    for y, sat, s in zip(y_pos, sats, STRATEGIES):
-        r = by_strategy.get(s)
-        if r is None or r.covered == 0:
-            ax_inp.text(2, y, "(no coverage)", va="center",
-                        fontsize=9, color=STROKE, style="italic")
-        else:
-            ax_inp.text(sat + 1.5, y, f"#{sat}", va="center", fontsize=10, color=TEXT)
-
-    # "Time to random's plateau" marker on guided rows when applicable.
-    random_cov = random_r.covered
-    for s, y in zip(STRATEGIES, y_pos):
-        if s == "random":
-            continue
-        r = by_strategy.get(s)
-        if r is None or random_cov == 0:
-            continue
-        if r.covered < random_cov:
-            ax_inp.text(2, y - 0.32, "(did not reach random's coverage)",
-                        fontsize=8, color=STROKE, style="italic", va="center")
-            continue
-        t = r.first_input_reaching(random_cov)
-        if t is None or t == r.saturation:
-            # If the guided strategy reached random's coverage at exactly its own
-            # plateau input, the bar already marks it — no extra ○ needed.
-            continue
-        ax_inp.plot(t, y, marker="o", markersize=9, markerfacecolor="white",
-                    markeredgecolor=STROKE, markeredgewidth=1.5, zorder=10)
-        ax_inp.text(t + 1.5, y - 0.32,
-                    f"matched random's {random_cov}/{r.total} at input #{t}",
-                    fontsize=8, color=STROKE, style="italic", va="center")
-
-    ax_inp.set_yticks(y_pos)
-    ax_inp.set_yticklabels(names, fontsize=10, color=TEXT)
-    ax_inp.set_xlim(0, max(105, max(sats) + 15))
-    ax_inp.set_xlabel(
-        "Input index at which the strategy plateaued"
-        "   (○ = first input at which a guided strategy matched random's coverage)",
-        fontsize=9, color=TEXT,
-    )
-    ax_inp.invert_yaxis()
-    ax_inp.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
-    style_axes(ax_inp)
-
-    plt.tight_layout()
-    save_svg(fig, out)
+    if strategy == "random":
+        return label
+    random_r = by_s.get("random")
+    if random_r is None or random_r.covered == 0:
+        return label
+    if r.covered <= random_r.covered:  # strict beat only
+        return label
+    t = r.first_input_reaching(random_r.covered)
+    if t is None or t == r.saturation:
+        return label
+    return f"{label}  ·  → random at #{t}"
 
 
-# ── Multi-method horizontal grouped-bar charts ─────────────────────────
-#
-# Every chart below shares the same shape: one row per method, one bar per
-# strategy per row (random / mutation-guided), x-axis = the metric of
-# interest. Methods are sorted by random's value descending so
-# the storytelling cascades from "everyone aces this" at the top to
-# "interesting differentiation happens here" at the bottom — the order
-# a thesis figure wants to draw the eye towards.
-
-def _sort_methods(items: List[Tuple[Tuple[str, str], Dict[str, Report]]],
-                  by_strategy: str = "random") -> List[Tuple[Tuple[str, str], Dict[str, Report]]]:
-    """Sort by `by_strategy`'s coverage descending, then by method name ascending."""
-
-    def key(item):
-        (_, m), by_s = item
-        r = by_s.get(by_strategy)
-        cov = r.coverage_pct if r is not None else 0.0
-        return (-cov, m)
-
-    return sorted(items, key=key)
-
-
+# ── Horizontal chart: per-method and per-bench share this shape ───────
 def _strategy_chart(
     items: List[Tuple[Tuple[str, str], Dict[str, Report]]],
-    extract: Callable[[Report], float],
-    value_label: Callable[[Report], str],
-    xlabel: str,
-    title: str,
-    xlim: Tuple[float, float],
     out: Path,
-    marker_fn: Optional[Callable[[str, Report, Dict[str, Report]],
-                                  Optional[Tuple[int, str]]]] = None,
+    title: str,
+    figsize: Optional[Tuple[float, float]] = None,
 ) -> None:
-    """Horizontal grouped bars: one band per method, three bars per band.
+    """Horizontal grouped bars: one band per method, one bar per strategy.
 
-    `marker_fn(strategy, report, by_strategy)` may return `(x, text)` to overlay
-    a ○-and-label marker on a guided bar — used by the plateau chart to show
-    "matched random's coverage at input #N" when the guided strategy went
-    above random's ceiling.
+    Bar length = coverage %. The right-of-bar text is the single combined
+    label produced by `_combined_label` — it packs coverage, plateau and
+    (when guided beat random) the speed-to-random number into one slot.
+    `figsize=None` picks a height that scales with the number of methods.
     """
     if not items:
         return
@@ -301,6 +207,7 @@ def _strategy_chart(
     bar_h = 0.30          # one bar's thickness, in data units
     inner_gap = 0.04      # gap between adjacent bars within a band
     outer_gap = 0.55      # gap between consecutive bands
+    xlim = (0.0, 165.0)   # accommodates the longest combined label
 
     n_strats = len(STRATEGIES)
     band_h = n_strats * bar_h + (n_strats - 1) * inner_gap
@@ -312,10 +219,11 @@ def _strategy_chart(
         y += band_h + outer_gap
 
     total_data_h = y - outer_gap
-    # Figure height — roughly 0.55 inches per band, with a floor for tiny benches.
-    fig_h = max(2.6, total_data_h * 0.55 + 1.6)
+    if figsize is None:
+        # Default: ~0.55 inches per band, with a floor for small benches.
+        figsize = (11, max(2.6, total_data_h * 0.55 + 1.6))
 
-    fig, ax = plt.subplots(figsize=(11, fig_h))
+    fig, ax = plt.subplots(figsize=figsize)
 
     y_ticks: List[float] = []
     y_labels: List[str] = []
@@ -326,22 +234,11 @@ def _strategy_chart(
             if r is None:
                 continue
             y = bt + j * (bar_h + inner_gap) + bar_h / 2
-            v = extract(r)
-            ax.barh(y, v, height=bar_h, color=COLOR[s],
+            cov = r.coverage_pct
+            ax.barh(y, cov, height=bar_h, color=COLOR[s],
                     edgecolor=STROKE, linewidth=0.9, zorder=2)
-            ax.text(v + xlim[1] * 0.006, y, value_label(r),
+            ax.text(cov + xlim[1] * 0.006, y, _combined_label(s, r, by_s),
                     va="center", ha="left", fontsize=8, color=TEXT)
-            if marker_fn is not None and s != "random":
-                marker = marker_fn(s, r, by_s)
-                if marker is not None:
-                    mx, mtext = marker
-                    ax.plot(mx, y, marker="o", markersize=7,
-                            markerfacecolor="white", markeredgecolor=STROKE,
-                            markeredgewidth=1.3, zorder=10)
-                    if mtext:
-                        ax.text(mx + xlim[1] * 0.006, y, mtext,
-                                va="center", ha="left", fontsize=7.5,
-                                style="italic", color=STROKE)
 
         y_ticks.append(bt + band_h / 2)
         y_labels.append(method)
@@ -351,55 +248,57 @@ def _strategy_chart(
     ax.set_xlim(*xlim)
     ax.set_ylim(-band_h * 0.5, total_data_h + band_h * 0.5)
     ax.invert_yaxis()
-    ax.set_xlabel(xlabel, fontsize=10, color=TEXT)
-    ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT, loc="left", pad=12)
+    ax.set_xlabel("Coverage reached  (%)", fontsize=10, color=TEXT)
+    ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT,
+                 loc="left", pad=12)
     ax.grid(axis="x", color=GRID, linewidth=0.7, zorder=0)
     style_axes(ax)
 
-    # Legend below the chart. Offset is tuned to scale roughly inversely with
-    # figure height so tall charts don't push the legend off the page.
     legend_handles = [plt.Rectangle((0, 0), 1, 1, facecolor=COLOR[s],
                                      edgecolor=STROKE, linewidth=0.9)
                       for s in STRATEGIES]
     legend_labels = [LABEL[s] for s in STRATEGIES]
-    if marker_fn is not None:
-        legend_handles.append(plt.Line2D([0], [0], marker="o", markersize=7,
-                                          markerfacecolor="white",
-                                          markeredgecolor=STROKE,
-                                          markeredgewidth=1.3, linestyle=""))
-        legend_labels.append("Guided ≥ random's ceiling, first match")
+    # Anchor scales with figure height so the legend sits below the xlabel on
+    # both the tiny per-method chart (fig_h ≈ 3) and the tall per-bench one
+    # (fig_h ≈ 13); plain matplotlib axes coordinates don't give us that
+    # automatically.
     ax.legend(legend_handles, legend_labels, loc="upper center",
-              bbox_to_anchor=(0.5, -0.6 / fig_h), ncol=len(legend_labels),
-              frameon=False, fontsize=9)
+              bbox_to_anchor=(0.5, -1.0 / figsize[1]),
+              ncol=len(legend_labels), frameon=False, fontsize=9)
 
     plt.tight_layout()
     save_svg(fig, out)
 
 
-def _coverage_value_label(r: Report) -> str:
-    return f"{r.coverage_pct:.0f}%  ({r.covered}/{r.total})"
+def _sort_methods(items: List[Tuple[Tuple[str, str], Dict[str, Report]]],
+                  by_strategy: str = "random"
+                  ) -> List[Tuple[Tuple[str, str], Dict[str, Report]]]:
+    """Sort by `by_strategy`'s coverage descending, then by method name."""
+
+    def key(item):
+        (_, m), by_s = item
+        r = by_s.get(by_strategy)
+        cov = r.coverage_pct if r is not None else 0.0
+        return (-cov, m)
+
+    return sorted(items, key=key)
 
 
-def _plateau_value_label(r: Report) -> str:
-    return f"#{r.saturation}" if r.saturation is not None else "—"
-
-
-def _plateau_marker(strategy: str, r: Report,
-                    by_s: Dict[str, Report]) -> Optional[Tuple[int, str]]:
-    """○ marker only when the guided strategy beat random's coverage.
-
-    For ties (the common placeholder case today) and losses, the bar already
-    tells the full story and an extra marker would just be noise.
-    """
-    random_r = by_s.get("random")
-    if random_r is None or random_r.covered == 0:
-        return None
-    if r.covered <= random_r.covered:
-        return None
-    t = r.first_input_reaching(random_r.covered)
-    if t is None:
-        return None
-    return t, f"  → matched random's {random_r.covered}/{r.total} at #{t}"
+def per_method_chart(bench: str, method: str,
+                     by_strategy: Dict[str, Report], out: Path) -> None:
+    """Single horizontal chart for one (bench, method) — two bars total."""
+    if "random" not in by_strategy:
+        # Without the random baseline the `→ random` addendum can't be
+        # computed, and the chart would carry only half its intended story.
+        return
+    _strategy_chart(
+        items=[((bench, method), by_strategy)],
+        out=out,
+        title=f"{bench} · {method}",
+        # 3.2" gives the xlabel and legend their own line below the bars
+        # without overlapping each other (legend bbox is height-scaled).
+        figsize=(11, 3.2),
+    )
 
 
 def per_bench_charts(grouped: Dict[Tuple[str, str], Dict[str, Report]],
@@ -410,46 +309,28 @@ def per_bench_charts(grouped: Dict[Tuple[str, str], Dict[str, Report]],
 
     for bench, items in sorted(by_bench.items()):
         items = _sort_methods(items)
-        max_sat = max(((r.saturation or 0) for _, by_s in items for r in by_s.values()),
-                      default=0)
-        bench_dir = out_dir / bench
         _strategy_chart(
             items=items,
-            extract=lambda r: r.coverage_pct,
-            value_label=_coverage_value_label,
-            xlabel="Maximum coverage reached  (%)",
-            title=f"{bench} — maximum coverage by strategy",
-            xlim=(0, 118),
-            out=bench_dir / "coverage.svg",
-        )
-        _strategy_chart(
-            items=items,
-            extract=lambda r: r.saturation if r.saturation is not None else 0,
-            value_label=_plateau_value_label,
-            xlabel="Input index at which the strategy plateaued",
-            title=f"{bench} — plateau input by strategy",
-            xlim=(0, max(105, max_sat + 18)),
-            out=bench_dir / "plateau.svg",
-            marker_fn=_plateau_marker,
+            out=out_dir / bench / "comparison.svg",
+            title=f"{bench} — coverage and plateau by strategy",
         )
 
 
 # ── Aggregate (per-bench-average + suite-overall) charts ──────────────
 #
-# The detailed per-bench / per-method views above answer "which methods
-# differentiate the strategies?". These aggregate views answer "across an
-# entire class of tests, and across the whole suite, who wins?" — the
-# thesis-headline numbers.
+# The per-bench / per-method views above answer "which methods differentiate
+# the strategies?". These two answer "across an entire class of tests, and
+# across the whole suite, who wins?" — the thesis-headline numbers.
 #
 # Aggregation choices:
-#   - Coverage    : `Σ covered / Σ total branches` (branch-weighted, not
-#                   per-method-equal-weight). A 12-branch method counts
-#                   more than a 2-branch method, which matches the natural
-#                   "how much of the SUT did we actually cover?" reading.
-#   - Plateau     : arithmetic mean of `saturationInputIndex` across the
-#                   methods that plateaued at all (methods with no covered
-#                   branches have `saturation = None` and would otherwise
-#                   bias the mean without representing real plateau data).
+#   - Coverage : `Σ covered / Σ total branches` (branch-weighted, not
+#                per-method-equal-weight). A 12-branch method counts more
+#                than a 2-branch method, which matches the natural "how much
+#                of the SUT did we cover?" reading.
+#   - Plateau  : arithmetic mean of `saturationInputIndex` across the methods
+#                that plateaued at all (methods with no covered branches have
+#                `saturation = None` and would otherwise bias the mean
+#                without representing real plateau data).
 
 
 def _aggregate_coverage_by_bench(reports: Dict[Tuple[str, str, str], Report],
@@ -469,22 +350,6 @@ def _aggregate_coverage_by_bench(reports: Dict[Tuple[str, str, str], Report],
     return out
 
 
-def _aggregate_plateau_by_bench(reports: Dict[Tuple[str, str, str], Report],
-                                benches: List[str]
-                                ) -> List[Tuple[str, Dict[str, float]]]:
-    out: List[Tuple[str, Dict[str, float]]] = []
-    for bench in benches:
-        bucket: Dict[str, List[int]] = defaultdict(list)
-        for (b, _, s), r in reports.items():
-            if b != bench or r.saturation is None:
-                continue
-            bucket[s].append(r.saturation)
-        out.append((bench, {s: (sum(bucket[s]) / len(bucket[s])
-                                if bucket[s] else 0.0)
-                            for s in STRATEGIES}))
-    return out
-
-
 def _overall_coverage(reports: Dict[Tuple[str, str, str], Report]
                       ) -> Dict[str, float]:
     bucket: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
@@ -495,123 +360,88 @@ def _overall_coverage(reports: Dict[Tuple[str, str, str], Report]
                 if bucket[s][1] > 0 else 0.0) for s in STRATEGIES}
 
 
-def _overall_plateau(reports: Dict[Tuple[str, str, str], Report]
-                     ) -> Dict[str, float]:
-    bucket: Dict[str, List[int]] = defaultdict(list)
-    for (_, _, s), r in reports.items():
-        if r.saturation is None:
-            continue
-        bucket[s].append(r.saturation)
-    return {s: (sum(bucket[s]) / len(bucket[s])
-                if bucket[s] else 0.0) for s in STRATEGIES}
+def suite_chart(reports: Dict[Tuple[str, str, str], Report],
+                benches: List[str], out_dir: Path) -> None:
+    """Per-bench aggregate coverage as a vertical grouped-bar chart.
 
+    Bar height = aggregate `Σ covered / Σ total` across the bench's methods.
+    Saturation is *not* aggregated here: the "mean first-input-to-plateau"
+    across methods with wildly different branch counts isn't a meaningful
+    comparison number, so we keep that detail at the per-bench / per-method
+    level and let the suite chart stay a single clean headline.
+    """
+    coverage = _aggregate_coverage_by_bench(reports, benches)
 
-def _grouped_bar_chart(groups: List[Tuple[str, Dict[str, float]]],
-                       ylabel: str, title: str, out: Path,
-                       fmt: Callable[[float], str]) -> None:
-    """Vertical grouped bars: one group per bench, three bars (one per strategy)."""
-    n_groups = len(groups)
-    bar_w = 0.26
+    n_groups = len(coverage)
+    bar_w = 0.30
     x = np.arange(n_groups)
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(10, 5.2))
     style_axes(ax)
 
-    max_val = max((v for _, d in groups for v in d.values()), default=0.0)
-    head_room = max(max_val * 1.20, 1.0)
+    max_cov = max((v for _, d in coverage for v in d.values()), default=0.0)
+    head_room = max(max_cov * 1.20, 1.0)
 
     for i, s in enumerate(STRATEGIES):
-        vals = [g[1].get(s, 0.0) for g in groups]
+        cov_vals = [d.get(s, 0.0) for _, d in coverage]
         offset = (i - (len(STRATEGIES) - 1) / 2.0) * bar_w
-        ax.bar(x + offset, vals, width=bar_w,
+        ax.bar(x + offset, cov_vals, width=bar_w,
                color=COLOR[s], edgecolor=STROKE, linewidth=1.1,
                label=LABEL[s], zorder=2)
-        for bx, v in zip(x + offset, vals):
-            ax.text(bx, v + max_val * 0.018, fmt(v),
-                    ha="center", va="bottom", fontsize=9, color=TEXT)
+        for bx, cov in zip(x + offset, cov_vals):
+            ax.text(bx, cov + max_cov * 0.018, f"{cov:.0f}%",
+                    ha="center", va="bottom", fontsize=10, color=TEXT)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([g[0] for g in groups], fontsize=11, color=TEXT)
-    ax.set_ylabel(ylabel, fontsize=11, color=TEXT)
+    ax.set_xticklabels([b for b, _ in coverage], fontsize=11, color=TEXT)
+    ax.set_ylabel("Coverage  (Σ covered / Σ total branches, %)",
+                  fontsize=11, color=TEXT)
     ax.set_ylim(0, head_room)
-    ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT, loc="left", pad=14)
+    ax.set_title("Per-bench coverage by strategy",
+                 fontsize=13, fontweight="bold", color=TEXT,
+                 loc="left", pad=14)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=len(STRATEGIES), frameon=False, fontsize=10)
     ax.grid(axis="y", color=GRID, linewidth=0.7, zorder=0)
 
     plt.tight_layout()
-    save_svg(fig, out)
+    save_svg(fig, out_dir / "suite.svg")
 
 
-def _single_group_bar_chart(values: Dict[str, float],
-                            ylabel: str, title: str, out: Path,
-                            fmt: Callable[[float], str]) -> None:
-    """Three bars, one per strategy — for the suite-wide headline figures."""
-    strategies = STRATEGIES
-    vals = [values.get(s, 0.0) for s in strategies]
-    colors = [COLOR[s] for s in strategies]
-    labels = [LABEL[s] for s in strategies]
+def overall_chart(reports: Dict[Tuple[str, str, str], Report],
+                  out_dir: Path) -> None:
+    """Suite-wide aggregate coverage: one bar per strategy."""
+    cov = _overall_coverage(reports)
+    cov_vals = [cov.get(s, 0.0) for s in STRATEGIES]
 
     fig, ax = plt.subplots(figsize=(7.5, 4.8))
     style_axes(ax)
 
-    max_val = max(vals + [1.0])
-    head_room = max_val * 1.22
+    max_cov = max(cov_vals + [1.0])
+    head_room = max_cov * 1.22
 
-    x = np.arange(len(strategies))
-    ax.bar(x, vals, width=0.52, color=colors, edgecolor=STROKE,
-           linewidth=1.2, zorder=2)
-    for bx, v in zip(x, vals):
-        ax.text(bx, v + max_val * 0.025, fmt(v),
-                ha="center", va="bottom", fontsize=11, color=TEXT, fontweight="bold")
+    x = np.arange(len(STRATEGIES))
+    ax.bar(x, cov_vals, width=0.52,
+           color=[COLOR[s] for s in STRATEGIES],
+           edgecolor=STROKE, linewidth=1.2, zorder=2)
+    for bx, cov_v in zip(x, cov_vals):
+        ax.text(bx, cov_v + max_cov * 0.022, f"{cov_v:.1f}%",
+                ha="center", va="bottom", fontsize=12,
+                color=TEXT, fontweight="bold")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=11, color=TEXT)
-    ax.set_ylabel(ylabel, fontsize=11, color=TEXT)
+    ax.set_xticklabels([LABEL[s] for s in STRATEGIES],
+                       fontsize=11, color=TEXT)
+    ax.set_ylabel("Coverage  (Σ covered / Σ total branches, %)",
+                  fontsize=11, color=TEXT)
     ax.set_ylim(0, head_room)
-    ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT, loc="left", pad=14)
+    ax.set_title("Suite-wide coverage by strategy",
+                 fontsize=13, fontweight="bold", color=TEXT,
+                 loc="left", pad=14)
     ax.grid(axis="y", color=GRID, linewidth=0.7, zorder=0)
 
     plt.tight_layout()
-    save_svg(fig, out)
-
-
-def suite_charts(reports: Dict[Tuple[str, str, str], Report],
-                 benches: List[str], out_dir: Path) -> None:
-    """Per-bench averages (one grouped bar chart per metric)."""
-    _grouped_bar_chart(
-        groups=_aggregate_coverage_by_bench(reports, benches),
-        ylabel="Coverage  (Σ covered / Σ total branches, %)",
-        title="Per-bench average coverage by strategy",
-        out=out_dir / "suite_coverage.svg",
-        fmt=lambda v: f"{v:.0f}%",
-    )
-    _grouped_bar_chart(
-        groups=_aggregate_plateau_by_bench(reports, benches),
-        ylabel="Mean input index at which methods plateaued",
-        title="Per-bench mean plateau input by strategy",
-        out=out_dir / "suite_plateau.svg",
-        fmt=lambda v: f"#{v:.1f}",
-    )
-
-
-def overall_charts(reports: Dict[Tuple[str, str, str], Report],
-                   out_dir: Path) -> None:
-    """Suite-wide single-group bar charts — the thesis-headline numbers."""
-    _single_group_bar_chart(
-        values=_overall_coverage(reports),
-        ylabel="Coverage  (Σ covered / Σ total branches, %)",
-        title="Suite-wide coverage by strategy",
-        out=out_dir / "overall_coverage.svg",
-        fmt=lambda v: f"{v:.1f}%",
-    )
-    _single_group_bar_chart(
-        values=_overall_plateau(reports),
-        ylabel="Mean input index at which methods plateaued",
-        title="Suite-wide mean plateau input by strategy",
-        out=out_dir / "overall_plateau.svg",
-        fmt=lambda v: f"#{v:.2f}",
-    )
+    save_svg(fig, out_dir / "overall.svg")
 
 
 # ── Markdown table ────────────────────────────────────────────────────
@@ -642,13 +472,6 @@ def markdown_table(grouped: Dict[Tuple[str, str], Dict[str, Report]],
         "strategy matched random's covered count (— if it never did, or if "
         "random itself covered nothing).",
         "",
-        "> Until the mutation-guided strategy is implemented it delegates to "
-        "random with the shared `Test.Parameters.withInitialSeed(0L)`, so both "
-        "strategies generate the same input sequence and the two columns "
-        "match exactly. They will start to diverge as soon as the placeholder "
-        "in `Strategy.MutationGuided.gen` is replaced with real coverage-aware "
-        "logic.",
-        "",
         "| Bench | Method | Total | Random | Mutation-guided |",
         "|-------|--------|------:|--------|-----------------|",
     ]
@@ -668,12 +491,39 @@ def markdown_table(grouped: Dict[Tuple[str, str], Dict[str, Report]],
     print(f"wrote {out.relative_to(REPORTS_DIR.parent)}")
 
 
+# ── Stale-file cleanup ────────────────────────────────────────────────
+def cleanup_split_files() -> None:
+    """Delete artefacts from the old split-chart layout.
+
+    The previous design emitted separate `coverage.svg` / `plateau.svg` files
+    per bench, and `suite_coverage.svg` / `suite_plateau.svg` /
+    `overall_coverage.svg` / `overall_plateau.svg` under `_summary/`. We
+    consolidated each pair into one chart, so we explicitly remove the old
+    files here — otherwise `make compare` alone (without `make clean`) would
+    leave stale outputs behind.
+    """
+    by_bench = SUMMARY_DIR / "by_bench"
+    if by_bench.exists():
+        for bench_dir in by_bench.iterdir():
+            for old in ("coverage.svg", "plateau.svg"):
+                p = bench_dir / old
+                if p.exists():
+                    p.unlink()
+    for old in ("suite_coverage.svg", "suite_plateau.svg",
+                "overall_coverage.svg", "overall_plateau.svg"):
+        p = SUMMARY_DIR / old
+        if p.exists():
+            p.unlink()
+
+
 # ── Entry point ───────────────────────────────────────────────────────
 def main() -> None:
     reports = load_reports()
     if not reports:
         print(f"No reports found under {REPORTS_DIR}. Run `make run` first.")
         return
+
+    cleanup_split_files()
 
     grouped = group_by_method(reports)
 
@@ -684,8 +534,8 @@ def main() -> None:
     per_bench_charts(grouped, SUMMARY_DIR / "by_bench")
 
     benches = sorted({b for (b, _) in grouped.keys()})
-    suite_charts(reports, benches, SUMMARY_DIR)
-    overall_charts(reports, SUMMARY_DIR)
+    suite_chart(reports, benches, SUMMARY_DIR)
+    overall_chart(reports, SUMMARY_DIR)
 
     markdown_table(grouped, SUMMARY_DIR / "comparison.md")
 

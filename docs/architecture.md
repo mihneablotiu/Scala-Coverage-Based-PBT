@@ -44,13 +44,13 @@ The single driving port `TestRunner` has one adapter today:
 `TestRunnerHandler`, which is the orchestrator written entirely in
 terms of the three driven ports above.
 
-Input-picking strategies — random and the placeholder for the
-coverage-guided variant — are *not* driven ports. They live as
-`gen[A]` methods directly on the case objects of the
-`domain.Strategy` sealed trait, so the handler dispatches via
-`strategy.gen[A]` without any match arm. The section on strategies
-(§6) explains why they sit there and not on the other side of a
-port.
+Input-picking strategies — random and mutation-guided — are *not*
+driven ports. They live as `gen` methods directly on the case
+classes of the `domain.Strategy[A]` sealed trait, so the handler
+dispatches via `strategy.gen(feedback)` without any match arm. The
+section on strategies (§6) explains why they sit there and not on
+the other side of a port, and why each case carries only the
+type-class evidence it actually needs.
 
 ---
 
@@ -154,8 +154,8 @@ list — happens in `app.Main`.
 Strategies sit inside the Use Case column in the diagram for a
 reason: they are not behind a port. The handler holds an injected
 trio of driven adapters, but it picks the input generator by
-calling `strategy.gen[A]` directly — a method on each `Strategy`
-case object. §6 explains the design choice.
+calling `strategy.gen(feedback)` directly — a method on each
+`Strategy[A]` case class. §6 explains the design choice.
 
 ---
 
@@ -184,13 +184,16 @@ results from disk, without touching the use case.
 ### 5b. `SourceCoverageReader`
 
 **What it does.** One operation: `coverage(sourceFile, methodName)`
-returns a snapshot of source-level coverage for that method — the
-set of positions invoked so far and the map of branch positions to
-source lines. The scoverage adapter additionally wipes leftover
-measurement files once at construction (scoverage's `Invoker`
-caches a `FileWriter` after first use, so deleting later would
-orphan it); the port stays a single-method interface because the
-cleanup is a private implementation concern of that one adapter.
+returns the set of source positions that scoverage has seen fired
+for that method so far. The use case intersects that set with the
+method's leaf positions (from the `BranchTree`) to compute the
+input's "newly covered branches" — keeping the "what counts as a
+branch" decision in the domain rather than in the adapter. The
+scoverage adapter additionally wipes leftover measurement files
+once at construction (scoverage's `Invoker` caches a `FileWriter`
+after first use, so deleting later would orphan it); the port
+stays a single-method interface because the cleanup is a private
+implementation concern of that one adapter.
 
 **Why a port.** Source-level coverage is a domain unto itself.
 scoverage is the obvious choice for Scala because of its compiler-
@@ -227,17 +230,28 @@ new adapter and zero changes to the use case.
 
 The thing the thesis varies most is the input-picking strategy.
 That sounds like the textbook case for a port. We chose not to
-make it one. Each `Strategy` case object carries its own `gen[A]`
+make it one. Each `Strategy[A]` case class carries its own `gen`
 method directly, and the handler just calls it:
 
 ```
-val gen: Gen[A] = strategy.gen[A]
+val gen: Gen[A] = strategy.gen(feedback)
 ```
 
-Every case object declares `def gen[A: Arbitrary]: Gen[A]`, so the
-sealed trait still gives compile-time exhaustiveness — but no
-runtime match is needed, because the dispatch is just method
-selection on the case object the handler already holds.
+Every case class declares `def gen(feedback: SessionFeedback[A]):
+Gen[A]`, so the sealed trait still gives compile-time
+exhaustiveness — but no runtime match is needed, because the
+dispatch is just method selection on the case class the handler
+already holds.
+
+**Each strategy carries only the resources it actually uses.**
+`Random[A]` holds an `Arbitrary[A]`; `MutationGuided[A]` holds an
+`Arbitrary[A]` *plus* a `Mutator[A]`. The trait itself has no
+type-class bounds, so the handler, the use-case method, the port,
+and the driving adapter are all free of strategy-specific
+implicits. A new strategy with new requirements (e.g. an
+`Enumerate[A]` for a bounded-exhaustive variant) is just one new
+case class with its own constructor parameter — nothing in between
+has to change.
 
 **Why not a port?**
 
@@ -248,11 +262,12 @@ selection on the case object the handler already holds.
    thing being hidden here.
 2. The handler needs the strategy decision at one specific point
    in the loop body. A sealed trait keeps that decision in one
-   place: adding a new strategy means writing one new `case
-   object` (with its `gen[A]`) and adding it to `Strategy.all`.
-   A port-shaped trait would buy nothing extra and would force
-   the strategy to be constructed by the composition root and
-   threaded through the handler's constructor.
+   place: adding a new strategy means writing one new `case class`
+   (with its `gen`), adding its name to `Strategy.names`, and one
+   new case in `Strategy.parse`. A port-shaped trait would buy
+   nothing extra and would force the strategy to be constructed by
+   the composition root and threaded through the handler's
+   constructor.
 3. The strategies are tiny enough that splitting them into
    per-strategy files would add file count without helping
    navigation. They sit beside the sealed-trait declaration in
@@ -260,14 +275,14 @@ selection on the case object the handler already holds.
    list lives.
 
 What we *do* keep is the swappability the thesis needs. Adding a new
-strategy is mechanical: a new `case object` in `Strategy.scala`
-with its `gen[A]`, the case object added to `Strategy.all`, and its
-name added to the `STRATEGIES` list in the `Makefile` (so the
-orchestration loop runs it too — see §7). The current state is
-**two** strategies — `Random` and `MutationGuided`; the latter is a
-placeholder that delegates to `Arbitrary.arbitrary` so the
-per-strategy report folders exist side-by-side, and only one method
-body changes when a real algorithm lands.
+strategy is mechanical: a new `case class` in `Strategy.scala` with
+its `gen`, its name in `Strategy.names`, a matching case in
+`Strategy.parse`, and the same name in the `STRATEGIES` list in the
+`Makefile` (so the orchestration loop runs it too — see §7). The
+current state is **two** strategies — `Random` (uniform sampling
+from `Arbitrary[A]`) and `MutationGuided` (FuzzChick-flavoured
+mutation of past coverage-improving inputs, using a `Mutator[A]`
+type class with instances for primitives, `List[Int]`, and tuples).
 
 ---
 
@@ -323,12 +338,14 @@ Zooming into the loop body alone:
 
 `Session Feedback` is the loop's running accumulator: a single
 immutable `history: Vector[InputRecord[A]]`, with `coveredBranches`
-and `growthCurve` derived as `lazy val`s on top. The current
-strategies (`Random` and the `MutationGuided` placeholder) don't
-read it — their `gen[A]` is parameterless. When a real guided
-algorithm lands here, it will read whatever it needs off the
-running `SessionFeedback` (the handler will pass it through to the
-strategy's method without any change to the wider pipeline).
+and `growthCurve` derived as `lazy val`s on top. Both strategies
+receive the feedback on every iteration via `strategy.gen(feedback)`
+— wrapped in `Gen.delay` so ScalaCheck re-asks for the next
+`Gen[A]` each step. `Random` ignores it; `MutationGuided` reads
+the input history to find inputs whose iteration produced newly
+covered branches (its "seeds"), and 80 % of the time mutates one
+of them via the `Mutator[A]` type class instead of sampling
+uniformly.
 
 ---
 
@@ -341,22 +358,31 @@ derived getters:
 Session report                ── irreducible
 ├── methodName, sourceFile
 ├── methodTree                ── static AST analysis (Option)
-├── coverage                  ── scoverage snapshot at session end
-└── feedback                  ── loop history
+├── coveredPositions          ── every position scoverage saw fired
+└── feedback                  ── loop history (leaf-intersected)
 
 Session report                ── derived getters
 ├── totalInputs               ── feedback.iteration
-├── covered                   ── coverage.coveredBranchPositions.size
-├── total                     ── coverage.branchLines.size
+├── covered                   ── feedback.coveredBranches.size
+├── total                     ── BranchTree.leaves(methodTree.body).size
 └── saturation                ── first index where growthCurve hit its final value
 ```
+
+A *leaf* of `BranchTree` is the canonical "branch" for coverage:
+every distinct path through the method body is one leaf, and the
+nested-`if` decision points (rectangles in the DOT graph) are not
+counted — they're intermediate nodes, not paths. The handler
+intersects scoverage's fired positions with the leaf set before
+feeding the delta into `SessionFeedback`, so the loop never sees
+non-leaf hits.
 
 The loop-internal `SessionFeedback[A]` is the same `feedback` field
 above: one `history: Vector[InputRecord[A]]` plus two `lazy val`
 derivations (`coveredBranches: Set[Pos]`, `growthCurve:
 Vector[Int]`). The writer turns this slim domain model into the
 on-disk files — every headline figure, per-branch row, and per-input
-row is derived from `(coverage, feedback)` at format time.
+row is derived from `(coveredPositions, methodTree, feedback)` at
+format time.
 
 ---
 
@@ -366,12 +392,13 @@ Each item below is something the project actually uses or will use
 — none of it is speculative.
 
 **Running every benchmark against every strategy is one list.**
-`Strategy.all` is the canonical list; the Makefile's `STRATEGIES`
+`Strategy.names` is the canonical list; the Makefile's `STRATEGIES`
 variable mirrors it and the `run` target loops over it, forking a
 fresh JVM per strategy. Adding `Strategy.SomethingNew` (plus its
-name in `Strategy.all` and in `STRATEGIES`) runs every existing
-benchmark under the new strategy without touching anything else.
-This is exactly the property the thesis comparison needs.
+name in `Strategy.names`, a case in `Strategy.parse`, and the same
+name in `STRATEGIES`) runs every existing benchmark under the new
+strategy without touching anything else. This is exactly the
+property the thesis comparison needs.
 
 **The use case is testable in isolation.** Each driven port is a
 trait. Feed the handler fake implementations that return scripted
@@ -384,13 +411,14 @@ theoretical — anybody picking up the codebase gets it for free.
 use case touches in the outside world: it's the list of constructor
 parameters. There are exactly three driven things the handler can
 do that have side effects. Anything else is in-memory computation
-or a `strategy.gen[A]` call.
+or a `strategy.gen(feedback)` call.
 
-**Two strategies coexist peacefully.** Random and a placeholder
-mutation-guided variant share the same handler and the same
-reporting pipeline. The choice between them is one literal value at
-the call site. This is the central justification for organising the
-strategy choice as a sealed trait in the first place.
+**Two strategies coexist peacefully.** Random and mutation-guided
+share the same handler and the same reporting pipeline. The choice
+between them is one literal value at the call site. This is the
+central justification for organising the strategy choice as a
+sealed trait in the first place — and the per-case fields keep each
+strategy honest about what type-class evidence it actually needs.
 
 **Future extensions are clear, not speculative.** When somebody
 says "can we add an HTML report?", the answer is "write a new
@@ -413,7 +441,7 @@ scoverage's internal shape, so nothing else needed to change.
 A thesis reader could push back on the architecture in several
 defensible ways. Let's list them.
 
-**"You have seventeen Scala files for a hundred-line idea."**
+**"You have eighteen Scala files for a hundred-line idea."**
 True. The engine alone has 17 Scala files. A flat script could
 express the same behaviour in five or six files, maybe fewer.
 
@@ -604,7 +632,7 @@ Where to plug new behaviour without touching the use case:
 |-----------------------------------------------|--------------------------------------------------------------------------------|
 | A new Scala construct (`try`, `for`)          | One case in the Scalameta AST walker + (only if a new shape) one node in `BranchTree` |
 | A new input type (`String`, `case class`)     | Use any type ScalaCheck has an `Arbitrary` for — `Main` already does it for tuples |
-| A real coverage-guided generator              | New `Strategy` case object (with its own `gen[A]`) in `domain/Strategy.scala` + entry in `Strategy.all` + name in the Makefile's `STRATEGIES` |
+| A new input-picking strategy                  | New `Strategy[A]` case class in `domain/Strategy.scala` (with its own `gen`) + name in `Strategy.names` + case in `Strategy.parse` + name in the Makefile's `STRATEGIES` |
 | A new coverage source                         | New `SourceCoverageReader` adapter                                             |
 | A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                             |
 
@@ -634,8 +662,9 @@ For this thesis specifically:
   no extra mental cost once you've internalised the pattern), and
   the uniformity benefits of "the use case depends only on ports"
   outweigh the saved trait definitions. The strategy decision pays
-  for itself today because two strategy case objects already coexist
-  cleanly in the codebase.
+  for itself today because two strategy case classes already coexist
+  cleanly in the codebase, with their per-case typeclass evidence
+  decoupled from the rest of the pipeline.
 
 If you take only one thing away from this document, take this:
 
