@@ -36,6 +36,7 @@ object FileSystemCoverageReportWriter {
 
     override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = {
       val branches = buildBranches(report)
+      val byPos: Map[Pos, Row] = branches.iterator.map(b => b.pos -> b).toMap
       val visuals = outDir.resolve("visuals")
       val data = outDir.resolve("data")
       for {
@@ -46,8 +47,8 @@ object FileSystemCoverageReportWriter {
         _ <- writeFile(outDir, "summary.txt", renderSummary(report, branches))
         _ <- writeFile(visuals, "coverage.dot", renderDot(report))
         _ <- writeFile(visuals, "growth.svg", renderGrowthSvg(report))
-        _ <- writeFile(data, "coverage.json", renderJson(report, branches))
-        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report, branches))
+        _ <- writeFile(data, "coverage.json", renderJson(report, branches, byPos))
+        _ <- writeFile(data, "inputs.csv", renderInputsCsv(report, byPos))
       } yield ()
     }
 
@@ -350,8 +351,7 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  private def renderInputsCsv[A](r: SessionReport[A], branches: Vector[Row]): String = {
-    val byPos: Map[Pos, Row] = branches.iterator.map(b => b.pos -> b).toMap
+  private def renderInputsCsv[A](r: SessionReport[A], byPos: Map[Pos, Row]): String = {
     val rows = r.feedback.history.iterator
       .map { rec =>
         val outcomes = rec.newlyCoveredBranches.iterator.flatMap(byPos.get).toSeq.sortBy(_.line)
@@ -364,8 +364,11 @@ object FileSystemCoverageReportWriter {
     s"index,input,newBranchCount,newBranchLines,newBranches\n$rows\n"
   }
 
-  private def renderJson[A](r: SessionReport[A], branches: Vector[Row]): String = {
-    val byPos: Map[Pos, Row] = branches.iterator.map(b => b.pos -> b).toMap
+  private def renderJson[A](
+      r: SessionReport[A],
+      branches: Vector[Row],
+      byPos: Map[Pos, Row]
+  ): String = {
     val branchesJson = branches
       .map { b =>
         val first = b.firstHitInput.fold("null")(_.toString)

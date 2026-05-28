@@ -63,10 +63,9 @@ object BranchTree {
 
   /** Every leaf in document order, **provided the tree has at least one decision point**.
     *
-    * A tree of just a `Leaf` is a non-branching method (`def identity(b: Boolean) = b`); it has one
-    * source-level path but no decision to be exercised, so reporting "1 branch" would be misleading
-    * — we return `Nil`, the report shows `0/0`, and the trivial body falls out of the comparison
-    * entirely.
+    * A tree of just a `Leaf` is a non-branching method; it has one source-level path but no
+    * decision to be exercised, so reporting "1 branch" would be misleading — we return `Nil`, the
+    * report shows `0/0`, and the trivial body falls out of the comparison entirely.
     *
     * The source of truth for "what counts as a branch": the writer's per-branch summary lists
     * exactly these, and the coverage delta in the use case is computed by intersecting scoverage's
@@ -75,7 +74,12 @@ object BranchTree {
   def leaves(tree: BranchTree): List[Leaf] =
     if (hasBranch(tree)) collectLeaves(tree) else Nil
 
-  private def hasBranch(tree: BranchTree): Boolean = tree match {
+  /** True iff the tree contains at least one [[Branch]] node anywhere — i.e. the method has a
+    * decision point. Used by [[leaves]] (to suppress the misleading "1 branch" reading of a
+    * pure-`Leaf` tree) and by the Scalameta builder (to skip non-branchy structural children when
+    * deciding whether to wrap descendants in a `Sequence`).
+    */
+  def hasBranch(tree: BranchTree): Boolean = tree match {
     case _: Branch             => true
     case Sequence(_, children) => children.exists(hasBranch)
     case _: Leaf               => false

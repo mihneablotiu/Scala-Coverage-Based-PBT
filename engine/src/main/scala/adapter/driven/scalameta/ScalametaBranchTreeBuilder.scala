@@ -91,7 +91,7 @@ object ScalametaBranchTreeBuilder {
         case BranchTree.Sequence(_, cs) => cs
         case n                          => List(n)
       }
-      .filter(hasBranch)
+      .filter(BranchTree.hasBranch)
       .toList
     branchy match {
       case Nil           => BranchTree.Leaf(posOf(tree), lineOf(tree), textOf(tree))
@@ -105,12 +105,6 @@ object ScalametaBranchTreeBuilder {
         }
       case many => BranchTree.Sequence(posOf(tree), many)
     }
-  }
-
-  private def hasBranch(t: BranchTree): Boolean = t match {
-    case _: BranchTree.Branch       => true
-    case BranchTree.Sequence(_, cs) => cs.exists(hasBranch)
-    case _: BranchTree.Leaf         => false
   }
 
   private def armOf(c: Case): BranchTree.Arm = {

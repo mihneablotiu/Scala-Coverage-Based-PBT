@@ -343,9 +343,10 @@ receive the feedback on every iteration via `strategy.gen(feedback)`
 — wrapped in `Gen.delay` so ScalaCheck re-asks for the next
 `Gen[A]` each step. `Random` ignores it; `MutationGuided` reads
 the input history to find inputs whose iteration produced newly
-covered branches (its "seeds"), and 80 % of the time mutates one
-of them via the `Mutator[A]` type class instead of sampling
-uniformly.
+covered branches (its "seeds"), and roughly half the time mutates
+one of them via the `Mutator[A]` type class instead of sampling
+uniformly — `Gen.frequency(5, 5)`, with the random half kept in
+to stop the search from collapsing onto a single seed lineage.
 
 ---
 

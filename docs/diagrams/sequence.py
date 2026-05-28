@@ -89,13 +89,20 @@ def note(y, lane, text):
 
 
 # ── Pre-loop ───────────────────────────────────────────────────────────
+# The handler parses the method's branch tree *before* the fuzz loop so the
+# loop body can intersect each iteration's fired positions with the tree's
+# leaves (the canonical "branches" — see architecture.md §8).
 y = TOP_Y - 1.6
 msg(y, 0, 1, "start session")
 y -= 0.9
 msg(y, 1, 2, "clean stale data")
+y -= 0.9
+msg(y, 1, 3, "build method tree")
+y -= 0.85
+msg(y, 3, 1, "branch tree", kind="return")
 
 # ── Loop band ──────────────────────────────────────────────────────────
-loop_top = y - 0.6
+loop_top = y - 0.7
 loop_bot = loop_top - 4.6
 
 loop_rect = FancyBboxPatch(
@@ -120,17 +127,13 @@ msg(ly, 1, 2, "read coverage snapshot")
 ly -= 0.75
 msg(ly, 2, 1, "covered positions", kind="return")
 ly -= 0.70
-note(ly, 1, "(fold delta into Session Feedback)")
+note(ly, 1, "(intersect with leaves, fold into Session Feedback)")
 
 # ── Post-loop ──────────────────────────────────────────────────────────
 y = loop_bot - 1.0
-msg(y, 1, 3, "build method tree")
-y -= 0.85
-msg(y, 3, 1, "branch tree", kind="return")
-y -= 0.85
 msg(y, 1, 2, "final coverage snapshot")
 y -= 0.85
-msg(y, 2, 1, "branch lines + covered", kind="return")
+msg(y, 2, 1, "covered positions", kind="return")
 y -= 0.85
 msg(y, 1, 4, "write report")
 y -= 0.85

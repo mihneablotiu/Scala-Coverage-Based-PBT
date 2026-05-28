@@ -110,12 +110,14 @@ In our own example code (the small piece we use to test the
 framework), we have a method called `mod97`. It returns
 `"lucky"` only when the number, divided by 97, leaves a remainder of
 13. The probability of that happening on a uniformly chosen integer
-is roughly 1 in 97 — about 1 %. With 100 random inputs the `"lucky"`
-branch may simply never be hit. And in our experiments, it usually
-isn't.
+is roughly 1 in 97 — about 1 %. With a small input budget the
+`"lucky"` branch may simply never be hit; with our default 1000-input
+budget random does land on it eventually, but only around input #438
+in our experiments. A 100-input budget would have missed it entirely.
 
-So the random tool happily says "100 inputs run, no problems." But
-part of the code is untested.
+So the random tool happily says "no problems," and that's true for
+whatever branches it managed to walk through — but the report tells
+you nothing about the branches it never even touched.
 
 ---
 
@@ -218,8 +220,11 @@ the saturated baseline — random testing covers it fully.
 divisible by 97, `"lucky"` when the remainder when divided by 97 is
 exactly 13, and `"ordinary"` otherwise. The `"lucky"` branch is
 rare — random integers will hit it only about 1 % of the time. The
-`"divisible"` branch is even rarer. With only 100 random inputs the
-two rare branches usually go untouched.
+`"divisible"` branch is even rarer. With a 100-input budget the two
+rare branches usually go untouched; at 1000 inputs random tends to
+reach them but only after several hundred iterations, while the
+mutation-guided strategy lands on them in single-digit input counts
+once it has a seed to perturb.
 
 **`classify`** is a small five-arm `match` on the input number:
 `0` returns `"zero"`, `42` returns `"answer"`, anything negative

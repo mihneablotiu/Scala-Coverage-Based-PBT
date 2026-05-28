@@ -114,10 +114,15 @@ ax.text(11.7, 3.55, "Strategies", ha="center", va="center",
 ax.text(11.7, 3.15, "in-process modules, sealed-trait match",
         ha="center", va="center", fontsize=10,
         style="italic", color=COLOR_SOFT)
-STRATEGY_LINES = ["Random", "Mutation-Guided", "Feedback-Bias-Guided"]
+STRATEGY_LINES = ["Random", "Mutation-Guided"]
+# Centre the strategy labels horizontally inside the Strategies box,
+# evenly spaced regardless of how many strategies are listed today.
+strat_box_left = 8.6
+strat_box_w = 6.2
+slot_w = strat_box_w / len(STRATEGY_LINES)
 for i, line in enumerate(STRATEGY_LINES):
-    ax.text(9.30 + i * 2.40, 2.40, line,
-            ha="center", va="center", fontsize=11,
+    ax.text(strat_box_left + slot_w * (i + 0.5), 2.40, line,
+            ha="center", va="center", fontsize=12,
             color="#1A1A1A")
 
 # ── Driven ports (three rows of role-based labels) ────────────────────

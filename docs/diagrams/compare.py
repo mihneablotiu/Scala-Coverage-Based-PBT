@@ -312,7 +312,7 @@ def per_bench_charts(grouped: Dict[Tuple[str, str], Dict[str, Report]],
         _strategy_chart(
             items=items,
             out=out_dir / bench / "comparison.svg",
-            title=f"{bench} — coverage and plateau by strategy",
+            title=f"{bench} — coverage by strategy",
         )
 
 
@@ -322,15 +322,13 @@ def per_bench_charts(grouped: Dict[Tuple[str, str], Dict[str, Report]],
 # the strategies?". These two answer "across an entire class of tests, and
 # across the whole suite, who wins?" — the thesis-headline numbers.
 #
-# Aggregation choices:
-#   - Coverage : `Σ covered / Σ total branches` (branch-weighted, not
-#                per-method-equal-weight). A 12-branch method counts more
-#                than a 2-branch method, which matches the natural "how much
-#                of the SUT did we cover?" reading.
-#   - Plateau  : arithmetic mean of `saturationInputIndex` across the methods
-#                that plateaued at all (methods with no covered branches have
-#                `saturation = None` and would otherwise bias the mean
-#                without representing real plateau data).
+# Aggregation is *branch-weighted*: `Σ covered / Σ total branches`, not
+# per-method-equal-weight. A 12-branch method counts more than a 2-branch
+# method, which matches the natural "how much of the SUT did we cover?"
+# reading. Saturation is intentionally not aggregated here — averaging
+# "first input that plateaued" across two- and twenty-branch methods doesn't
+# compare like with like; per-method saturation lives in the bar labels of
+# the per-method and per-bench views above.
 
 
 def _aggregate_coverage_by_bench(reports: Dict[Tuple[str, str, str], Report],
@@ -491,39 +489,12 @@ def markdown_table(grouped: Dict[Tuple[str, str], Dict[str, Report]],
     print(f"wrote {out.relative_to(REPORTS_DIR.parent)}")
 
 
-# ── Stale-file cleanup ────────────────────────────────────────────────
-def cleanup_split_files() -> None:
-    """Delete artefacts from the old split-chart layout.
-
-    The previous design emitted separate `coverage.svg` / `plateau.svg` files
-    per bench, and `suite_coverage.svg` / `suite_plateau.svg` /
-    `overall_coverage.svg` / `overall_plateau.svg` under `_summary/`. We
-    consolidated each pair into one chart, so we explicitly remove the old
-    files here — otherwise `make compare` alone (without `make clean`) would
-    leave stale outputs behind.
-    """
-    by_bench = SUMMARY_DIR / "by_bench"
-    if by_bench.exists():
-        for bench_dir in by_bench.iterdir():
-            for old in ("coverage.svg", "plateau.svg"):
-                p = bench_dir / old
-                if p.exists():
-                    p.unlink()
-    for old in ("suite_coverage.svg", "suite_plateau.svg",
-                "overall_coverage.svg", "overall_plateau.svg"):
-        p = SUMMARY_DIR / old
-        if p.exists():
-            p.unlink()
-
-
 # ── Entry point ───────────────────────────────────────────────────────
 def main() -> None:
     reports = load_reports()
     if not reports:
         print(f"No reports found under {REPORTS_DIR}. Run `make run` first.")
         return
-
-    cleanup_split_files()
 
     grouped = group_by_method(reports)
 

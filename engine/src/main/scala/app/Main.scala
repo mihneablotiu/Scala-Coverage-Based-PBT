@@ -83,7 +83,6 @@ object Main extends IOApp {
       runner.runTests(name, Strategy.parse[A](strategyName).get)(body)
 
     for {
-      _ <- bench(bools, "identity")(BoolBench.identity)
       _ <- bench(bools, "negate")(BoolBench.negate)
       _ <- bench[(Boolean, Boolean, Boolean)](bools, "threeAgree")((BoolBench.threeAgree _).tupled)
 

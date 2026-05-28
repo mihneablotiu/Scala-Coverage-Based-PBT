@@ -9,9 +9,6 @@ package benchmark.bool
   */
 object BoolBench {
 
-  /** No internal branch — one input "covers" the whole method. */
-  def identity(b: Boolean): Boolean = b
-
   /** Single `if/else`. Two source branches. Saturates within 2 inputs. */
   def negate(b: Boolean): Boolean = if (b) false else true
 
