@@ -7,7 +7,6 @@ import adapter.driving.fileSystem.FileSystemTestRunner
 import benchmark.bool.BoolBench
 import benchmark.int.IntBench
 import benchmark.list.ListBench
-import cats.effect.{ExitCode, IO, IOApp}
 import domain.{Mutator, Strategy}
 import org.scalacheck.{rng, Arbitrary, Test}
 import port.driving.TestRunner
@@ -23,7 +22,7 @@ import java.nio.file.{Path, Paths}
   *
   * Reports land under `engine/reports/statistics/<sourceStem>/<methodName>/<strategy.name>/`.
   */
-object Main extends IOApp {
+object Main {
 
   private val SutRoot: Path     = Paths.get("sut")
   private val ReportsBase: Path = Paths.get("engine/reports/statistics")
@@ -48,69 +47,60 @@ object Main extends IOApp {
   private val ints: TestRunner  = new FileSystemTestRunner(handler, IntSrc, ReportsBase)
   private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
 
-  override def run(args: List[String]): IO[ExitCode] =
+  def main(args: Array[String]): Unit =
     args.headOption.filter(Strategy.names.contains) match {
-      case Some(name) => runAll(name).as(ExitCode.Success)
-      case None       => usage.as(ExitCode.Error)
+      case Some(name) => runAll(name)
+      case None       =>
+        println(s"usage: engine/runMain app.Main <strategy>   (available: ${Strategy.names.mkString(", ")})")
+        sys.exit(1)
     }
-
-  private val usage: IO[Unit] =
-    IO.println(
-      s"usage: engine/runMain app.Main <strategy>   (available: ${Strategy.names.mkString(", ")})"
-    )
 
   /** The SUT methods return `String`/`Int`/etc., not `Boolean`; the engine port wants `A => Boolean`. `bench` adapts at the boundary so the SUT
     * itself stays predicate-free — a future client with a real property would just pass an `A => Boolean` directly.
     */
-  private def runAll(strategyName: String): IO[Unit] = {
-    def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): IO[Unit] =
+  private def runAll(strategyName: String): Unit = {
+    def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): Unit =
       runner.runTests(name, Strategy.parse[A](strategyName).get)(input => { body(input); true })
 
-    for {
-      _ <- bench(bools, "negate")(BoolBench.negate)
-      _ <- bench[(Boolean, Boolean, Boolean)](bools, "threeAgree")((BoolBench.threeAgree _).tupled)
+    bench(bools, "negate")(BoolBench.negate)
+    bench[(Boolean, Boolean, Boolean)](bools, "threeAgree")((BoolBench.threeAgree _).tupled)
 
-      _ <- bench(ints, "isPositive")(IntBench.isPositive)
-      _ <- bench(ints, "parity")(IntBench.parity)
-      _ <- bench(ints, "sign")(IntBench.sign)
-      _ <- bench(ints, "mod97")(IntBench.mod97)
-      _ <- bench(ints, "isPalindromeNumber")(IntBench.isPalindromeNumber)
-      _ <- bench(ints, "classify")(IntBench.classify)
-      _ <- bench(ints, "divisibleByThousand")(IntBench.divisibleByThousand)
-      _ <- bench(ints, "signedPerfectSquare")(IntBench.signedPerfectSquare)
-      _ <- bench(ints, "parityPlusSquare")(IntBench.parityPlusSquare)
-      _ <- bench[(Int, Int)](ints, "divisibilityRelation")((IntBench.divisibilityRelation _).tupled)
-      _ <- bench(ints, "signedPalindrome")(IntBench.signedPalindrome)
-      _ <- bench(ints, "magicNumbers")(IntBench.magicNumbers)
-      _ <- bench(ints, "isPrime")(IntBench.isPrime)
-      _ <- bench(ints, "isFibonacci")(IntBench.isFibonacci)
-      _ <- bench(ints, "collatzClass")(IntBench.collatzClass)
-      _ <- bench[(Int, Int, Int)](ints, "triangleType")((IntBench.triangleType _).tupled)
-      _ <- bench(ints, "deepIntClassify")(IntBench.deepIntClassify)
-      _ <- bench[(Int, Int, Int)](ints, "deepIntTriple")((IntBench.deepIntTriple _).tupled)
+    bench(ints, "isPositive")(IntBench.isPositive)
+    bench(ints, "parity")(IntBench.parity)
+    bench(ints, "sign")(IntBench.sign)
+    bench(ints, "mod97")(IntBench.mod97)
+    bench(ints, "isPalindromeNumber")(IntBench.isPalindromeNumber)
+    bench(ints, "classify")(IntBench.classify)
+    bench(ints, "divisibleByThousand")(IntBench.divisibleByThousand)
+    bench(ints, "signedPerfectSquare")(IntBench.signedPerfectSquare)
+    bench(ints, "parityPlusSquare")(IntBench.parityPlusSquare)
+    bench[(Int, Int)](ints, "divisibilityRelation")((IntBench.divisibilityRelation _).tupled)
+    bench(ints, "signedPalindrome")(IntBench.signedPalindrome)
+    bench(ints, "magicNumbers")(IntBench.magicNumbers)
+    bench(ints, "isPrime")(IntBench.isPrime)
+    bench(ints, "isFibonacci")(IntBench.isFibonacci)
+    bench(ints, "collatzClass")(IntBench.collatzClass)
+    bench[(Int, Int, Int)](ints, "triangleType")((IntBench.triangleType _).tupled)
+    bench(ints, "deepIntClassify")(IntBench.deepIntClassify)
+    bench[(Int, Int, Int)](ints, "deepIntTriple")((IntBench.deepIntTriple _).tupled)
 
-      _ <- bench(lists, "isEmpty")(ListBench.isEmpty)
-      _ <- bench(lists, "sizeClass")(ListBench.sizeClass)
-      _ <- bench(lists, "allSameSign")(ListBench.allSameSign)
-      _ <- bench[(List[Int], List[Int])](lists, "lengthCompare")((ListBench.lengthCompare _).tupled)
-      _ <- bench(lists, "sumClass")(ListBench.sumClass)
-      _ <- bench(lists, "isStrictlySorted")(ListBench.isStrictlySorted)
-      _ <- bench(lists, "allEqual")(ListBench.allEqual)
-      _ <- bench(lists, "extremesGap")(ListBench.extremesGap)
-      _ <- bench(lists, "palindromeClass")(ListBench.palindromeClass)
-      _ <- bench(lists, "listMaxMin")(ListBench.listMaxMin)
-      _ <- bench[(List[Int], List[Int])](lists, "prefixCheck")((ListBench.prefixCheck _).tupled)
-      _ <- bench[(List[Int], List[Int])](lists, "isReverseOf")((ListBench.isReverseOf _).tupled)
-      _ <- bench[(List[Int], List[Int])](lists, "haveSameMultiset")(
-        (ListBench.haveSameMultiset _).tupled
-      )
-      _ <- bench(lists, "allPrime")(ListBench.allPrime)
-      _ <- bench(lists, "primeListShape")(ListBench.primeListShape)
-      _ <- bench(lists, "isPermutation")(ListBench.isPermutation)
-      _ <- bench[(List[Int], List[Int])](lists, "deepListRelation")(
-        (ListBench.deepListRelation _).tupled
-      )
-      _ <- bench(lists, "deepListShape")(ListBench.deepListShape)
-    } yield ()
+    bench(lists, "isEmpty")(ListBench.isEmpty)
+    bench(lists, "sizeClass")(ListBench.sizeClass)
+    bench(lists, "allSameSign")(ListBench.allSameSign)
+    bench[(List[Int], List[Int])](lists, "lengthCompare")((ListBench.lengthCompare _).tupled)
+    bench(lists, "sumClass")(ListBench.sumClass)
+    bench(lists, "isStrictlySorted")(ListBench.isStrictlySorted)
+    bench(lists, "allEqual")(ListBench.allEqual)
+    bench(lists, "extremesGap")(ListBench.extremesGap)
+    bench(lists, "palindromeClass")(ListBench.palindromeClass)
+    bench(lists, "listMaxMin")(ListBench.listMaxMin)
+    bench[(List[Int], List[Int])](lists, "prefixCheck")((ListBench.prefixCheck _).tupled)
+    bench[(List[Int], List[Int])](lists, "isReverseOf")((ListBench.isReverseOf _).tupled)
+    bench[(List[Int], List[Int])](lists, "haveSameMultiset")((ListBench.haveSameMultiset _).tupled)
+    bench(lists, "allPrime")(ListBench.allPrime)
+    bench(lists, "primeListShape")(ListBench.primeListShape)
+    bench(lists, "isPermutation")(ListBench.isPermutation)
+    bench[(List[Int], List[Int])](lists, "deepListRelation")((ListBench.deepListRelation _).tupled)
+    bench(lists, "deepListShape")(ListBench.deepListShape)
   }
 }

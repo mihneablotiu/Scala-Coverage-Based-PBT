@@ -1,6 +1,5 @@
 package port.driven
 
-import cats.effect.IO
 import domain.ParsedMethod
 
 import java.nio.file.Path
@@ -9,5 +8,5 @@ import java.nio.file.Path
   * adapter once, at parse time.
   */
 trait BranchTreeBuilder {
-  def build(sourceFile: Path, methodName: String): IO[Option[ParsedMethod]]
+  def build(sourceFile: Path, methodName: String): Option[ParsedMethod]
 }

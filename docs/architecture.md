@@ -18,9 +18,10 @@ A single sbt build with two subprojects:
 Almost all interesting code lives in `engine/`. The SUT is a small
 catalogue (`BoolBench`, `IntBench`, `ListBench`) plus a
 number-theoretic helper. `app.Main` is the only file that imports
-concrete adapter classes; it is also the `IOApp` entry point. One
-invocation runs every benchmark against one strategy, picked from
-the first CLI argument.
+concrete adapter classes; it is also the entry point (a plain
+`def main(args: Array[String])`). One invocation runs every
+benchmark against one strategy, picked from the first CLI
+argument.
 
 The driven ports and their adapters:
 

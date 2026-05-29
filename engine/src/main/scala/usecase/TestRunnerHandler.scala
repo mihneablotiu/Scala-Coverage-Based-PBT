@@ -1,6 +1,5 @@
 package usecase
 
-import cats.effect.IO
 import domain.{Pos, SessionFeedback, SessionReport, Strategy}
 import org.scalacheck.{Gen, Prop, Test}
 import port.driven.{BranchTreeBuilder, CoverageReportWriter, SourceCoverageReader}
@@ -29,13 +28,13 @@ final class TestRunnerHandler(
       outDir: Path,
       methodName: String,
       strategy: Strategy[A]
-  )(property: A => Boolean): IO[Unit] = for {
-    parsed   <- treeBuilder.build(sourceFile, methodName)
-    leaves    = parsed.map(_.leafPositions).getOrElse(Set.empty)
-    tree      = parsed.map(_.branchTree)
-    feedback <- runScalaCheck(sourceFile, methodName, strategy, leaves, property)
-    _        <- writer.write(SessionReport(methodName, sourceFile, tree, strategy.name, feedback), outDir)
-  } yield ()
+  )(property: A => Boolean): Unit = {
+    val parsed   = treeBuilder.build(sourceFile, methodName)
+    val leaves   = parsed.map(_.leafPositions).getOrElse(Set.empty)
+    val tree     = parsed.map(_.branchTree)
+    val feedback = runScalaCheck(sourceFile, methodName, strategy, leaves, property)
+    writer.write(SessionReport(methodName, sourceFile, tree, strategy.name, feedback), outDir)
+  }
 
   private def runScalaCheck[A](
       sourceFile: Path,
@@ -43,7 +42,7 @@ final class TestRunnerHandler(
       strategy: Strategy[A],
       leaves: Set[Pos],
       property: A => Boolean
-  ): IO[SessionFeedback[A]] = IO.blocking {
+  ): SessionFeedback[A] = {
     var feedback = SessionFeedback.empty[A]
     val gen      = Gen.delay(strategy.gen(feedback))
     val prop     = Prop.forAll(gen) { input =>

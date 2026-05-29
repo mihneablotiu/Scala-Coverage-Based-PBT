@@ -1,6 +1,5 @@
 package adapter.driven.fileSystem
 
-import cats.effect.IO
 import domain.{BranchTree, Pos, SessionReport}
 import port.driven.CoverageReportWriter
 
@@ -30,14 +29,14 @@ object FileSystemCoverageReportWriter {
   def apply(): CoverageReportWriter = new Live
 
   private final class Live extends CoverageReportWriter {
-    override def write[A](report: SessionReport[A], outDir: Path): IO[Unit] = IO {
+    override def write[A](report: SessionReport[A], outDir: Path): Unit = {
       Files.createDirectories(outDir)
       Files.writeString(
         outDir.resolve("coverage.json"),
         renderJson(report),
         StandardCharsets.UTF_8
       )
-    }.void
+    }
   }
 
   private def renderJson[A](r: SessionReport[A]): String = {

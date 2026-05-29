@@ -1,6 +1,5 @@
 package port.driving
 
-import cats.effect.IO
 import domain.Strategy
 
 /** Drives one fuzz session over a SUT method.
@@ -16,5 +15,5 @@ trait TestRunner {
   def runTests[A](
       methodName: String,
       strategy: Strategy[A]
-  )(property: A => Boolean): IO[Unit]
+  )(property: A => Boolean): Unit
 }

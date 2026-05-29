@@ -27,7 +27,6 @@ lazy val engine = (project in file("engine"))
     Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
     Compile / run / mainClass     := Some("app.Main"),
     libraryDependencies ++= Seq(
-      "org.typelevel"  %% "cats-effect"                 % "3.7.0",
       "org.scalacheck" %% "scalacheck"                  % "1.19.0",
       "org.scalameta"  %% "scalameta"                   % "4.17.0",
       "org.scoverage"  %% "scalac-scoverage-serializer" % "2.5.2",

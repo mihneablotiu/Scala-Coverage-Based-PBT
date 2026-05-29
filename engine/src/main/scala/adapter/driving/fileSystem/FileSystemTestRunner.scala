@@ -1,6 +1,5 @@
 package adapter.driving.fileSystem
 
-import cats.effect.IO
 import domain.Strategy
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
@@ -19,7 +18,7 @@ final class FileSystemTestRunner(
   override def runTests[A](
       methodName: String,
       strategy: Strategy[A]
-  )(property: A => Boolean): IO[Unit] = {
+  )(property: A => Boolean): Unit = {
     val stem = sourceFile.getFileName.toString.stripSuffix(".scala")
     val out  = outBase.resolve(stem).resolve(methodName).resolve(strategy.name)
     handler.handle(sourceFile, out, methodName, strategy)(property)
