@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
 """Render coverage artefacts from engine output.
 
-Reads every ``engine/reports/statistics/<bench>/<method>/<strategy>/coverage.json``
-written by the Scala engine and produces:
+Reads every ``engine/reports/statistics/<bench>/<method>/<strategy>/seed=<NN>/coverage.json``
+written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) and produces:
 
-  per cell (next to the json)
+  per cell (next to the json, one tree per seed)
     coverage.dot   — branch tree, leaves coloured by coverage
     coverage.svg   — `dot -Tsvg` rendering of the above
 
   cross-strategy (under engine/reports/statistics/_summary/)
     by_bench/<bench>.svg — horizontal grouped bars per (method, strategy);
-                           bar labels carry the peak coverage %, the input
-                           that reached it, and (for non-random strategies)
-                           the speed comparison against random
-    suite.svg            — horizontal bars per (bench, strategy)
-    overall.svg          — horizontal bars per strategy
+                           bar height is the median coverage % across seeds,
+                           IQR whiskers show seed-to-seed spread, and labels
+                           carry the median %, the [min–max] range, and (for
+                           non-random strategies) the median paired-speedup
+                           factor versus random
+    suite.svg            — horizontal bars per (bench, strategy), median +
+                           IQR + [min–max] across seeds
+    overall.svg          — horizontal bars per strategy, same aggregation
     blindspot.svg        — per-bench + suite-wide percentage of random's
                            blind spot (the leaves random failed to reach)
-                           that each non-random strategy covered. Isolates
-                           "branches only coverage feedback can find" from
-                           "easy guards everyone hits", which the raw
-                           coverage % conflates.
+                           that each non-random strategy covered. Median
+                           + IQR + [min–max] across the K per-seed fills.
+                           Isolates "branches only coverage feedback can
+                           find" from "easy guards everyone hits", which
+                           the raw coverage % conflates.
+    per_seed.csv         — one row per (bench, method, strategy, seed) with
+                           covered/total/pct/saturation_input. Lets you do
+                           ad-hoc analysis without re-loading the JSONs.
 
 Run: ``python3 engine/reports/scripts/compare.py``  (or ``make analyze``)
 """
 from __future__ import annotations
 
+import csv
 import json
+import re
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -67,6 +77,7 @@ class Cell:
     bench: str
     method: str
     strategy: str
+    seed: int
     total_inputs: int
     growth_curve: list
     branch_tree: Optional[dict]
@@ -84,6 +95,27 @@ class Stats:
         return 0.0 if self.total == 0 else 100.0 * self.covered / self.total
 
 
+@dataclass(frozen=True)
+class SeedSpread:
+    """Five-number summary across the K seed-runs for one cell. Bars use ``median`` for height,
+    ``q1``/``q3`` as IQR whiskers, ``lo``/``hi`` for the ``[min–max]`` text in the bar label."""
+    q1: float
+    median: float
+    q3: float
+    lo: float
+    hi: float
+
+    @classmethod
+    def of(cls, values: list) -> "SeedSpread":
+        if not values:
+            return cls(0.0, 0.0, 0.0, 0.0, 0.0)
+        if len(values) == 1:
+            v = float(values[0])
+            return cls(v, v, v, v, v)
+        qs = statistics.quantiles(values, n=4, method="inclusive")
+        return cls(qs[0], statistics.median(values), qs[2], min(values), max(values))
+
+
 def color_for(strategy: str) -> str:
     return STRATEGY_COLORS.get(strategy, FALLBACK_COLOR)
 
@@ -98,17 +130,24 @@ def ordered_strategies(strategies) -> list:
 # ── Loading + tree walk ──────────────────────────────────────────────────
 
 
+_SEED_DIR_RE = re.compile(r"^seed=(\d+)$")
+
+
 def load_cells() -> list:
     cells = []
-    for jp in sorted(STATS_ROOT.glob("*/*/*/coverage.json")):
+    for jp in sorted(STATS_ROOT.glob("*/*/*/*/coverage.json")):
         if "_summary" in jp.parts:
+            continue
+        m = _SEED_DIR_RE.match(jp.parts[-2])
+        if not m:
             continue
         data = json.loads(jp.read_text())
         cells.append(
             Cell(
-                bench=jp.parts[-4],
-                method=jp.parts[-3],
-                strategy=jp.parts[-2],
+                bench=jp.parts[-5],
+                method=jp.parts[-4],
+                strategy=jp.parts[-3],
+                seed=int(m.group(1)),
                 total_inputs=data["totalInputs"],
                 growth_curve=data["growthCurve"],
                 branch_tree=data["branchTree"],
@@ -269,6 +308,7 @@ def _horizontal_grouped_bars(
     title: str,
     out_path: Path,
     labels_by_strategy: Optional[dict] = None,
+    whiskers_by_strategy: Optional[dict] = None,
     label_fontsize: int = 9,
     row_height_in: float = 0.55,
     fig_width_in: float = 10.0,
@@ -285,6 +325,7 @@ def _horizontal_grouped_bars(
     for k, strategy in enumerate(strategies):
         pcts = pcts_by_strategy[strategy]
         labels = (labels_by_strategy or {}).get(strategy) or [f"{p:.0f}%" for p in pcts]
+        whiskers = (whiskers_by_strategy or {}).get(strategy)
         # Place random (k=0) ABOVE guided (k=1) within each category group:
         # in barh, smaller y = higher on screen after invert_yaxis.
         offsets = [i + k * bar_h - 0.4 + bar_h / 2 for i in range(n_cat)]
@@ -297,9 +338,28 @@ def _horizontal_grouped_bars(
             linewidth=0.5,
             label=strategy,
         )
-        for bar, pct, lbl in zip(bars, pcts, labels):
+        if whiskers:
+            # Draw IQR whiskers (Q1..Q3) horizontally around each bar tip; keeps the median bar
+            # height as the eye anchor while showing seed-to-seed spread.
+            lows  = [max(p - q1, 0.0) for p, (q1, _) in zip(pcts, whiskers)]
+            highs = [max(q3 - p, 0.0) for p, (_, q3) in zip(pcts, whiskers)]
+            ax.errorbar(
+                pcts,
+                offsets,
+                xerr=[lows, highs],
+                fmt="none",
+                ecolor=BORDER,
+                elinewidth=0.8,
+                capsize=2.5,
+                alpha=0.9,
+            )
+        for i, (bar, pct, lbl) in enumerate(zip(bars, pcts, labels)):
+            # Push the label past the right whisker tip when whiskers exist, otherwise past the bar tip.
+            tip = pct
+            if whiskers:
+                tip = max(tip, whiskers[i][1])
             ax.text(
-                pct + 1.2,
+                tip + 1.2,
                 bar.get_y() + bar.get_height() / 2,
                 lbl,
                 va="center",
@@ -324,29 +384,57 @@ def _horizontal_grouped_bars(
 
 # ── Per-bench grouped bars ──────────────────────────────────────────────
 #
-# Each bar carries the strategy's peak coverage % and the input that
-# reached it; non-random bars additionally call out how they compare to
-# random — either a speed-up factor when they matched random's coverage,
-# or the % they fell short of.
+# Each bar's height is the median peak coverage % across the K seed-runs;
+# IQR whiskers show seed-to-seed spread. Labels carry the median % and
+# the [min–max] full-range tail from the K runs. Non-random bars also
+# show the median paired-speedup factor versus random — paired meaning
+# "for each seed, how many fewer inputs did this strategy need to reach
+# random's peak coverage on that same seed", aggregated by median across
+# the K pairings.
 
 
-def bench_bar_label(cell: Optional[Cell], random_stats: Optional[Stats]) -> str:
-    if cell is None:
+def paired_speedup(cells: list, random_cells: list) -> Optional[float]:
+    """Median paired speedup across seeds. Pairs cells and random_cells by ``seed``; for each pair
+    where the strategy reached random's peak coverage, computes ``random_saturation / matched_at``.
+    Returns the median of those ratios, or ``None`` if no seed yielded a defined ratio."""
+    rand_by_seed = {c.seed: c for c in random_cells}
+    speedups: list = []
+    for c in cells:
+        rc = rand_by_seed.get(c.seed)
+        if rc is None:
+            continue
+        rs = stats(rc)
+        cs = stats(c)
+        if rs.covered == 0 or cs.covered < rs.covered:
+            continue
+        try:
+            matched_at = c.growth_curve.index(rs.covered)
+        except ValueError:
+            continue
+        rand_sat = rs.saturation or 0
+        if matched_at <= 0 or rand_sat <= 0:
+            continue
+        speedups.append(rand_sat / matched_at)
+    return statistics.median(speedups) if speedups else None
+
+
+def bench_bar_label(cells: list, random_cells: list) -> str:
+    """Median + [min–max] coverage label for K seed-runs of one (method, strategy) cell;
+    appends the paired median speedup when applicable."""
+    if not cells:
         return ""
-    s = stats(cell)
-    if s.total == 0:
+    pcts = [stats(c).pct for c in cells]
+    spread = SeedSpread.of(pcts)
+    if spread.median == 0.0 and spread.hi == 0.0:
         return ""
-    if s.saturation is None:
-        return f"{s.pct:.0f}%"
-    base = f"{s.pct:.0f}% @ #{s.saturation}"
-    if cell.strategy == RANDOM or random_stats is None or random_stats.covered == 0:
+    base = f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]"
+    strategy = cells[0].strategy
+    if strategy == RANDOM or not random_cells:
         return base
-    if s.covered < random_stats.covered:
-        return f"{base}, < random ({random_stats.pct:.0f}%)"
-    matched_x = cell.growth_curve.index(random_stats.covered)
-    rand_sat = random_stats.saturation or 0
-    speedup = rand_sat / max(matched_x, 1)
-    return f"{base}, reached {random_stats.pct:.0f}% at #{matched_x} ({speedup:.1f}×)"
+    speedup = paired_speedup(cells, random_cells)
+    if speedup is None:
+        return f"{base}, < random"
+    return f"{base}, {speedup:.1f}× vs random"
 
 
 def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
@@ -355,32 +443,52 @@ def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
     strategies = ordered_strategies(all_strats)
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
+    whiskers_by_strategy: dict = {}
     for strategy in strategies:
-        pcts, labels = [], []
+        pcts, labels, whiskers = [], [], []
         for m in methods:
             method_cells = cells_by_method[m]
-            random_cell = next((c for c in method_cells if c.strategy == RANDOM), None)
-            random_stats = stats(random_cell) if random_cell else None
-            cell = next((c for c in method_cells if c.strategy == strategy), None)
-            pcts.append(stats(cell).pct if cell else 0.0)
-            labels.append(bench_bar_label(cell, random_stats))
+            random_cells = [c for c in method_cells if c.strategy == RANDOM]
+            cells = [c for c in method_cells if c.strategy == strategy]
+            spread = SeedSpread.of([stats(c).pct for c in cells])
+            pcts.append(spread.median)
+            whiskers.append((spread.q1, spread.q3))
+            labels.append(bench_bar_label(cells, random_cells))
         pcts_by_strategy[strategy] = pcts
         labels_by_strategy[strategy] = labels
+        whiskers_by_strategy[strategy] = whiskers
     _horizontal_grouped_bars(
         methods,
         pcts_by_strategy,
         strategies,
-        title=f"{bench} — coverage per method per strategy",
+        title=f"{bench} — coverage per method per strategy (median, IQR whiskers)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
+        whiskers_by_strategy=whiskers_by_strategy,
         label_fontsize=8,
         row_height_in=0.42,
         fig_width_in=14.0,
-        label_pad_pct=80.0,
+        label_pad_pct=90.0,
     )
 
 
 # ── Suite bars (per bench × strategy) ───────────────────────────────────
+
+
+def _per_seed_bench_pcts(cells: list) -> list:
+    """For a flat list of cells (one bench × one strategy, multiple methods × K seeds),
+    group by seed and reduce each seed-group to one coverage % via ``Σ covered / Σ total``.
+    Returns the K per-seed percentages."""
+    by_seed: dict = {}
+    for c in cells:
+        by_seed.setdefault(c.seed, []).append(c)
+
+    def pct(seed_cells: list) -> float:
+        tot = sum(stats(c).total for c in seed_cells)
+        cov = sum(stats(c).covered for c in seed_cells)
+        return (100.0 * cov / tot) if tot > 0 else 0.0
+
+    return [pct(seed_cells) for seed_cells in by_seed.values()]
 
 
 def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
@@ -389,23 +497,28 @@ def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
     strategies = ordered_strategies(all_strats)
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
+    whiskers_by_strategy: dict = {}
     for strategy in strategies:
-        pcts = []
+        pcts, labels, whiskers = [], [], []
         for b in benches:
             scoped = [c for c in cells_by_bench[b] if c.strategy == strategy]
-            total = sum(stats(c).total for c in scoped)
-            covered = sum(stats(c).covered for c in scoped)
-            pcts.append((100.0 * covered / total) if total > 0 else 0.0)
+            spread = SeedSpread.of(_per_seed_bench_pcts(scoped))
+            pcts.append(spread.median)
+            whiskers.append((spread.q1, spread.q3))
+            labels.append(f"{spread.median:.1f}% [{spread.lo:.1f}–{spread.hi:.1f}]")
         pcts_by_strategy[strategy] = pcts
-        labels_by_strategy[strategy] = [f"{p:.1f}%" for p in pcts]
+        labels_by_strategy[strategy] = labels
+        whiskers_by_strategy[strategy] = whiskers
     _horizontal_grouped_bars(
         benches,
         pcts_by_strategy,
         strategies,
-        title="Per-bench aggregate coverage per strategy",
+        title="Per-bench aggregate coverage per strategy (median, IQR whiskers)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
+        whiskers_by_strategy=whiskers_by_strategy,
         row_height_in=0.85,
+        label_pad_pct=30.0,
     )
 
 
@@ -415,27 +528,44 @@ def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
 def write_overall_bars(cells: list, out_path: Path) -> None:
     strategies = ordered_strategies({c.strategy for c in cells})
     fig_h = max(2.8, 0.9 * len(strategies) + 1.4)
-    fig, ax = plt.subplots(figsize=(8.5, fig_h), facecolor=BG)
+    fig, ax = plt.subplots(figsize=(9.5, fig_h), facecolor=BG)
     for i, strategy in enumerate(strategies):
         scoped = [c for c in cells if c.strategy == strategy]
-        total = sum(stats(c).total for c in scoped)
-        covered = sum(stats(c).covered for c in scoped)
-        pct = (100.0 * covered / total) if total > 0 else 0.0
+        spread = SeedSpread.of(_per_seed_bench_pcts(scoped))
         ax.barh(
             i,
-            pct,
+            spread.median,
             0.55,
             color=color_for(strategy),
             edgecolor=BORDER,
             linewidth=0.6,
         )
-        ax.text(pct + 1.5, i, f"{pct:.1f}%", va="center", fontsize=11, color=TEXT)
+        ax.errorbar(
+            spread.median,
+            i,
+            xerr=[[max(spread.median - spread.q1, 0.0)], [max(spread.q3 - spread.median, 0.0)]],
+            fmt="none",
+            ecolor=BORDER,
+            elinewidth=0.9,
+            capsize=3.0,
+        )
+        ax.text(
+            max(spread.median, spread.q3) + 1.5,
+            i,
+            f"{spread.median:.1f}% [{spread.lo:.1f}–{spread.hi:.1f}]",
+            va="center",
+            fontsize=11,
+            color=TEXT,
+        )
     ax.set_yticks(list(range(len(strategies))))
     ax.set_yticklabels(strategies, color=TEXT, fontsize=11)
     ax.invert_yaxis()
-    ax.set_xlim(0, 112)
+    ax.set_xlim(0, 130)
     ax.set_xlabel("coverage (%)")
-    ax.set_title("Suite-wide aggregate coverage per strategy", color=TEXT, fontsize=12, pad=10)
+    ax.set_title(
+        "Suite-wide aggregate coverage per strategy (median, IQR whiskers)",
+        color=TEXT, fontsize=12, pad=10,
+    )
     ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
     style_axes(ax)
     fig.tight_layout()
@@ -458,7 +588,8 @@ def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
     return ``True`` if ``strategy`` covered that leaf, ``False`` otherwise.
 
     Both cells share the same parsed branch tree, so leaves in document order
-    line up one-to-one — paired by ``zip``.
+    line up one-to-one — paired by ``zip``. Cells must share a single ``seed``;
+    blind-spot fill is computed per seed and then aggregated across seeds.
     """
     pairs = []
     for method_cells in cells_by_method.values():
@@ -472,55 +603,71 @@ def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
     return pairs
 
 
-def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
-    """Per-bench + suite-wide percentage of random's blind spot covered by each non-random strategy.
+def _per_seed_blindspot_fills(cells: list, strategy: str) -> list:
+    """For a flat list of cells (one or more benches × multiple methods × K seeds), return one
+    blind-spot-fill % per seed. Uses paired (random, strategy) cells within the same seed; seeds
+    where random saturated the scope contribute nothing (excluded, not zero) so that the spread
+    reflects only seeds where there was a blind spot to fill in the first place."""
+    by_seed: dict = {}
+    for c in cells:
+        by_seed.setdefault(c.seed, []).append(c)
+    fills: list = []
+    for seed, seed_cells in by_seed.items():
+        cells_by_method: dict = {}
+        for c in seed_cells:
+            cells_by_method.setdefault(c.method, []).append(c)
+        pairs = blindspot_pairs(cells_by_method, strategy)
+        if pairs:
+            fills.append(100.0 * sum(pairs) / len(pairs))
+    return fills
 
-    Benches where random already saturated have no blind spot and are skipped
-    from the chart (they show up only in the stdout summary).
-    """
+
+def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
+    """Per-bench + suite-wide percentage of random's blind spot covered by each non-random strategy,
+    aggregated across the K seed-runs as median + IQR + [min–max]. Benches where every seed
+    saturated random (no blind spot to fill in any seed) are skipped from the chart."""
     benches = sorted(cells_by_bench.keys())
-    cells_by_bench_method: dict = {}
-    for b, cs in cells_by_bench.items():
-        cells_by_bench_method[b] = {}
-        for c in cs:
-            cells_by_bench_method[b].setdefault(c.method, []).append(c)
     non_random = sorted({c.strategy for cs in cells_by_bench.values() for c in cs} - {RANDOM})
     if not non_random:
         return
 
-    bench_pairs = {(b, s): blindspot_pairs(cells_by_bench_method[b], s)
+    suite_cells = [c for cs in cells_by_bench.values() for c in cs]
+    bench_fills = {(b, s): _per_seed_blindspot_fills(cells_by_bench[b], s)
                    for b in benches for s in non_random}
-    benches_with_gap = [b for b in benches if any(bench_pairs[(b, s)] for s in non_random)]
+    benches_with_gap = [b for b in benches if any(bench_fills[(b, s)] for s in non_random)]
     if not benches_with_gap:
         return
 
+    suite_fills = {s: _per_seed_blindspot_fills(suite_cells, s) for s in non_random}
     categories = benches_with_gap + ["— Suite —"]
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
+    whiskers_by_strategy: dict = {}
     for s in non_random:
-        pcts, labels = [], []
-        suite = []
+        pcts, labels, whiskers = [], [], []
         for b in benches_with_gap:
-            pairs = bench_pairs[(b, s)]
-            suite.extend(pairs)
-            f, t = sum(pairs), len(pairs)
-            pcts.append(100.0 * f / t if t else 0.0)
-            labels.append(f"{f}/{t} leaves")
-        f, t = sum(suite), len(suite)
-        pcts.append(100.0 * f / t if t else 0.0)
-        labels.append(f"{f}/{t} leaves")
+            spread = SeedSpread.of(bench_fills[(b, s)])
+            pcts.append(spread.median)
+            whiskers.append((spread.q1, spread.q3))
+            labels.append(f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]")
+        spread = SeedSpread.of(suite_fills[s])
+        pcts.append(spread.median)
+        whiskers.append((spread.q1, spread.q3))
+        labels.append(f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]")
         pcts_by_strategy[s] = pcts
         labels_by_strategy[s] = labels
+        whiskers_by_strategy[s] = whiskers
 
     _horizontal_grouped_bars(
         categories,
         pcts_by_strategy,
         non_random,
-        title="Blind-spot fill — % of leaves random missed that the strategy covered",
+        title="Blind-spot fill — % of leaves random missed that the strategy covered (median, IQR whiskers)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
+        whiskers_by_strategy=whiskers_by_strategy,
         row_height_in=0.85,
-        label_pad_pct=40.0,
+        label_pad_pct=45.0,
         xlabel="blind spot covered (%)",
     )
 
@@ -538,12 +685,36 @@ def ensure_dot_available() -> None:
         )
 
 
+def write_per_seed_csv(cells: list, out_path: Path) -> None:
+    """One row per (bench, method, strategy, seed) with the headline numbers; lets a reader poke
+    at per-seed variance without re-loading every JSON."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["bench", "method", "strategy", "seed", "covered", "total", "pct", "saturation_input"])
+        for c in sorted(cells, key=lambda x: (x.bench, x.method, x.strategy, x.seed)):
+            s = stats(c)
+            w.writerow([
+                c.bench,
+                c.method,
+                c.strategy,
+                c.seed,
+                s.covered,
+                s.total,
+                f"{s.pct:.2f}",
+                "" if s.saturation is None else s.saturation,
+            ])
+
+
 def main() -> None:
     if not STATS_ROOT.exists():
         sys.exit(f"No data at {STATS_ROOT}. Run `make run` first.")
     cells = load_cells()
     if not cells:
-        sys.exit(f"No coverage.json files under {STATS_ROOT}.")
+        sys.exit(
+            f"No <bench>/<method>/<strategy>/seed=<NN>/coverage.json files under {STATS_ROOT}. "
+            "Run `make run` first."
+        )
 
     ensure_dot_available()
     print(f"loaded {len(cells)} cells")
@@ -567,24 +738,28 @@ def main() -> None:
     write_suite_bars(by_bench, SUMMARY_DIR / "suite.svg")
     write_overall_bars(cells, SUMMARY_DIR / "overall.svg")
     write_blindspot_bars(by_bench, SUMMARY_DIR / "blindspot.svg")
-    print(f"  wrote suite.svg, overall.svg, blindspot.svg in {SUMMARY_DIR}")
+    write_per_seed_csv(cells, SUMMARY_DIR / "per_seed.csv")
+    print(f"  wrote suite.svg, overall.svg, blindspot.svg, per_seed.csv in {SUMMARY_DIR}")
 
     # Suite-wide blind-spot summary: of the leaves random never reached, how many did
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
-    flat_by_method: dict = {}
-    for c in cells:
-        flat_by_method.setdefault((c.bench, c.method), []).append(c)
+    # Aggregated across the K seed-runs as median + [min–max] range.
+    suite_cells = list(cells)
     non_random = sorted({c.strategy for c in cells} - {RANDOM})
     if non_random:
         print()
-        print("Blind-spot fill (suite-wide):")
+        print("Blind-spot fill (suite-wide, median across seeds):")
         for strat in non_random:
-            pairs = blindspot_pairs(flat_by_method, strat)
-            if pairs:
-                f, t = sum(pairs), len(pairs)
-                print(f"  {strat:<18s} filled {f}/{t} = {100.0 * f / t:.1f}% of random's blind spot")
+            fills = _per_seed_blindspot_fills(suite_cells, strat)
+            if fills:
+                spread = SeedSpread.of(fills)
+                print(
+                    f"  {strat:<18s} median {spread.median:.1f}% "
+                    f"[range {spread.lo:.1f}%–{spread.hi:.1f}%, IQR {spread.q1:.1f}%–{spread.q3:.1f}%, "
+                    f"n={len(fills)} seeds]"
+                )
             else:
-                print(f"  {strat:<18s} no blind spot to fill (random saturated everywhere)")
+                print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
 
 
 if __name__ == "__main__":
