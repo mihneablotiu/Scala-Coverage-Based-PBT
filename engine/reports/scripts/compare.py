@@ -15,6 +15,12 @@ written by the Scala engine and produces:
                            the speed comparison against random
     suite.svg            — horizontal bars per (bench, strategy)
     overall.svg          — horizontal bars per strategy
+    blindspot.svg        — per-bench + suite-wide percentage of random's
+                           blind spot (the leaves random failed to reach)
+                           that each non-random strategy covered. Isolates
+                           "branches only coverage feedback can find" from
+                           "easy guards everyone hits", which the raw
+                           coverage % conflates.
 
 Run: ``python3 engine/reports/scripts/compare.py``  (or ``make analyze``)
 """
@@ -267,6 +273,7 @@ def _horizontal_grouped_bars(
     row_height_in: float = 0.55,
     fig_width_in: float = 10.0,
     label_pad_pct: float = 12.0,
+    xlabel: str = "coverage (%)",
 ) -> None:
     n_cat = len(categories)
     n_strat = len(strategies)
@@ -304,7 +311,7 @@ def _horizontal_grouped_bars(
     ax.invert_yaxis()
     ax.set_xlim(0, 100 + label_pad_pct)
     ax.set_xticks([0, 25, 50, 75, 100])
-    ax.set_xlabel("coverage (%)")
+    ax.set_xlabel(xlabel)
     ax.set_title(title, color=TEXT, fontsize=12, pad=10)
     ax.legend(loc="lower right", framealpha=0.95, edgecolor=BORDER)
     ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
@@ -437,6 +444,87 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
     plt.close(fig)
 
 
+# ── Blind-spot fill (random-relative metric) ────────────────────────────
+#
+# Raw coverage % conflates two effects: easy "trivial" early-exit arms that
+# any strategy hits in the first dozen inputs, and hard branches that random
+# may never reach. The blind-spot fill metric separates them: it counts only
+# leaves random missed, then asks how many of those each non-random strategy
+# covered. Useful as the headline number for "is coverage feedback worth it?"
+
+
+def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
+    """For each leaf where ``random`` missed in any method of ``cells_by_method``,
+    return ``True`` if ``strategy`` covered that leaf, ``False`` otherwise.
+
+    Both cells share the same parsed branch tree, so leaves in document order
+    line up one-to-one — paired by ``zip``.
+    """
+    pairs = []
+    for method_cells in cells_by_method.values():
+        rc = next((c for c in method_cells if c.strategy == RANDOM), None)
+        sc = next((c for c in method_cells if c.strategy == strategy), None)
+        if rc is None or sc is None:
+            continue
+        for rl, sl in zip(leaves(rc.branch_tree), leaves(sc.branch_tree)):
+            if rl["firstHitInput"] is None:
+                pairs.append(sl["firstHitInput"] is not None)
+    return pairs
+
+
+def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
+    """Per-bench + suite-wide percentage of random's blind spot covered by each non-random strategy.
+
+    Benches where random already saturated have no blind spot and are skipped
+    from the chart (they show up only in the stdout summary).
+    """
+    benches = sorted(cells_by_bench.keys())
+    cells_by_bench_method: dict = {}
+    for b, cs in cells_by_bench.items():
+        cells_by_bench_method[b] = {}
+        for c in cs:
+            cells_by_bench_method[b].setdefault(c.method, []).append(c)
+    non_random = sorted({c.strategy for cs in cells_by_bench.values() for c in cs} - {RANDOM})
+    if not non_random:
+        return
+
+    bench_pairs = {(b, s): blindspot_pairs(cells_by_bench_method[b], s)
+                   for b in benches for s in non_random}
+    benches_with_gap = [b for b in benches if any(bench_pairs[(b, s)] for s in non_random)]
+    if not benches_with_gap:
+        return
+
+    categories = benches_with_gap + ["— Suite —"]
+    pcts_by_strategy: dict = {}
+    labels_by_strategy: dict = {}
+    for s in non_random:
+        pcts, labels = [], []
+        suite = []
+        for b in benches_with_gap:
+            pairs = bench_pairs[(b, s)]
+            suite.extend(pairs)
+            f, t = sum(pairs), len(pairs)
+            pcts.append(100.0 * f / t if t else 0.0)
+            labels.append(f"{f}/{t} leaves")
+        f, t = sum(suite), len(suite)
+        pcts.append(100.0 * f / t if t else 0.0)
+        labels.append(f"{f}/{t} leaves")
+        pcts_by_strategy[s] = pcts
+        labels_by_strategy[s] = labels
+
+    _horizontal_grouped_bars(
+        categories,
+        pcts_by_strategy,
+        non_random,
+        title="Blind-spot fill — % of leaves random missed that the strategy covered",
+        out_path=out_path,
+        labels_by_strategy=labels_by_strategy,
+        row_height_in=0.85,
+        label_pad_pct=40.0,
+        xlabel="blind spot covered (%)",
+    )
+
+
 # ── Entry point ─────────────────────────────────────────────────────────
 
 
@@ -478,7 +566,25 @@ def main() -> None:
 
     write_suite_bars(by_bench, SUMMARY_DIR / "suite.svg")
     write_overall_bars(cells, SUMMARY_DIR / "overall.svg")
-    print(f"  wrote suite.svg, overall.svg in {SUMMARY_DIR}")
+    write_blindspot_bars(by_bench, SUMMARY_DIR / "blindspot.svg")
+    print(f"  wrote suite.svg, overall.svg, blindspot.svg in {SUMMARY_DIR}")
+
+    # Suite-wide blind-spot summary: of the leaves random never reached, how many did
+    # each non-random strategy cover? Honest companion to the raw-coverage bars above.
+    flat_by_method: dict = {}
+    for c in cells:
+        flat_by_method.setdefault((c.bench, c.method), []).append(c)
+    non_random = sorted({c.strategy for c in cells} - {RANDOM})
+    if non_random:
+        print()
+        print("Blind-spot fill (suite-wide):")
+        for strat in non_random:
+            pairs = blindspot_pairs(flat_by_method, strat)
+            if pairs:
+                f, t = sum(pairs), len(pairs)
+                print(f"  {strat:<18s} filled {f}/{t} = {100.0 * f / t:.1f}% of random's blind spot")
+            else:
+                print(f"  {strat:<18s} no blind spot to fill (random saturated everywhere)")
 
 
 if __name__ == "__main__":
