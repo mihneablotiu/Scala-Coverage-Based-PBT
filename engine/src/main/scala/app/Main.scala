@@ -15,37 +15,23 @@ import usecase.TestRunnerHandler
 
 import java.nio.file.{Path, Paths}
 
-/** Composition root. Runs every benchmark against **one** strategy, picked from the first CLI arg.
+/** Composition root. Runs every benchmark against one strategy picked from the first CLI arg.
   *
-  * One-JVM-per-strategy is the design choice that keeps the scoverage runtime — which has no notion
-  * of a session and accumulates statement hits within a JVM — from leaking one strategy's coverage
-  * into the next. Each `engine/runMain app.Main <strategy>` invocation forks a fresh JVM (see
-  * `fork := true` in `build.sbt`), so the scoverage `Invoker` only ever holds the hits of this
-  * single strategy. Within that JVM, scoverage still accumulates across every benchmark; the
-  * per-benchmark report stays method-scoped because `ScoverageSourceCoverageReader.coverage`
-  * filters statements by `(sourceFile, methodName)`. Multi-strategy orchestration lives in the
-  * Makefile.
+  * One JVM per strategy: scoverage's `Invoker` accumulates statement hits within a JVM and has no notion of a session, so each
+  * `engine/runMain app.Main <strategy>` is forked (`fork := true` in build.sbt) to isolate strategies. Per-method scoping inside a JVM is enforced by
+  * `ScoverageSourceCoverageReader.coverage` filtering by `(sourceFile, methodName)`. The multi-strategy sweep lives in the Makefile.
   *
-  * Reports are written under `engine/reports/<SourceStem>/<methodName>/<strategy.name>/...` — each
-  * (method, strategy) pair owns its own folder so the strategy outputs sit side-by-side.
-  *
-  * Multi-parameter SUT methods are dispatched with `(method _).tupled`. Benchmarks are ordered top
-  * → bottom by depth and number of unreached arms.
+  * Reports land under `engine/reports/statistics/<sourceStem>/<methodName>/<strategy.name>/`.
   */
 object Main extends IOApp {
 
-  private val SutRoot: Path = Paths.get("sut")
-  private val ReportsBase: Path = Paths.get("engine/reports")
-  private val BoolSrc: Path = Paths.get("sut/src/main/scala/benchmark/bool/BoolBench.scala")
-  private val IntSrc: Path = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
-  private val ListSrc: Path = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
+  private val SutRoot: Path     = Paths.get("sut")
+  private val ReportsBase: Path = Paths.get("engine/reports/statistics")
+  private val BoolSrc: Path     = Paths.get("sut/src/main/scala/benchmark/bool/BoolBench.scala")
+  private val IntSrc: Path      = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
+  private val ListSrc: Path     = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
 
-  /** 1000 inputs / seed `0L` — match what the docs claim and survive any future ScalaCheck default
-    * change. Per-strategy reproducibility hinges on these two knobs. 1000 gives the guided
-    * strategies room to keep mutating around productive seeds long after random saturates; at 100
-    * many benchmarks tied because random plateaued before either strategy had a chance to diverge
-    * meaningfully.
-    */
+  /** 1000 inputs, seed `0L` — explicit so reproducibility doesn't ride on ScalaCheck defaults. */
   private val testParams: Test.Parameters =
     Test.Parameters.default
       .withInitialSeed(rng.Seed(0L))
@@ -59,7 +45,7 @@ object Main extends IOApp {
   )
 
   private val bools: TestRunner = new FileSystemTestRunner(handler, BoolSrc, ReportsBase)
-  private val ints: TestRunner = new FileSystemTestRunner(handler, IntSrc, ReportsBase)
+  private val ints: TestRunner  = new FileSystemTestRunner(handler, IntSrc, ReportsBase)
   private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
 
   override def run(args: List[String]): IO[ExitCode] =
@@ -73,14 +59,12 @@ object Main extends IOApp {
       s"usage: engine/runMain app.Main <strategy>   (available: ${Strategy.names.mkString(", ")})"
     )
 
-  /** Body of one JVM: run every benchmark against the strategy picked from the CLI. `bench` is the
-    * per-benchmark factory + dispatcher: it summons the per-type `Arbitrary` and `Mutator`
-    * implicits, materialises a `Strategy[A]` via `Strategy.parse`, and hands it to the runner. The
-    * `.get` is safe because `run` already filtered the name against `Strategy.names`.
+  /** The SUT methods return `String`/`Int`/etc., not `Boolean`; the engine port wants `A => Boolean`. `bench` adapts at the boundary so the SUT
+    * itself stays predicate-free — a future client with a real property would just pass an `A => Boolean` directly.
     */
   private def runAll(strategyName: String): IO[Unit] = {
     def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): IO[Unit] =
-      runner.runTests(name, Strategy.parse[A](strategyName).get)(body)
+      runner.runTests(name, Strategy.parse[A](strategyName).get)(input => { body(input); true })
 
     for {
       _ <- bench(bools, "negate")(BoolBench.negate)
@@ -118,14 +102,14 @@ object Main extends IOApp {
       _ <- bench[(List[Int], List[Int])](lists, "prefixCheck")((ListBench.prefixCheck _).tupled)
       _ <- bench[(List[Int], List[Int])](lists, "isReverseOf")((ListBench.isReverseOf _).tupled)
       _ <- bench[(List[Int], List[Int])](lists, "haveSameMultiset")(
-             (ListBench.haveSameMultiset _).tupled
-           )
+        (ListBench.haveSameMultiset _).tupled
+      )
       _ <- bench(lists, "allPrime")(ListBench.allPrime)
       _ <- bench(lists, "primeListShape")(ListBench.primeListShape)
       _ <- bench(lists, "isPermutation")(ListBench.isPermutation)
       _ <- bench[(List[Int], List[Int])](lists, "deepListRelation")(
-             (ListBench.deepListRelation _).tupled
-           )
+        (ListBench.deepListRelation _).tupled
+      )
       _ <- bench(lists, "deepListShape")(ListBench.deepListShape)
     } yield ()
   }

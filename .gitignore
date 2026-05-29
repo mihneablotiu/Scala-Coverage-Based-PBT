@@ -9,9 +9,12 @@ project/project/
 .DS_Store
 *.iml
 out/
-engine/reports/
 
-# Python bytecode from diagram generators
+# Engine outputs: statistics is generated, scripts is tracked.
+engine/reports/*
+!engine/reports/scripts/
+
+# Python bytecode
 __pycache__/
 *.pyc
 

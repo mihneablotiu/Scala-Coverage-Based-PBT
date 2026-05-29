@@ -3,32 +3,18 @@ package port.driving
 import cats.effect.IO
 import domain.Strategy
 
-/** Drives one fuzz session against a single SUT method.
+/** Drives one fuzz session over a SUT method.
   *
-  * Pure use-case interface — **no filesystem, no source paths, no output paths**. The caller of
-  * this port only declares:
+  * The caller declares which method to exercise, the [[Strategy]] that picks inputs (it already carries the type-class evidence for its `A`), and the
+  * boolean predicate to evaluate per input. Where the source lives and where output is written are adapter concerns set at construction time, so the
+  * port stays free of filesystem details.
   *
-  *   - **which method** to exercise (by name),
-  *   - **which strategy** to drive it with (already materialised for `A`, carrying its own
-  *     resources),
-  *   - **what to do** with each generated input.
-  *
-  * Anything else — *where* the source lives, *where* the report is written, what runtime config the
-  * engine uses — is the adapter's responsibility (typically set as construction-time constants on
-  * the driving adapter implementation).
-  *
-  * The strategy is `Strategy[A]` rather than a bare `Strategy`: each strategy already carries the
-  * type-class evidence it needs (an `Arbitrary[A]`, optionally a `Mutator[A]`, etc.). That keeps
-  * this port free of strategy-specific bounds — adding a strategy with new requirements does not
-  * change this signature.
-  *
-  * `exercise` returns `Any` (in practice `Boolean` or `Unit`); its return value is discarded
-  * because this framework measures coverage, not behaviour. The session reports "what scoverage
-  * recorded" regardless of what the SUT method returned for any given input.
+  * `property` returns `Boolean` so a client can evaluate real behaviour, not just trigger coverage. The engine still measures coverage as the primary
+  * observable; how (or whether) the boolean is honoured beyond being called is an implementation choice of the adapter stack.
   */
 trait TestRunner {
   def runTests[A](
       methodName: String,
       strategy: Strategy[A]
-  )(exercise: A => Any): IO[Unit]
+  )(property: A => Boolean): IO[Unit]
 }

@@ -1,16 +1,15 @@
-"""Regenerate all architecture diagrams under docs/images/.
+"""Regenerate the architecture diagrams under docs/images/.
 
-Run: ``python3 docs/diagrams/generate.py``.
+Run: ``python3 docs/scripts/generate.py``.
 """
 
 from __future__ import annotations
 
 import os
 import runpy
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["hexagon.py", "sequence.py", "loop.py"]
+SCRIPTS = ["hexagon.py", "loop.py"]
 
 if __name__ == "__main__":
     for name in SCRIPTS:

@@ -1,13 +1,13 @@
 package port.driven
 
 import cats.effect.IO
-import domain.MethodTree
+import domain.ParsedMethod
 
 import java.nio.file.Path
 
-/** Static analysis of a Scala source file: returns the [[MethodTree]] of the named method — its
-  * enclosing package, class and branchy body — or `None` if the method is not found.
+/** Returns the named method's [[ParsedMethod]] (branch tree + leaf positions), or `None` if the method isn't found. The leaf set is computed by the
+  * adapter once, at parse time.
   */
 trait BranchTreeBuilder {
-  def build(sourceFile: Path, methodName: String): IO[Option[MethodTree]]
+  def build(sourceFile: Path, methodName: String): IO[Option[ParsedMethod]]
 }

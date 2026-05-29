@@ -1,304 +1,141 @@
 # Architecture
 
-The technical companion to [`overview.md`](overview.md). Read the
-overview first if you haven't — that document explains *what* the
-project does in plain terms. This one explains *how* it's built,
-why we chose that structure, and the strongest arguments against
-the choice.
-
-The document is long on purpose. It is structured so you can read it
-in order from top to bottom, but you can also dip in: each section
-stands on its own.
+Technical companion to [`overview.md`](overview.md). The overview
+explains *what* the project does in plain terms; this document
+explains *how* it's built.
 
 ---
 
 ## 1. What is in the codebase
 
-The repository is a single sbt build with two subprojects:
+A single sbt build with two subprojects:
 
-| Subproject | Role                                                                                                  |
-|------------|-------------------------------------------------------------------------------------------------------|
-| `sut`      | The **system under test** — small example methods. Compiled with scoverage instrumentation.           |
-| `engine`   | The **framework** — domain types, ports, adapters, the use case, and the `app.Main` composition root. |
+| Subproject | Role                                                                                        |
+|------------|---------------------------------------------------------------------------------------------|
+| `sut`      | System under test — small example methods. Compiled with scoverage instrumentation.         |
+| `engine`   | Framework — domain types, ports, adapters, the use case, the `app.Main` composition root.   |
 
-Almost all of the interesting code lives in `engine/`. The SUT is a
-catalogue of small example methods (grouped by input type — `BoolBench`,
-`IntBench`, `ListBench`) plus a small number-theoretic helper module.
-The composition root (`engine/src/main/scala/app/Main.scala`)
-is the only file in the codebase that imports concrete adapter classes
-and wires them together; it doubles as the `IOApp` entry point. Each
-invocation runs every benchmark against **one** strategy, picked from
-the first CLI argument — see §7 for why and how that orchestrates
-into a full sweep.
+Almost all interesting code lives in `engine/`. The SUT is a small
+catalogue (`BoolBench`, `IntBench`, `ListBench`) plus a
+number-theoretic helper. `app.Main` is the only file that imports
+concrete adapter classes; it is also the `IOApp` entry point. One
+invocation runs every benchmark against one strategy, picked from
+the first CLI argument.
 
-The driven ports and their adapters today:
+The driven ports and their adapters:
 
-| Port (what the use case needs)    | Adapter                                       | What this adapter is                                          |
-|-----------------------------------|-----------------------------------------------|---------------------------------------------------------------|
-| `BranchTreeBuilder`               | `ScalametaBranchTreeBuilder`                  | Static AST shape + source positions, via Scalameta            |
-| `SourceCoverageReader`            | `ScoverageSourceCoverageReader`               | Per-statement invocation snapshots from scoverage             |
-| `CoverageReportWriter`            | `FileSystemCoverageReportWriter`              | DOT · CSV · JSON · TXT · SVG (growth chart) to disk           |
+| Port                       | Adapter                              | What it does                                       |
+|----------------------------|--------------------------------------|----------------------------------------------------|
+| `BranchTreeBuilder`        | `ScalametaBranchTreeBuilder`         | Parses source to a `BranchTree` via Scalameta      |
+| `SourceCoverageReader`     | `ScoverageSourceCoverageReader`      | Reads per-method fired statements from scoverage   |
+| `CoverageReportWriter`     | `FileSystemCoverageReportWriter`     | Writes one `coverage.json` per (method, strategy)  |
 
-The single driving port `TestRunner` has one adapter today:
-`FileSystemTestRunner`. It delegates to the use-case class
-`TestRunnerHandler`, which is the orchestrator written entirely in
-terms of the three driven ports above.
+The single driving port `TestRunner` has one adapter:
+`FileSystemTestRunner`. It delegates to the use-case
+`TestRunnerHandler`, which is written entirely in terms of the
+three driven ports above.
 
-Input-picking strategies — random and mutation-guided — are *not*
-driven ports. They live as `gen` methods directly on the case
-classes of the `domain.Strategy[A]` sealed trait, so the handler
-dispatches via `strategy.gen(feedback)` without any match arm. The
-section on strategies (§6) explains why they sit there and not on
-the other side of a port, and why each case carries only the
-type-class evidence it actually needs.
+Strategies are not behind a port — they live on the `Strategy[A]`
+sealed trait directly (§4).
 
 ---
 
-## 2. The architectural question
+## 2. Ports and adapters in plain terms
 
-The thesis is a comparison: random property-based testing versus
-coverage-guided property-based testing. To do that comparison
-honestly, every flavour has to run inside the *same* test harness,
-producing the *same* outputs, looking at the *same* methods, with
-the *same* measurement machinery in the middle. The only thing
-allowed to differ is the part that chooses the next input.
+A **port** is a contract: "I need something that does X." An
+**adapter** is a concrete implementation of that contract.
 
-Imagine writing this as a flat script: a single file that opens a
-source file, parses it, starts a coverage agent, loops one hundred
-times calling some random generator, writes a chart at the end.
-That works for one strategy. But the moment you want to swap the
-generator from random to a guided variant, you discover that the
-random choice is glued into a dozen places in the file — the seed,
-the generator type, the place where the loop calls it, the
-assumption that the input is unrelated to past coverage. So you
-copy the file, edit those dozen places, and now you have two flat
-scripts that share 95 % of their text. When you find a bug in one,
-you have to fix it in the other. When you want to add a third
-strategy you copy again. It rots quickly.
+The discipline: the core of the application is written in terms of
+ports only. It does not know that the AST shape comes from
+Scalameta, or that the report goes to disk. It only knows there is
+a tree builder it can ask to parse a method, a coverage reader it
+can ask for fired statements, a writer it can hand a finished
+report to.
 
-The architectural question is: *how do we organise the framework so
-that swapping a single decision — "how do we pick the next input?"
-— is a single, contained change?*
+Adapters fit a port without leaking concrete details into it. The
+scoverage adapter exposes `coverage(sourceFile, methodName): Set[Pos]`,
+not `getScoverageStatement`. Generic word, generic shape.
 
-The answer this project gives is **ports and adapters**, also
-called hexagonal architecture, plus a small in-process sealed-trait
-strategy pattern for the choice we want to vary most.
-
----
-
-## 3. The pattern, in the simplest terms
-
-A wall outlet doesn't know what you're going to plug into it. It
-doesn't care whether you're connecting a toaster, a lamp, a vacuum,
-or an electric guitar. It only promises one thing: at this shape of
-hole, you will get electricity in a known voltage and frequency.
-The "shape of the hole" is what makes it possible for appliances
-and outlets to be designed independently.
-
-That shape — the contract — is what the pattern calls a **port**.
-The toaster, the lamp, the vacuum: those are **adapters**. Each
-adapter implements the port in its own way, but to the building's
-electrical system they all look exactly the same.
-
-In software, a port is a piece of code that says, in effect, "I need
-something that can do X, but I don't care how." An adapter is a
-concrete thing that fulfils that promise.
-
-The discipline is twofold:
-
-- The **core logic** of the application is written entirely in terms
-  of ports. It does not import any concrete adapter. It does not
-  know that the AST shape comes from Scalameta, or that the report
-  is written to a file. It only knows: "there's a tree builder; I
-  can ask it to parse a method."
-- The **adapters** are written so they fit a port without leaking
-  any of their concrete-ness into it. The scoverage adapter does
-  not put `getScoverageStatement` on the port. It puts `coverage`.
-  Generic word, generic shape.
-
-If you follow that discipline, you end up with a system that has a
-small, well-defined core in the middle (the "hexagon"), surrounded
-by a thin layer of adapters that plug it into the real world. Swap
-the adapter, leave the core alone; swap the core, leave the
-adapters alone.
-
----
-
-## 4. How the pattern lands here
-
-The diagram below is the abstract view: it shows the pattern, not
-the specific tooling. Every concrete name (Scalameta, scoverage,
-the filesystem writer) lives in §1's table, not in the figure.
+The result is a small core in the middle (the "hexagon"),
+surrounded by adapters that plug it into the real world. Swap an
+adapter, leave the core alone.
 
 ![Hexagonal architecture](images/hexagon.png)
 
-There are two "sides" to the hexagon:
+---
 
-- The **driving side** (left) is who calls *into* the framework. In
-  our project this is `app.Main` — the small program that says
-  "test these methods against these strategies." It calls through
-  the `TestRunner` driving port, which is implemented by
-  `FileSystemTestRunner`.
+## 3. The three driven ports
 
-- The **driven side** (right) is what the framework calls *out to*.
-  Three small contracts: `BranchTreeBuilder`, `SourceCoverageReader`,
-  `CoverageReportWriter`.
+### `BranchTreeBuilder`
 
-The use case (`TestRunnerHandler`) is written entirely in terms of
-these driven ports. The driving adapter (`FileSystemTestRunner`)
-binds the port to filesystem-specific construction parameters
-(source file path, output base directory); the *composition* —
-constructing the handler with its driven adapters and the strategies
-list — happens in `app.Main`.
+Takes a Scala source file and a method name, returns a
+[`ParsedMethod`](../engine/src/main/scala/domain/ParsedMethod.scala)
+— the method's branch tree of branchy expressions (`if`, `match`,
+`while`, partial functions) **plus the positions of its leaves**.
+The leaf set is computed by the adapter once, at parse time, so
+the use case never has to walk the tree itself. Backed by
+Scalameta today; could be backed by the Scala 3 compiler or a
+pre-cached parse without touching the use case.
 
-Strategies sit inside the Use Case column in the diagram for a
-reason: they are not behind a port. The handler holds an injected
-trio of driven adapters, but it picks the input generator by
-calling `strategy.gen(feedback)` directly — a method on each
-`Strategy[A]` case class. §6 explains the design choice.
+### `SourceCoverageReader`
+
+One operation: `coverage(sourceFile, methodName)` returns the set
+of source positions scoverage has seen fired so far for that
+method. The use case intersects this set with the method's leaf
+positions to get the "newly covered branches" — keeping the "what
+counts as a branch" decision in the domain, not the adapter. The
+reader is called once per fuzz iteration so the per-input delta
+can be computed.
+
+### `CoverageReportWriter`
+
+Takes a finished `SessionReport[A]` and persists it. Today's
+adapter writes one `coverage.json` per (method, strategy) — see
+§6. All graphics, tables, and cross-strategy aggregations are
+produced downstream by the Python scripts under
+[`engine/reports/scripts/`](../engine/reports/scripts/). A future
+adapter could push to a database, an HTML dashboard, or
+Prometheus — one new adapter, zero changes to the use case.
 
 ---
 
-## 5. The three driven ports, one by one
+## 4. Strategies — sealed-trait dispatch, not a port
 
-It's worth pausing on each port and asking: *why is this a separate
-contract? Why not just bake it into the use case?*
-
-### 5a. `BranchTreeBuilder`
-
-**What it does.** Takes a Scala source file and a method name, and
-returns the method's enclosing package, class, and a tree of its
-branchy expressions (`if`, `match`, `while`, partial functions).
-Each node carries its source position.
-
-**Why a port.** Parsing Scala is a heavy lift; we use Scalameta.
-But the *purpose* of this port is not "parse Scala" — it's
-"describe the structure of a method". A toy alternative might be a
-hand-rolled parser that only handles `if`/`else`; a future
-alternative might be one based on the Scala 3 compiler. The port
-stays the same.
-
-**What it lets us swap.** Other parsers, or even pre-cached parse
-results from disk, without touching the use case.
-
-### 5b. `SourceCoverageReader`
-
-**What it does.** One operation: `coverage(sourceFile, methodName)`
-returns the set of source positions that scoverage has seen fired
-for that method so far. The use case intersects that set with the
-method's leaf positions (from the `BranchTree`) to compute the
-input's "newly covered branches" — keeping the "what counts as a
-branch" decision in the domain rather than in the adapter. The
-scoverage adapter additionally wipes leftover measurement files
-once at construction (scoverage's `Invoker` caches a `FileWriter`
-after first use, so deleting later would orphan it); the port
-stays a single-method interface because the cleanup is a private
-implementation concern of that one adapter.
-
-**Why a port.** Source-level coverage is a domain unto itself.
-scoverage is the obvious choice for Scala because of its compiler-
-plugin model, but the use case shouldn't depend on scoverage's
-internal types. Hiding that choice behind a port keeps the option
-open (a different statement-coverage source, a sampling profiler,
-…) without polluting the use case.
-
-**Per iteration, not just at the end.** Worth being explicit: the
-handler calls `coverage` *inside* the property body on every fuzz
-iteration, so the per-input "newly covered branches" delta can be
-computed as a diff against the running set. The same port is also
-called once after the loop closes to produce the final snapshot the
-writer needs. Because each JVM runs only one strategy (see §7),
-the scoverage state queried during a session contains only that
-session's contribution — no cross-strategy bleed.
-
-### 5c. `CoverageReportWriter`
-
-**What it does.** Takes a finished `SessionReport[A]` and writes it
-somewhere.
-
-**Why a port.** Output is the most likely surface to change. Today
-we write five files to disk. Tomorrow we might want to push the
-report to a database for cross-session comparisons; or to an HTML
-dashboard; or to Prometheus for monitoring. Each of those is one
-new adapter and zero changes to the use case.
-
-**What it lets us swap.** Output format and destination.
-
----
-
-## 6. Strategies — pluggable, but not a driven port
-
-The thing the thesis varies most is the input-picking strategy.
-That sounds like the textbook case for a port. We chose not to
-make it one. Each `Strategy[A]` case class carries its own `gen`
-method directly, and the handler just calls it:
+Each `Strategy[A]` case class carries its own `gen` method:
 
 ```
 val gen: Gen[A] = strategy.gen(feedback)
 ```
 
-Every case class declares `def gen(feedback: SessionFeedback[A]):
-Gen[A]`, so the sealed trait still gives compile-time
-exhaustiveness — but no runtime match is needed, because the
-dispatch is just method selection on the case class the handler
-already holds.
-
-**Each strategy carries only the resources it actually uses.**
 `Random[A]` holds an `Arbitrary[A]`; `MutationGuided[A]` holds an
-`Arbitrary[A]` *plus* a `Mutator[A]`. The trait itself has no
-type-class bounds, so the handler, the use-case method, the port,
-and the driving adapter are all free of strategy-specific
-implicits. A new strategy with new requirements (e.g. an
-`Enumerate[A]` for a bounded-exhaustive variant) is just one new
-case class with its own constructor parameter — nothing in between
-has to change.
+`Arbitrary[A]` *plus* a `Mutator[A]`. The trait has no type-class
+bounds, so adding a strategy with a different requirement doesn't
+ripple a bound through the rest of the engine.
 
-**Why not a port?**
+**Why not a port?** Strategies are pure in-process modules with no
+side effects to hide. The use case picks the input generator at
+one specific point in the loop body; sealed-trait exhaustiveness
+captures that decision cleanly. Adding a strategy is: one new case
+class, its name in `Strategy.names`, a case in `Strategy.parse`,
+and the same name in the Makefile's `STRATEGIES` list.
 
-1. They are not on the other side of a process boundary. Every
-   strategy is pure Scala, in the same JVM, with no I/O. A
-   driven port exists to hide *something the use case shouldn't
-   touch* — a database, a parser, a file system. There's no such
-   thing being hidden here.
-2. The handler needs the strategy decision at one specific point
-   in the loop body. A sealed trait keeps that decision in one
-   place: adding a new strategy means writing one new `case class`
-   (with its `gen`), adding its name to `Strategy.names`, and one
-   new case in `Strategy.parse`. A port-shaped trait would buy
-   nothing extra and would force the strategy to be constructed by
-   the composition root and threaded through the handler's
-   constructor.
-3. The strategies are tiny enough that splitting them into
-   per-strategy files would add file count without helping
-   navigation. They sit beside the sealed-trait declaration in
-   `domain/Strategy.scala`, which is also where the orchestration
-   list lives.
-
-What we *do* keep is the swappability the thesis needs. Adding a new
-strategy is mechanical: a new `case class` in `Strategy.scala` with
-its `gen`, its name in `Strategy.names`, a matching case in
-`Strategy.parse`, and the same name in the `STRATEGIES` list in the
-`Makefile` (so the orchestration loop runs it too — see §7). The
-current state is **two** strategies — `Random` (uniform sampling
-from `Arbitrary[A]`) and `MutationGuided` (FuzzChick-flavoured
-mutation of past coverage-improving inputs, using a `Mutator[A]`
-type class with instances for primitives, `List[Int]`, and tuples).
+The `TestRunner` port's `property: A => Boolean` signature is
+honest about what a client passes in. Today the engine always
+returns `true` to ScalaCheck so coverage measurement keeps going
+regardless of the predicate's outcome, but a future client wiring
+a real assertion is free to depend on the boolean being honoured.
 
 ---
 
-## 7. The system in motion
+## 5. The system in motion
 
-Three things help here: the multi-strategy orchestration, and two
-diagrams.
+### 5a. One JVM per strategy
 
-### 7a. One JVM per strategy
-
-scoverage's `Invoker` accumulates statement hits within a JVM and has
-no notion of a "session", so running two strategies inside the same
-JVM would leak the first strategy's coverage into the second's view
-of the world (every `coverage` call returns the cumulative state).
-The composition root sidesteps this by running **one** strategy per
-invocation, picked from the first CLI argument:
+scoverage's `Invoker` accumulates statement hits within a JVM and
+has no notion of a "session", so running two strategies inside the
+same JVM would leak the first strategy's coverage into the
+second's view. The composition root sidesteps this by running one
+strategy per invocation:
 
 ```
 sbt "engine/runMain app.Main random"
@@ -306,382 +143,115 @@ sbt "engine/runMain app.Main mutation-guided"
 ```
 
 Each invocation forks a fresh JVM (`fork := true` in `build.sbt`)
-and runs every benchmark against that one strategy. The full sweep
-is one `make run` away — the Makefile holds the list and loops over
-it.
+and runs every benchmark against that one strategy. The Makefile's
+`run` target loops over `STRATEGIES`.
 
-The use case stays untouched by this choice: it still computes
-per-iteration deltas against the in-session running set, exactly as
-the diagrams below describe. The orchestration is purely a build-
-and-launch concern.
+Per-method scoping inside one JVM is enforced by
+`ScoverageSourceCoverageReader.coverage` filtering by
+`(sourceFile, methodName)`, so each report only sees statements
+that belong to its method.
 
-### 7b. Session choreography
-
-The shape of one `TestRunner` call from the application down to the
-written report:
-
-![Session choreography](images/sequence.png)
-
-The yellow band is the inner loop: pick an input (internally,
-via the selected strategy), exercise the SUT as a side effect, read
-a fresh coverage snapshot from the Coverage Reader, fold the delta
-into the running `SessionFeedback`, repeat. After the loop closes,
-the handler asks the Tree Builder for the method's static branch
-tree, asks the Coverage Reader one more time for the final
-snapshot, and hands a `SessionReport` to the Report Writer.
-
-### 7c. Per-iteration feedback cycle
-
-Zooming into the loop body alone:
+### 5b. The per-iteration feedback cycle
 
 ![Per-iteration feedback cycle](images/loop.png)
 
-`Session Feedback` is the loop's running accumulator: a single
+`SessionFeedback` is the loop's running accumulator: a single
 immutable `history: Vector[InputRecord[A]]`, with `coveredBranches`
-and `growthCurve` derived as `lazy val`s on top. Both strategies
-receive the feedback on every iteration via `strategy.gen(feedback)`
-— wrapped in `Gen.delay` so ScalaCheck re-asks for the next
-`Gen[A]` each step. `Random` ignores it; `MutationGuided` reads
+and `growthCurve` derived as `lazy val`s. Both strategies receive
+the feedback on every iteration via `strategy.gen(feedback)`,
+wrapped in `Gen.delay` so ScalaCheck re-asks for the next `Gen[A]`
+each step. `Random` ignores the feedback; `MutationGuided` reads
 the input history to find inputs whose iteration produced newly
-covered branches (its "seeds"), and roughly half the time mutates
-one of them via the `Mutator[A]` type class instead of sampling
-uniformly — `Gen.frequency(5, 5)`, with the random half kept in
-to stop the search from collapsing onto a single seed lineage.
+covered branches (its "seeds") and roughly half the time mutates
+one of them via the `Mutator[A]` type-class instead of sampling
+uniformly.
 
 ---
 
-## 8. The data the framework produces
+## 6. The data the framework produces
 
-Schematically, a `SessionReport[A]` carries five fields and four
-derived getters:
+`SessionReport[A]` is pure data — five fields, zero methods:
 
 ```
-Session report                ── irreducible
-├── methodName, sourceFile
-├── methodTree                ── static AST analysis (Option)
-├── coveredPositions          ── every position scoverage saw fired
-└── feedback                  ── loop history (leaf-intersected)
-
-Session report                ── derived getters
-├── totalInputs               ── feedback.iteration
-├── covered                   ── feedback.coveredBranches.size
-├── total                     ── BranchTree.leaves(methodTree.body).size
-└── saturation                ── first index where growthCurve hit its final value
+methodName, sourceFile   ── identity
+branchTree               ── static AST analysis (Option[BranchTree])
+strategy                 ── which strategy ran this session (name string)
+feedback                 ── loop history
 ```
+
+Every derived number you might want — covered / total counts,
+saturation index, per-branch first-hit, smoothed growth curve — is
+computed downstream by the Python scripts under
+[`engine/reports/scripts/`](../engine/reports/scripts/). The engine
+emits the raw observation once; analysis lives in Python so it can
+be re-run, restyled, and extended without touching the engine.
 
 A *leaf* of `BranchTree` is the canonical "branch" for coverage:
-every distinct path through the method body is one leaf, and the
-nested-`if` decision points (rectangles in the DOT graph) are not
-counted — they're intermediate nodes, not paths. The handler
-intersects scoverage's fired positions with the leaf set before
-feeding the delta into `SessionFeedback`, so the loop never sees
-non-leaf hits.
+each leaf is one distinct path through the method body, and the
+decision points (rectangles in the rendered tree) are not counted
+— they're intermediate nodes, not paths. The handler intersects
+scoverage's fired positions with the leaf set before feeding the
+delta into `SessionFeedback`, so the loop never sees non-leaf
+hits.
 
-The loop-internal `SessionFeedback[A]` is the same `feedback` field
-above: one `history: Vector[InputRecord[A]]` plus two `lazy val`
-derivations (`coveredBranches: Set[Pos]`, `growthCurve:
-Vector[Int]`). The writer turns this slim domain model into the
-on-disk files — every headline figure, per-branch row, and per-input
-row is derived from `(coveredPositions, methodTree, feedback)` at
-format time.
+### What ends up on disk
 
----
+One file per cell, written by the engine:
 
-## 9. What we got out of the discipline
+```
+engine/reports/statistics/<sourceStem>/<methodName>/<strategy>/coverage.json
+```
 
-Each item below is something the project actually uses or will use
-— none of it is speculative.
+JSON shape:
 
-**Running every benchmark against every strategy is one list.**
-`Strategy.names` is the canonical list; the Makefile's `STRATEGIES`
-variable mirrors it and the `run` target loops over it, forking a
-fresh JVM per strategy. Adding `Strategy.SomethingNew` (plus its
-name in `Strategy.names`, a case in `Strategy.parse`, and the same
-name in `STRATEGIES`) runs every existing benchmark under the new
-strategy without touching anything else. This is exactly the
-property the thesis comparison needs.
+```
+{
+  "method":      string,
+  "sourceFile":  string,
+  "strategy":    string,
+  "totalInputs": int,
+  "growthCurve": [int, …],   cumulative leaf-count per iteration
+  "branchTree":  nested      every leaf carries firstHitInput: int | null
+}
+```
 
-**The use case is testable in isolation.** Each driven port is a
-trait. Feed the handler fake implementations that return scripted
-data, and the whole orchestration logic can be checked without
-launching scoverage or touching the file system. This isn't
-theoretical — anybody picking up the codebase gets it for free.
+`make analyze` (or `python3 engine/reports/scripts/compare.py`)
+walks those JSONs and writes, alongside each cell:
 
-**The boundaries are honest.** When you read
-`TestRunnerHandler.scala`, you can tell at a glance everything the
-use case touches in the outside world: it's the list of constructor
-parameters. There are exactly three driven things the handler can
-do that have side effects. Anything else is in-memory computation
-or a `strategy.gen(feedback)` call.
+```
+coverage.dot       branch tree (Graphviz)
+coverage.svg       rendered tree, leaves coloured by coverage
+```
 
-**Two strategies coexist peacefully.** Random and mutation-guided
-share the same handler and the same reporting pipeline. The choice
-between them is one literal value at the call site. This is the
-central justification for organising the strategy choice as a
-sealed trait in the first place — and the per-case fields keep each
-strategy honest about what type-class evidence it actually needs.
+…plus, under `engine/reports/statistics/_summary/`:
 
-**Future extensions are clear, not speculative.** When somebody
-says "can we add an HTML report?", the answer is "write a new
-adapter for the report-writer port; nothing else has to change."
-When somebody says "can we test on Java code too?", the answer is
-"write a new tree-builder adapter for Java." The cost of adding
-things is bounded by the number of new adapters or strategy
-modules.
+```
+by_bench/<bench>.svg   horizontal bars per (method, strategy); each bar's
+                       label carries peak coverage %, the input that
+                       reached it, and (for non-random strategies) the
+                       speed comparison against random
+suite.svg              horizontal bars per (bench, strategy)
+overall.svg            one bar per strategy across the whole suite
+```
 
-**Adapters are independent.** When scoverage broke between
-versions (specifically, when its `Statement` class moved
-`methodName` to a nested `Location` object), the fix was confined
-to *one file* and *one line*. Nothing else had a dependency on
-scoverage's internal shape, so nothing else needed to change.
+The split is deliberate: the engine produces the *measurement*,
+the Python scripts produce the *presentation*. Either side can be
+rewritten without touching the other.
 
 ---
 
-## 10. The honest costs
-
-A thesis reader could push back on the architecture in several
-defensible ways. Let's list them.
-
-**"You have eighteen Scala files for a hundred-line idea."**
-True. The engine alone has 17 Scala files. A flat script could
-express the same behaviour in five or six files, maybe fewer.
-
-*Response.* For a one-shot script, this would be wasteful. For a
-thesis whose entire contribution is *a comparison of strategies*,
-file count is the wrong metric. The right metric is the size of
-the swap when you change the strategy mix. That swap is one list
-entry. Worth twenty extra files.
-
-**"All three driven ports have exactly one adapter. The abstraction
-never pays off."** Also true today. The `BranchTreeBuilder` isn't
-likely ever to have a second implementation in this project's
-lifetime. So why the port?
-
-*Response.* Three reasons. First, the cost of keeping a port for a
-one-adapter case is roughly the trait definition — a dozen lines.
-The use case would have to depend on *something*; depending on a
-trait isn't meaningfully heavier than depending on a class. Second,
-the *uniformity* matters: once the convention is "the use case
-depends only on ports", you can read any file in the codebase
-without wondering whether a particular call is leaking
-implementation detail. Third, the *swappability for tests* is
-useful even without runtime alternatives — fake adapters make the
-handler unit-testable end-to-end.
-
-**"The pattern adds indirection that makes the code harder to
-follow."** Partial truth. A new reader has to follow calls through
-trait boundaries, which is more work than reading a flat function
-top to bottom, especially when debugging.
-
-*Response.* The cure is good naming (each port's name tells you
-what to expect when you click through) and small, locatable
-adapters. We name them by the technology that backs them
-(`ScoverageSourceCoverageReader`, `ScalametaBranchTreeBuilder`),
-so navigating from the call to the impl is a single grep. The
-bigger conceptual hurdle in the codebase isn't *which file to read
-next* — it's *what coverage actually is*.
-
-**"You're using the pattern because it sounds smart, not because
-you need it."** This is the strongest version of the criticism.
-
-*Response.* If we only had a random strategy and were never going
-to write a guided one, this critique would be devastating. The
-pattern would be cargo-culted and a flat script would be the
-honest choice. The thesis's central question — *does guided beat
-random?* — is what justifies the architecture. Without the
-comparison, the architecture is overbuilt. With it, the
-architecture is exactly the right size.
-
-**"Why isn't the strategy a port too, then? Inconsistency."** A
-fair point: the most-varied piece of behaviour is *not* hidden
-behind a port. §6 covers the reasoning. The short answer is that a
-port exists to hide a side-effecting collaborator from the use
-case, and the strategies are pure in-process modules with no I/O
-to hide. We took the sealed-trait route because it gives compile-
-time exhaustiveness for free and avoids paying for ceremony we
-don't need.
-
-**"What about the build complexity? Multiple subprojects, sbt
-configuration, scoverage wiring …"** True. The project's build
-file is more involved than for a flat script. But almost none of
-that build complexity is *caused* by the ports-and-adapters layer.
-It's caused by:
-
-- needing to compile the SUT with scoverage instrumentation
-  (required by any approach that wants per-iteration coverage
-  deltas),
-- the desire to isolate the SUT from the engine so the SUT's own
-  compile artefacts are the only thing scoverage instruments
-  (a build-level concern, not an architectural one).
-
-The pattern adds nothing to `build.sbt`. It only adds files inside
-`engine/src/main/scala/`.
-
----
-
-## 11. Alternatives we did not pick
-
-To make the choice meaningful you have to know what else was on
-the table.
-
-### 11a. Plain flat script
-
-Everything in one file. Open the source, start scoverage, loop,
-write the chart, done.
-
-This is the obvious choice for a 200-line experiment. It would
-have been faster to write and easier for a reader to follow on a
-single screen. It fails as soon as we add a real guided strategy
-because the random choice is woven through too many parts of the
-file to be cleanly split. You'd end up either (a) copying the file
-to make a guided version and accepting permanent drift, or (b)
-introducing some kind of "strategy" type half-heartedly — which is
-exactly the first step toward the ports-and-adapters + sealed-trait
-combination anyway. Better to commit to the discipline early.
-
-### 11b. Layered architecture (the classic "three-tier")
-
-You stack the code in three layers: data access at the bottom,
-business logic in the middle, presentation at the top. Each layer
-calls the one below.
-
-It would have been workable, but layered architecture implicitly
-assumes a *direction* of dependency: lower layers don't know about
-higher ones, but they're still concrete; the business layer
-depends on the data layer being database-shaped. For us, the
-business logic doesn't have one clean "below" — it talks to a
-parser, a coverage reader, and a writer. Putting all of those in a
-single "infrastructure" layer is either too coarse (three very
-different concerns lumped together) or too fine (sub-layered, and
-you've reinvented ports and adapters with extra steps).
-
-### 11c. Clean / onion architecture
-
-Robert Martin's variant: concentric rings of "entities", "use
-cases", "interface adapters", "frameworks". Conceptually a sibling
-of ports and adapters.
-
-Could have worked. The semantic difference for a project of this
-size is hair-splitting: both patterns end up with a use-case object
-depending only on interfaces, those interfaces being implemented by
-adapter classes. Clean architecture's extra ring (entities separate
-from use cases) doesn't pay off here because our domain types are
-already small data classes — there is no behaviour-rich "entity"
-layer to separate. We'd be drawing a ring around nothing.
-
-We picked ports and adapters because it's the leaner formulation
-for the same idea. We could swap to clean-architecture vocabulary
-without changing a line of code.
-
-### 11d. No architecture at all — use a library
-
-There are mature property-based testing libraries for Scala
-already (ScalaCheck, scalacheck-effect, ZIO Test's property testing
-support). Why not extend one of them with a coverage-guided
-generator and call it a day?
-
-Considered. Rejected for three reasons. First, none of those
-libraries currently exposes the generator in a way that a guided
-strategy could hook into; they assume the generator is a pure
-function of the random seed. Retrofitting feedback into them would
-mean changing internal APIs we don't control. Second, the thesis
-explicitly compares a coverage-guided generator to the random
-baseline; running both inside the same harness, with the same
-measurement code, is essential for a clean comparison. Third, the
-project is also an exercise in architectural design — the thesis
-benefits from the explicit structure.
-
----
-
-## 12. When ports and adapters is the wrong call
-
-It's worth saying out loud, because the pattern has a faintly culty
-reputation in some circles.
-
-**One-off scripts.** If you'll run it twice and throw it away, just
-write the script. The cost of ports and adapters is paid in files,
-naming, and indirection — none of which the script ever recoups
-because it never grows.
-
-**Code with no alternatives.** If a given piece of logic genuinely
-has one and only one possible implementation, and there's no
-testing reason to abstract it, don't. The port-without-a-purpose
-is a real anti-pattern; it adds bureaucracy without any of the
-swappability that justifies the cost.
-
-**Tiny CRUD apps.** A web app that's mostly "read a row, render a
-template, write a row back" has nothing structural to abstract.
-Layered architecture or even no architecture is fine. Trying to
-hexagonalise it ends up with a port per database table, which is
-silly.
-
-**Code where the boundary is wrong.** Sometimes the most natural
-abstraction *isn't* "a port representing a side-effect-having
-thing outside the application". Sometimes it's a state machine, a
-pipeline of transformations, or an event log — or, as in §6 of
-this document, a sealed-trait dispatch inside the use case. Forcing
-every project into ports and adapters because the pattern is
-fashionable is its own kind of bad taste.
-
----
-
-## 13. Extension points
-
-Where to plug new behaviour without touching the use case:
+## 7. Extension points
 
 | You want to add…                              | Touch                                                                          |
 |-----------------------------------------------|--------------------------------------------------------------------------------|
-| A new Scala construct (`try`, `for`)          | One case in the Scalameta AST walker + (only if a new shape) one node in `BranchTree` |
-| A new input type (`String`, `case class`)     | Use any type ScalaCheck has an `Arbitrary` for — `Main` already does it for tuples |
-| A new input-picking strategy                  | New `Strategy[A]` case class in `domain/Strategy.scala` (with its own `gen`) + name in `Strategy.names` + case in `Strategy.parse` + name in the Makefile's `STRATEGIES` |
-| A new coverage source                         | New `SourceCoverageReader` adapter                                             |
-| A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                             |
-
-The driving adapter (`FileSystemTestRunner`) only needs touching if
-the *driving* side itself changes (e.g. you want a non-filesystem
-runner with its own construction-time context). Adapter swaps on
-the driven side don't touch it.
+| A new Scala branchy construct                 | One case in `ScalametaBranchTreeBuilder.visit` (+ a new `BranchTree` node only if its shape is genuinely different) |
+| A new input type                              | Use any type ScalaCheck has an `Arbitrary` for — `Main` already does it for tuples |
+| A new input-picking strategy                  | One new `Strategy[A]` case class with its own `gen`, its name in `Strategy.names`, a case in `Strategy.parse`, the same name in the Makefile's `STRATEGIES` |
+| A new coverage source                         | New `SourceCoverageReader` adapter                                              |
+| A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                              |
 
 ---
 
-## 14. Summary
-
-For this thesis specifically:
-
-- The reason to use ports and adapters is that the thesis is a
-  comparison of strategies, and the pattern reduces "swap an
-  adapter on the driven side" to "swap an adapter on the driven
-  side" — uniform, contained, and tested in isolation.
-
-- The reason it might look like over-engineering today is that all
-  three driven ports have exactly one adapter, and the most-varied
-  piece (the strategies) isn't even a port — it's a sealed-trait
-  dispatch inside the use case.
-
-- The honest middle ground is: the cost of three rarely-swapped
-  ports is small (a trait definition each, no extra runtime cost,
-  no extra mental cost once you've internalised the pattern), and
-  the uniformity benefits of "the use case depends only on ports"
-  outweigh the saved trait definitions. The strategy decision pays
-  for itself today because two strategy case classes already coexist
-  cleanly in the codebase, with their per-case typeclass evidence
-  decoupled from the rest of the pipeline.
-
-If you take only one thing away from this document, take this:
-
-> *Ports and adapters is a pattern for changeable software. We use
-> it for the driven side because the thesis needs to keep
-> everything except the strategy identical across runs. We use a
-> sealed-trait dispatch inside the use case for the strategy
-> itself because that variation is pure, in-process, and benefits
-> from exhaustive compile-time checks. Together they make adding
-> a real guided generator a small, localised change rather than a
-> rewrite.*
-
-Everything else is implementation detail.
-
----
-
-*Diagrams above are generated by the Python scripts under
-[`docs/diagrams/`](diagrams/). Run `make diagrams` to regenerate
-them; see [`Makefile`](../Makefile) for the full list of commands.*
+*Diagrams are generated by the Python scripts under
+[`docs/scripts/`](scripts/). Run `make diagrams` to regenerate
+them.*

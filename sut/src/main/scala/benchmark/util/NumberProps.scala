@@ -2,17 +2,8 @@ package benchmark.util
 
 import scala.annotation.tailrec
 
-/** Number-theoretic predicates shared between `IntBench` and `ListBench`. Each is cheap enough to
-  * call per fuzz iteration:
-  *
-  *   - `isPrime` runs a `sqrt(n)`-bounded trial division — ~46k modular checks for `Int.MaxValue`,
-  *     sub-millisecond in practice.
-  *   - `isFibonacci` looks up a precomputed `Set[Int]` of the ~47 Fibonacci numbers that fit in
-  *     `Int`.
-  *   - `isSquare` uses `math.sqrt` plus an exact integer check.
-  *   - `isDigitPalindrome` reverses the decimal-digit string of `abs(n)`.
-  *   - `collatzStepsBounded` runs the Collatz sequence until it reaches 1, capped at `limit`
-  *     iterations (returns `-1` if the cap is hit).
+/** Number-theoretic predicates shared by the benchmarks. All cheap enough to call per fuzz iteration: trial division for `isPrime`, a precomputed
+  * `Set` for `isFibonacci`, integer sqrt for `isSquare`, decimal reversal for `isDigitPalindrome`, a capped Collatz loop for `collatzStepsBounded`.
   */
 object NumberProps {
 

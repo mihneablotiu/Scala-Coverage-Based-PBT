@@ -1,19 +1,15 @@
 package port.driven
 
-import cats.effect.IO
 import domain.Pos
 
 import java.nio.file.Path
 
-/** Reads source-level coverage of one method: the set of source positions that scoverage has seen
-  * fired so far. The use case intersects this set with the method's leaf positions (from the
-  * [[domain.BranchTree]]) to get the actual "branches covered". Keeping that filter in the domain —
-  * not in this port — means the adapter doesn't need to know what counts as a branch.
+/** Returns the source positions that have been fired so far for the named method.
   *
-  * Backed by scoverage in the default adapter: the SUT is compiled with the scoverage compiler
-  * plugin so every statement is instrumented at compile time. Cheap enough to call per iteration —
-  * the static statement map is cached, the measurement files are small text logs.
+  * Synchronous because the use case calls it from inside ScalaCheck's per-iteration callback; wrapping a genuinely synchronous file read in `IO` only
+  * to immediately `unsafeRunSync` it is noise. The use case intersects this set with the method's leaf positions to decide what counts as a "covered
+  * branch", keeping the branch definition in the domain rather than the adapter.
   */
 trait SourceCoverageReader {
-  def coverage(sourceFile: Path, methodName: String): IO[Set[Pos]]
+  def coverage(sourceFile: Path, methodName: String): Set[Pos]
 }
