@@ -30,11 +30,11 @@ object Main {
   private val IntSrc: Path      = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
   private val ListSrc: Path     = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
 
-  /** 1000 inputs, seed `0L` — explicit so reproducibility doesn't ride on ScalaCheck defaults. */
+  /** 10000 inputs, seed `0L` — explicit so reproducibility doesn't ride on ScalaCheck defaults. */
   private val testParams: Test.Parameters =
     Test.Parameters.default
       .withInitialSeed(rng.Seed(0L))
-      .withMinSuccessfulTests(1000)
+      .withMinSuccessfulTests(10000)
 
   private val handler: TestRunnerHandler = new TestRunnerHandler(
     treeBuilder = ScalametaBranchTreeBuilder(),

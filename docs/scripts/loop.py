@@ -5,7 +5,7 @@ state at its centre. The input-picking stage lives inside the use case
 (it is a plain module, not a driven port), so it is coloured as a
 domain step rather than a port step.
 
-Run: ``python3 docs/diagrams/loop.py``.
+Run: ``python3 docs/scripts/loop.py``.
 """
 
 from __future__ import annotations

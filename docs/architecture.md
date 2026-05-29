@@ -193,7 +193,10 @@ decision points (rectangles in the rendered tree) are not counted
 — they're intermediate nodes, not paths. The handler intersects
 scoverage's fired positions with the leaf set before feeding the
 delta into `SessionFeedback`, so the loop never sees non-leaf
-hits.
+hits. The unit reported throughout the framework is therefore
+**leaf-only branch coverage** — distinct paths through the method
+body — *not* scoverage's raw statement-level coverage, which
+would also count the intermediate decision-point statements.
 
 ### What ends up on disk
 

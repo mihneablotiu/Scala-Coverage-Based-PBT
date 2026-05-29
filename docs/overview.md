@@ -96,11 +96,11 @@ actually helps.
 
 1. We point the framework at our example file of small methods.
 2. For each method and each strategy (currently two: random and
-   mutation-guided), we ask a number generator for 1000 inputs.
+   mutation-guided), we ask a number generator for 10000 inputs.
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
-5. We collect all 1000 observations into a single picture of how
+5. We collect all 10000 observations into a single picture of how
    well the method's branches were exercised over the session.
 6. We write the result to disk (see §9).
 

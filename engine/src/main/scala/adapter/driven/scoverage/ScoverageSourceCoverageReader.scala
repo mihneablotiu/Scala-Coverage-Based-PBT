@@ -7,6 +7,7 @@ import scoverage.serialize.Serializer
 
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters._
+import scala.util.Using
 
 /** scoverage-backed reader.
   *
@@ -24,13 +25,15 @@ object ScoverageSourceCoverageReader {
     private val dataDir      = sutRoot.resolve(DataSubdir)
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
 
+    // `Files.list` returns a directory-handle-holding `Stream`; close it deterministically with `Using`.
     if (Files.isDirectory(dataDir))
-      Files
-        .list(dataDir)
-        .iterator()
-        .asScala
-        .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
-        .foreach(Files.deleteIfExists)
+      Using.resource(Files.list(dataDir)) { stream =>
+        stream
+          .iterator()
+          .asScala
+          .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
+          .foreach(Files.deleteIfExists)
+      }
 
     private lazy val staticCoverage: scoverage.domain.Coverage = {
       if (!coverageFile.exists())

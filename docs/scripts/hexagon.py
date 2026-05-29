@@ -8,7 +8,7 @@ match, so they appear inside the Use Case column rather than as a
 driven-port row. The mapping to real Scala classes lives in the prose
 under ``docs/architecture.md``.
 
-Run: ``python3 docs/diagrams/hexagon.py``.
+Run: ``python3 docs/scripts/hexagon.py``.
 """
 
 from __future__ import annotations
