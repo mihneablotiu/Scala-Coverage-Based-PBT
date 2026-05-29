@@ -14,13 +14,13 @@ import usecase.TestRunnerHandler
 
 import java.nio.file.{Path, Paths}
 
-/** Composition root. Runs every benchmark against one strategy picked from the first CLI arg.
+/** Composition root. Runs every benchmark against one (strategy, seed) pair picked from the CLI args.
   *
-  * One JVM per strategy: scoverage's `Invoker` accumulates statement hits within a JVM and has no notion of a session, so each
-  * `engine/runMain app.Main <strategy>` is forked (`fork := true` in build.sbt) to isolate strategies. Per-method scoping inside a JVM is enforced by
-  * `ScoverageSourceCoverageReader.coverage` filtering by `(sourceFile, methodName)`. The multi-strategy sweep lives in the Makefile.
+  * One JVM per (strategy, seed): scoverage's `Invoker` accumulates statement hits within a JVM and has no notion of a session, so each
+  * `engine/runMain app.Main <strategy> <seed>` is forked (`fork := true` in build.sbt) to isolate runs. The Makefile sweeps both dimensions in series
+  * (`STRATEGIES × SEEDS`).
   *
-  * Reports land under `engine/reports/statistics/<sourceStem>/<methodName>/<strategy.name>/`.
+  * Reports land under `engine/reports/statistics/<sourceStem>/<methodName>/<strategy.name>/seed=<NN>/`.
   */
 object Main {
 
@@ -30,35 +30,44 @@ object Main {
   private val IntSrc: Path      = Paths.get("sut/src/main/scala/benchmark/int/IntBench.scala")
   private val ListSrc: Path     = Paths.get("sut/src/main/scala/benchmark/list/ListBench.scala")
 
-  /** 10000 inputs, seed `0L` — explicit so reproducibility doesn't ride on ScalaCheck defaults. */
-  private val testParams: Test.Parameters =
-    Test.Parameters.default
-      .withInitialSeed(rng.Seed(0L))
-      .withMinSuccessfulTests(10000)
-
-  private val handler: TestRunnerHandler = new TestRunnerHandler(
-    treeBuilder = ScalametaBranchTreeBuilder(),
-    sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
-    writer = FileSystemCoverageReportWriter(),
-    params = testParams
-  )
-
-  private val bools: TestRunner = new FileSystemTestRunner(handler, BoolSrc, ReportsBase)
-  private val ints: TestRunner  = new FileSystemTestRunner(handler, IntSrc, ReportsBase)
-  private val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase)
-
-  def main(args: Array[String]): Unit =
-    args.headOption.filter(Strategy.names.contains) match {
-      case Some(name) => runAll(name)
-      case None       =>
-        println(s"usage: engine/runMain app.Main <strategy>   (available: ${Strategy.names.mkString(", ")})")
+  def main(args: Array[String]): Unit = {
+    val maybeStrategy = args.headOption.filter(Strategy.names.contains)
+    val maybeSeed     = args.lift(1).flatMap(_.toLongOption)
+    (maybeStrategy, maybeSeed) match {
+      case (Some(name), Some(seed)) => runAll(name, seed)
+      case _                        =>
+        val strategies = Strategy.names.mkString(", ")
+        println(s"usage: engine/runMain app.Main <strategy> <seed>")
+        println(s"  strategies: $strategies")
+        println(s"  seed:       any signed Long (the Makefile sweeps SEEDS=1..10)")
         sys.exit(1)
     }
+  }
 
   /** The SUT methods return `String`/`Int`/etc., not `Boolean`; the engine port wants `A => Boolean`. `bench` adapts at the boundary so the SUT
     * itself stays predicate-free — a future client with a real property would just pass an `A => Boolean` directly.
+    *
+    * 10000 inputs per (strategy, seed); the initial seed comes from the CLI so that the Makefile can sweep K seeds in series and downstream analysis
+    * sees a `seed=NN/` segment in each cell's output path.
     */
-  private def runAll(strategyName: String): Unit = {
+  private def runAll(strategyName: String, seed: Long): Unit = {
+    val testParams: Test.Parameters =
+      Test.Parameters.default
+        .withInitialSeed(rng.Seed(seed))
+        .withMinSuccessfulTests(10000)
+
+    val handler: TestRunnerHandler = new TestRunnerHandler(
+      treeBuilder = ScalametaBranchTreeBuilder(),
+      sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
+      writer = FileSystemCoverageReportWriter(),
+      params = testParams
+    )
+
+    val seedLabel         = f"seed=$seed%02d"
+    val bools: TestRunner = new FileSystemTestRunner(handler, BoolSrc, ReportsBase, Some(seedLabel))
+    val ints: TestRunner  = new FileSystemTestRunner(handler, IntSrc, ReportsBase, Some(seedLabel))
+    val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase, Some(seedLabel))
+
     def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): Unit =
       runner.runTests(name, Strategy.parse[A](strategyName).get)(input => { body(input); true })
 

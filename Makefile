@@ -7,9 +7,11 @@ SCOV_DATA_DIR  := sut/target/scala-2.13/scoverage-data
 SBT            ?= sbt
 PY             ?= python3
 
-# One JVM per strategy keeps scoverage's process-global Invoker from leaking coverage between
-# them. Must stay aligned with Strategy.names.
+# One JVM per (strategy, seed) keeps scoverage's process-global Invoker from leaking coverage
+# between runs. STRATEGIES must stay aligned with Strategy.names; SEEDS is swept for K-seed
+# variability so downstream charts can report median + IQR instead of a single noisy point.
 STRATEGIES     := random mutation-guided
+SEEDS          := 1 2 3 4 5 6 7 8 9 10
 
 .PHONY: help all build run analyze clean clean-reports fmt diagrams
 
@@ -18,8 +20,8 @@ help: ## Show this help.
 	@echo
 	@echo "  make all             fmt + clean + diagrams + build + run + analyze"
 	@echo "  make build           Compile all subprojects"
-	@echo "  make run             Run every strategy in $(STRATEGIES), each in its own forked JVM"
-	@echo "  make analyze         Build charts/tables from $(REPORTS_DIR)/*/*/*/coverage.json"
+	@echo "  make run             Run each (strategy, seed) pair in its own forked JVM"
+	@echo "  make analyze         Build charts/tables from $(REPORTS_DIR)/*/*/*/seed=*/coverage.json"
 	@echo "  make diagrams        Regenerate architecture diagrams under docs/images/"
 	@echo "  make clean-reports   Remove $(REPORTS_DIR) and stale scoverage measurements"
 	@echo "  make clean           sbt clean + clean-reports"
@@ -30,14 +32,16 @@ all: fmt clean diagrams build run analyze ## Format, wipe, rebuild, run, analyze
 build: ## Compile every subproject.
 	$(SBT) -no-colors -batch compile
 
-run: clean-reports ## Run each strategy in its own forked JVM (app.Main per strategy).
+run: clean-reports ## Run each (strategy, seed) pair in its own forked JVM (app.Main per pair).
 	@# Force a fresh SUT instrumentation. sbt regenerates scoverage.coverage on every invocation
 	@# but only recompiles classes when sources changed; if engine sources moved while SUT didn't,
 	@# the static statement IDs drift apart from the bytecode's. `sut/clean; sut/compile` resyncs.
 	$(SBT) -no-colors -batch "sut/clean; sut/compile"
 	@for s in $(STRATEGIES); do \
-	  echo "── $$s ──"; \
-	  $(SBT) -no-colors -batch "engine/runMain app.Main $$s" || exit 1; \
+	  for k in $(SEEDS); do \
+	    echo "── $$s seed=$$k ──"; \
+	    $(SBT) -no-colors -batch "engine/runMain app.Main $$s $$k" || exit 1; \
+	  done; \
 	done
 
 analyze: ## Render per-cell trees + cross-strategy comparison charts (requires graphviz + matplotlib).
