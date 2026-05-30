@@ -10,21 +10,20 @@ written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) an
 
   cross-strategy (under engine/reports/statistics/_summary/)
     by_bench/<bench>.svg — horizontal grouped bars per (method, strategy);
-                           bar height is the median coverage % across seeds,
-                           IQR whiskers show seed-to-seed spread, and labels
-                           carry the median %, the [min–max] range, and (for
-                           non-random strategies) the median paired-speedup
-                           factor versus random
+                           bar height is the median coverage % across seeds
+                           and labels carry the median %, the [min–max]
+                           range, and (for non-random strategies) the
+                           median paired-speedup factor versus random
     suite.svg            — horizontal bars per (bench, strategy), median +
-                           IQR + [min–max] across seeds
+                           [min–max] across seeds
     overall.svg          — horizontal bars per strategy, same aggregation
     blindspot.svg        — per-bench + suite-wide percentage of random's
                            blind spot (the leaves random failed to reach)
-                           that each non-random strategy covered. Median
-                           + IQR + [min–max] across the K per-seed fills.
-                           Isolates "branches only coverage feedback can
-                           find" from "easy guards everyone hits", which
-                           the raw coverage % conflates.
+                           that each non-random strategy covered. Median +
+                           [min–max] across the K per-seed fills. Isolates
+                           "branches only coverage feedback can find" from
+                           "easy guards everyone hits", which the raw
+                           coverage % conflates.
     per_seed.csv         — one row per (bench, method, strategy, seed) with
                            covered/total/pct/saturation_input. Lets you do
                            ad-hoc analysis without re-loading the JSONs.
@@ -97,8 +96,9 @@ class Stats:
 
 @dataclass(frozen=True)
 class SeedSpread:
-    """Five-number summary across the K seed-runs for one cell. Bars use ``median`` for height,
-    ``q1``/``q3`` as IQR whiskers, ``lo``/``hi`` for the ``[min–max]`` text in the bar label."""
+    """Five-number summary across the K seed-runs for one cell. Bars use ``median`` for height
+    and ``lo``/``hi`` for the ``[min–max]`` text in the bar label. ``q1``/``q3`` are still
+    computed for the stdout summary, but no longer drive any chart geometry."""
     q1: float
     median: float
     q3: float
@@ -308,7 +308,6 @@ def _horizontal_grouped_bars(
     title: str,
     out_path: Path,
     labels_by_strategy: Optional[dict] = None,
-    whiskers_by_strategy: Optional[dict] = None,
     label_fontsize: int = 9,
     row_height_in: float = 0.55,
     fig_width_in: float = 10.0,
@@ -325,7 +324,6 @@ def _horizontal_grouped_bars(
     for k, strategy in enumerate(strategies):
         pcts = pcts_by_strategy[strategy]
         labels = (labels_by_strategy or {}).get(strategy) or [f"{p:.0f}%" for p in pcts]
-        whiskers = (whiskers_by_strategy or {}).get(strategy)
         # Place random (k=0) ABOVE guided (k=1) within each category group:
         # in barh, smaller y = higher on screen after invert_yaxis.
         offsets = [i + k * bar_h - 0.4 + bar_h / 2 for i in range(n_cat)]
@@ -338,28 +336,9 @@ def _horizontal_grouped_bars(
             linewidth=0.5,
             label=strategy,
         )
-        if whiskers:
-            # Draw IQR whiskers (Q1..Q3) horizontally around each bar tip; keeps the median bar
-            # height as the eye anchor while showing seed-to-seed spread.
-            lows  = [max(p - q1, 0.0) for p, (q1, _) in zip(pcts, whiskers)]
-            highs = [max(q3 - p, 0.0) for p, (_, q3) in zip(pcts, whiskers)]
-            ax.errorbar(
-                pcts,
-                offsets,
-                xerr=[lows, highs],
-                fmt="none",
-                ecolor=BORDER,
-                elinewidth=0.8,
-                capsize=2.5,
-                alpha=0.9,
-            )
-        for i, (bar, pct, lbl) in enumerate(zip(bars, pcts, labels)):
-            # Push the label past the right whisker tip when whiskers exist, otherwise past the bar tip.
-            tip = pct
-            if whiskers:
-                tip = max(tip, whiskers[i][1])
+        for bar, pct, lbl in zip(bars, pcts, labels):
             ax.text(
-                tip + 1.2,
+                pct + 1.2,
                 bar.get_y() + bar.get_height() / 2,
                 lbl,
                 va="center",
@@ -385,12 +364,11 @@ def _horizontal_grouped_bars(
 # ── Per-bench grouped bars ──────────────────────────────────────────────
 #
 # Each bar's height is the median peak coverage % across the K seed-runs;
-# IQR whiskers show seed-to-seed spread. Labels carry the median % and
-# the [min–max] full-range tail from the K runs. Non-random bars also
-# show the median paired-speedup factor versus random — paired meaning
-# "for each seed, how many fewer inputs did this strategy need to reach
-# random's peak coverage on that same seed", aggregated by median across
-# the K pairings.
+# labels carry the median % and the [min–max] full-range tail from the K
+# runs. Non-random bars also show the median paired-speedup factor versus
+# random — paired meaning "for each seed, how many fewer inputs did this
+# strategy need to reach random's peak coverage on that same seed",
+# aggregated by median across the K pairings.
 
 
 def paired_speedup(cells: list, random_cells: list) -> Optional[float]:
@@ -443,28 +421,24 @@ def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
     strategies = ordered_strategies(all_strats)
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
-    whiskers_by_strategy: dict = {}
     for strategy in strategies:
-        pcts, labels, whiskers = [], [], []
+        pcts, labels = [], []
         for m in methods:
             method_cells = cells_by_method[m]
             random_cells = [c for c in method_cells if c.strategy == RANDOM]
             cells = [c for c in method_cells if c.strategy == strategy]
             spread = SeedSpread.of([stats(c).pct for c in cells])
             pcts.append(spread.median)
-            whiskers.append((spread.q1, spread.q3))
             labels.append(bench_bar_label(cells, random_cells))
         pcts_by_strategy[strategy] = pcts
         labels_by_strategy[strategy] = labels
-        whiskers_by_strategy[strategy] = whiskers
     _horizontal_grouped_bars(
         methods,
         pcts_by_strategy,
         strategies,
-        title=f"{bench} — coverage per method per strategy (median, IQR whiskers)",
+        title=f"{bench} — coverage per method per strategy (median, [min–max] across K=10 seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
-        whiskers_by_strategy=whiskers_by_strategy,
         label_fontsize=8,
         row_height_in=0.42,
         fig_width_in=14.0,
@@ -497,26 +471,22 @@ def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
     strategies = ordered_strategies(all_strats)
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
-    whiskers_by_strategy: dict = {}
     for strategy in strategies:
-        pcts, labels, whiskers = [], [], []
+        pcts, labels = [], []
         for b in benches:
             scoped = [c for c in cells_by_bench[b] if c.strategy == strategy]
             spread = SeedSpread.of(_per_seed_bench_pcts(scoped))
             pcts.append(spread.median)
-            whiskers.append((spread.q1, spread.q3))
             labels.append(f"{spread.median:.1f}% [{spread.lo:.1f}–{spread.hi:.1f}]")
         pcts_by_strategy[strategy] = pcts
         labels_by_strategy[strategy] = labels
-        whiskers_by_strategy[strategy] = whiskers
     _horizontal_grouped_bars(
         benches,
         pcts_by_strategy,
         strategies,
-        title="Per-bench aggregate coverage per strategy (median, IQR whiskers)",
+        title="Per-bench aggregate coverage per strategy (median, [min–max] across K=10 seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
-        whiskers_by_strategy=whiskers_by_strategy,
         row_height_in=0.85,
         label_pad_pct=30.0,
     )
@@ -540,17 +510,8 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
             edgecolor=BORDER,
             linewidth=0.6,
         )
-        ax.errorbar(
-            spread.median,
-            i,
-            xerr=[[max(spread.median - spread.q1, 0.0)], [max(spread.q3 - spread.median, 0.0)]],
-            fmt="none",
-            ecolor=BORDER,
-            elinewidth=0.9,
-            capsize=3.0,
-        )
         ax.text(
-            max(spread.median, spread.q3) + 1.5,
+            spread.median + 1.5,
             i,
             f"{spread.median:.1f}% [{spread.lo:.1f}–{spread.hi:.1f}]",
             va="center",
@@ -563,7 +524,7 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
     ax.set_xlim(0, 130)
     ax.set_xlabel("coverage (%)")
     ax.set_title(
-        "Suite-wide aggregate coverage per strategy (median, IQR whiskers)",
+        "Suite-wide aggregate coverage per strategy (median, [min–max] across K=10 seeds)",
         color=TEXT, fontsize=12, pad=10,
     )
     ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
@@ -624,7 +585,7 @@ def _per_seed_blindspot_fills(cells: list, strategy: str) -> list:
 
 def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
     """Per-bench + suite-wide percentage of random's blind spot covered by each non-random strategy,
-    aggregated across the K seed-runs as median + IQR + [min–max]. Benches where every seed
+    aggregated across the K seed-runs as median + [min–max]. Benches where every seed
     saturated random (no blind spot to fill in any seed) are skipped from the chart."""
     benches = sorted(cells_by_bench.keys())
     non_random = sorted({c.strategy for cs in cells_by_bench.values() for c in cs} - {RANDOM})
@@ -642,30 +603,25 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
     categories = benches_with_gap + ["— Suite —"]
     pcts_by_strategy: dict = {}
     labels_by_strategy: dict = {}
-    whiskers_by_strategy: dict = {}
     for s in non_random:
-        pcts, labels, whiskers = [], [], []
+        pcts, labels = [], []
         for b in benches_with_gap:
             spread = SeedSpread.of(bench_fills[(b, s)])
             pcts.append(spread.median)
-            whiskers.append((spread.q1, spread.q3))
             labels.append(f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]")
         spread = SeedSpread.of(suite_fills[s])
         pcts.append(spread.median)
-        whiskers.append((spread.q1, spread.q3))
         labels.append(f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]")
         pcts_by_strategy[s] = pcts
         labels_by_strategy[s] = labels
-        whiskers_by_strategy[s] = whiskers
 
     _horizontal_grouped_bars(
         categories,
         pcts_by_strategy,
         non_random,
-        title="Blind-spot fill — % of leaves random missed that the strategy covered (median, IQR whiskers)",
+        title="Blind-spot fill — % of leaves random missed that the strategy covered (median, [min–max] across K=10 seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
-        whiskers_by_strategy=whiskers_by_strategy,
         row_height_in=0.85,
         label_pad_pct=45.0,
         xlabel="blind spot covered (%)",
