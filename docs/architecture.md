@@ -156,16 +156,18 @@ that belong to its method.
 
 ![Per-iteration feedback cycle](images/loop.png)
 
-`SessionFeedback` is the loop's running accumulator: a single
-immutable `history: Vector[InputRecord[A]]`, with `coveredBranches`
-and `growthCurve` derived as `lazy val`s. Both strategies receive
-the feedback on every iteration via `strategy.gen(feedback)`,
-wrapped in `Gen.delay` so ScalaCheck re-asks for the next `Gen[A]`
-each step. `Random` ignores the feedback; `MutationGuided` reads
-the input history to find inputs whose iteration produced newly
-covered branches (its "seeds") and roughly half the time mutates
-one of them via the `Mutator[A]` type-class instead of sampling
-uniformly.
+`SessionFeedback` is the loop's running accumulator: an immutable
+record with two stored fields grown by `append` — `history:
+Vector[InputRecord[A]]` (every iteration's input + delta) and
+`seeds: Vector[A]` (the subset of inputs whose iteration newly
+covered a branch, cached so coverage-guided strategies don't
+re-scan the history each call). `coveredBranches` and `growthCurve`
+are derived as `lazy val`s. Both strategies receive the feedback on
+every iteration via `strategy.gen(feedback)`, wrapped in `Gen.delay`
+so ScalaCheck re-asks for the next `Gen[A]` each step. `Random`
+ignores the feedback; `MutationGuided` reads `feedback.seeds` and
+roughly half the time mutates one of them via the `Mutator[A]`
+type-class instead of sampling uniformly.
 
 ---
 

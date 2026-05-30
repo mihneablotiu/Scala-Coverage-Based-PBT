@@ -21,15 +21,14 @@ object Strategy {
     def gen(feedback: SessionFeedback[A]): Gen[A] = arb.arbitrary
   }
 
-  /** FuzzChick-style mutation. Seeds are inputs whose iteration newly covered a branch — the corpus only grows. With seeds available, 50/50 between
-    * fresh `Arbitrary[A]` draws (keeps the search ergodic) and mutating a uniformly chosen seed; with no seeds yet, pure random.
+  /** FuzzChick-style mutation. Seeds are inputs whose iteration newly covered a branch — the corpus only grows; the cached corpus
+    * lives in [[SessionFeedback.seeds]] so this `gen` is O(1) per call. With seeds available, 50/50 between fresh `Arbitrary[A]`
+    * draws (keeps the search ergodic) and mutating a uniformly chosen seed; with no seeds yet, pure random.
     */
   final case class MutationGuided[A](arb: Arbitrary[A], mut: Mutator[A]) extends Strategy[A] {
     val name                                      = "mutation-guided"
     def gen(feedback: SessionFeedback[A]): Gen[A] = {
-      val seeds = feedback.history.collect {
-        case r if r.newlyCoveredBranches.nonEmpty => r.input
-      }
+      val seeds = feedback.seeds
       if (seeds.isEmpty) arb.arbitrary
       else
         Gen.frequency(
