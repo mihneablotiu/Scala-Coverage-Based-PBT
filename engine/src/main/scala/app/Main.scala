@@ -7,7 +7,7 @@ import adapter.driving.fileSystem.FileSystemTestRunner
 import benchmark.bool.BoolBench
 import benchmark.int.IntBench
 import benchmark.list.ListBench
-import domain.{Mutator, Strategy}
+import domain.{Mutator, Pooled, Strategy}
 import org.scalacheck.{rng, Arbitrary, Test}
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
@@ -68,8 +68,8 @@ object Main {
     val ints: TestRunner  = new FileSystemTestRunner(handler, IntSrc, ReportsBase, Some(seedLabel))
     val lists: TestRunner = new FileSystemTestRunner(handler, ListSrc, ReportsBase, Some(seedLabel))
 
-    def bench[A: Arbitrary: Mutator](runner: TestRunner, name: String)(body: A => Any): Unit =
-      runner.runTests(name, Strategy.parse[A](strategyName).get)(input => { body(input); true })
+    def bench[A: Arbitrary: Mutator: Pooled](runner: TestRunner, name: String)(body: A => Any): Unit =
+      runner.runTests[A](name, strategyName)(input => { body(input); true })
 
     bench(bools, "negate")(BoolBench.negate)
     bench[(Boolean, Boolean, Boolean)](bools, "threeAgree")((BoolBench.threeAgree _).tupled)

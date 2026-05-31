@@ -52,8 +52,10 @@ SUMMARY_DIR = STATS_ROOT / "_summary"
 # ── Palette (editorial duo) ──────────────────────────────────────────────
 
 STRATEGY_COLORS = {
-    "random": "#2E5C8A",          # cobalt blue
-    "mutation-guided": "#E67E22", # vibrant orange
+    "random": "#2E5C8A",                # cobalt blue
+    "random-pool": "#1F8A70",           # deep teal
+    "mutation-guided": "#E67E22",       # vibrant orange
+    "mutation-guided-pool": "#8E44AD",  # plum
 }
 FALLBACK_COLOR = "#7F8C8D"
 BORDER = "#2C3E50"
@@ -67,6 +69,9 @@ LEAF_COV, LEAF_MIS = "#27AE60", "#C0392B"
 COV_TXT, MIS_TXT = "#196F3D", "#922B21"
 
 RANDOM = "random"
+
+# Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
+STRATEGY_ORDER = ["random", "random-pool", "mutation-guided", "mutation-guided-pool"]
 
 # ── Data model ───────────────────────────────────────────────────────────
 
@@ -121,10 +126,11 @@ def color_for(strategy: str) -> str:
 
 
 def ordered_strategies(strategies) -> list:
-    """Random first (when present), then everything else alphabetically."""
-    others = sorted(s for s in strategies if s != RANDOM)
-    head = [RANDOM] if RANDOM in strategies else []
-    return head + others
+    """Canonical simplest→complex order, with any unknown strategies tacked on alphabetically."""
+    present = set(strategies)
+    head = [s for s in STRATEGY_ORDER if s in present]
+    tail = sorted(present - set(STRATEGY_ORDER))
+    return head + tail
 
 
 # ── Loading + tree walk ──────────────────────────────────────────────────
@@ -588,7 +594,8 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
     aggregated across the K seed-runs as median + [min–max]. Benches where every seed
     saturated random (no blind spot to fill in any seed) are skipped from the chart."""
     benches = sorted(cells_by_bench.keys())
-    non_random = sorted({c.strategy for cs in cells_by_bench.values() for c in cs} - {RANDOM})
+    all_strats = {c.strategy for cs in cells_by_bench.values() for c in cs}
+    non_random = [s for s in ordered_strategies(all_strats) if s != RANDOM]
     if not non_random:
         return
 
@@ -642,13 +649,14 @@ def ensure_dot_available() -> None:
 
 
 def write_per_seed_csv(cells: list, out_path: Path) -> None:
-    """One row per (bench, method, strategy, seed) with the headline numbers; lets a reader poke
-    at per-seed variance without re-loading every JSON."""
+    """One row per (bench, method, strategy, seed). Strategy ordering follows the canonical
+    simplest→complex order so the CSV reads in the same direction as every chart."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    rank = {s: i for i, s in enumerate(STRATEGY_ORDER)}
     with out_path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["bench", "method", "strategy", "seed", "covered", "total", "pct", "saturation_input"])
-        for c in sorted(cells, key=lambda x: (x.bench, x.method, x.strategy, x.seed)):
+        for c in sorted(cells, key=lambda x: (x.bench, x.method, rank.get(x.strategy, len(STRATEGY_ORDER)), x.strategy, x.seed)):
             s = stats(c)
             w.writerow([
                 c.bench,
@@ -701,7 +709,7 @@ def main() -> None:
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
     # Aggregated across the K seed-runs as median + [min–max] range.
     suite_cells = list(cells)
-    non_random = sorted({c.strategy for c in cells} - {RANDOM})
+    non_random = [s for s in ordered_strategies({c.strategy for c in cells}) if s != RANDOM]
     if non_random:
         print()
         print("Blind-spot fill (suite-wide, median across seeds):")

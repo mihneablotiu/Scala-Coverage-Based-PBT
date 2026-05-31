@@ -1,6 +1,6 @@
 package adapter.driven.scalameta
 
-import domain.{BranchTree, ParsedMethod, Pos}
+import domain.{BranchTree, ConstantPool, ParsedMethod, Pos}
 import port.driven.BranchTreeBuilder
 
 import java.nio.charset.StandardCharsets
@@ -8,8 +8,9 @@ import java.nio.file.{Files, Path}
 import scala.meta._
 
 /** Builds a [[ParsedMethod]] by parsing the source with Scalameta and deep-walking the method body. `visit` matches known branch constructs;
-  * `descend` recurses through structural children so branches buried in lambda args, `val` RHSes, etc. still get captured. Leaf positions are derived
-  * from the resulting tree right here so the use case never has to walk it itself. Adding a new branchy construct = one new case in `visit`.
+  * `descend` recurses through structural children so branches buried in lambda args, `val` RHSes, etc. still get captured. Leaf positions and the
+  * literal pool are derived from the resulting tree right here so the use case never has to walk it itself. Adding a new branchy construct = one new
+  * case in `visit`; adding a new literal kind = one new case in `mineLiterals`.
   */
 object ScalametaBranchTreeBuilder {
 
@@ -26,11 +27,26 @@ object ScalametaBranchTreeBuilder {
           .map { defn =>
             val tree             = visit(defn.body)
             val leaves: Set[Pos] = BranchTree.leaves(tree).iterator.map(_.pos).toSet
-            ParsedMethod(tree, leaves)
+            ParsedMethod(tree, leaves, mineLiterals(defn.body))
           }
       }
     }
   }
+
+  /** Method-only literal mining: collect every `Lit` in the body, bucketed by primitive kind. Float / Double are skipped — Scalameta 4.17 types their
+    * `.value` as `Any` so they can't be added to a typed `Set` without an unchecked cast.
+    */
+  private def mineLiterals(body: Tree): ConstantPool =
+    body.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
+      case (p, l: Lit.Int)     => p.copy(ints = p.ints + l.value)
+      case (p, l: Lit.Long)    => p.copy(longs = p.longs + l.value)
+      case (p, l: Lit.Boolean) => p.copy(booleans = p.booleans + l.value)
+      case (p, l: Lit.Char)    => p.copy(chars = p.chars + l.value)
+      case (p, l: Lit.String)  => p.copy(strings = p.strings + l.value)
+      case (p, l: Lit.Byte)    => p.copy(bytes = p.bytes + l.value)
+      case (p, l: Lit.Short)   => p.copy(shorts = p.shorts + l.value)
+      case (p, _)              => p
+    }
 
   private def visit(tree: Tree): BranchTree = tree match {
     case t: Term.If =>
