@@ -95,8 +95,9 @@ actually helps.
 ## 7. What this prototype does today
 
 1. We point the framework at our example file of small methods.
-2. For each method and each strategy (currently two: random and
-   mutation-guided), we ask a number generator for 10000 inputs.
+2. For each method and each strategy (four today: random,
+   random-pool, mutation-guided, and mutation-guided-pool), we ask
+   a number generator for 10000 inputs.
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
@@ -104,13 +105,17 @@ actually helps.
    well the method's branches were exercised over the session.
 6. We write the result to disk (see §9).
 
-**Random** samples uniformly from ScalaCheck's `Arbitrary[A]` and
-ignores past observations. **Mutation-guided** keeps a list of
-"seeds" — inputs whose iteration covered a previously-uncovered
-branch — and roughly half the time picks a seed and asks a small
-`Mutator[A]` for a nearby variant (flip a bit, bump an int, drop a
-list tail, swap one tuple component). The other half falls back to
-a fresh `Arbitrary[A]` draw.
+**Random** samples uniformly and ignores past observations — it is
+exactly what a ScalaCheck user gets today, and serves as the honest
+baseline. **Mutation-guided** keeps a list of "seeds" — inputs
+whose iteration covered a previously-uncovered branch — and roughly
+half the time picks a seed and asks for a nearby variant (flip a
+bit, bump an int, drop a list tail, swap one tuple component); the
+other half falls back to a fresh draw. The two **-pool** variants
+add *literal injection*: they mine the constants written in the
+method's own source (the `42` in `case 42`, say) and splice them
+into the draw — the one reliable way to hit needle-in-a-haystack
+literal branches that mutation can't bootstrap its way into.
 
 The project is a **measuring stick** with two needles: the part
 that observes and reports is identical across strategies; the part

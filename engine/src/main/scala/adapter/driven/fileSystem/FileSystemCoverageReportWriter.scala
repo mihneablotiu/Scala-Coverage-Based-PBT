@@ -39,13 +39,11 @@ object FileSystemCoverageReportWriter {
   }
 
   private def renderJson[A](r: SessionReport[A]): String = {
-    val firstHits: Map[Pos, Int] = r.feedback.history.iterator
-      .flatMap(rec => rec.newlyCoveredBranches.iterator.map(_ -> rec.index))
-      .toMap
-    val treeJson = r.branchTree.fold("null")(t => renderTree(t, firstHits, indent = 4))
+    val firstHits: Map[Pos, Int] = r.feedback.history.iterator.zipWithIndex.flatMap { case (delta, i) => delta.iterator.map(_ -> i) }.toMap
+    val treeJson                 = r.branchTree.fold("null")(t => renderTree(t, firstHits, indent = 4))
     s"""{
        |  "method": ${jstr(r.methodName)},
-       |  "sourceFile": ${jstr(r.sourceFile.getFileName.toString)},
+       |  "sourceFile": ${jstr(r.sourceName)},
        |  "strategy": ${jstr(r.strategy)},
        |  "totalInputs": ${r.feedback.iteration},
        |  "growthCurve": ${r.feedback.growthCurve.mkString("[", ", ", "]")},

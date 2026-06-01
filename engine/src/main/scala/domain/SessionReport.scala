@@ -1,11 +1,10 @@
 package domain
 
-import java.nio.file.Path
-
-/** What one fuzz session produced. `pool` is the literals the strategy was actually given access to (empty for non-pool strategies). */
+/** What one fuzz session produced — pure data, no I/O types. `pool` is the literals the strategy was actually given (empty for non-pool strategies).
+  */
 final case class SessionReport[A](
     methodName: String,
-    sourceFile: Path,
+    sourceName: String,
     branchTree: Option[BranchTree],
     strategy: String,
     pool: ConstantPool,

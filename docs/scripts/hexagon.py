@@ -95,8 +95,8 @@ ax.text(11.7, 8.20, "Domain", ha="center", va="center",
 DOMAIN_LINES = [
     "Session Feedback",
     "Branch Tree",
-    "Coverage Snapshot",
-    "Input Record / Growth Curve",
+    "Generatable",
+    "Constant Pool",
 ]
 y0 = 7.30
 for i, line in enumerate(DOMAIN_LINES):
@@ -114,15 +114,11 @@ ax.text(11.7, 3.55, "Strategies", ha="center", va="center",
 ax.text(11.7, 3.15, "in-process modules, sealed-trait match",
         ha="center", va="center", fontsize=10,
         style="italic", color=COLOR_SOFT)
-STRATEGY_LINES = ["Random", "Mutation-Guided"]
-# Centre the strategy labels horizontally inside the Strategies box,
-# evenly spaced regardless of how many strategies are listed today.
-strat_box_left = 8.6
-strat_box_w = 6.2
-slot_w = strat_box_w / len(STRATEGY_LINES)
+STRATEGY_LINES = ["random", "random-pool", "mutation-guided", "mutation-guided-pool"]
+# Stack the four strategy names vertically inside the Strategies box.
 for i, line in enumerate(STRATEGY_LINES):
-    ax.text(strat_box_left + slot_w * (i + 0.5), 2.40, line,
-            ha="center", va="center", fontsize=12,
+    ax.text(11.7, 2.80 - i * 0.26, line,
+            ha="center", va="center", fontsize=9.5,
             color="#1A1A1A")
 
 # ── Driven ports (three rows of role-based labels) ────────────────────

@@ -16,7 +16,7 @@ Two sbt subprojects:
 ```bash
 make all       # fmt + clean + diagrams + build + run + analyze
 make build     # compile every subproject
-make run       # run every strategy in its own forked JVM
+make run       # run every (strategy, seed) pair in its own forked JVM
 make analyze   # render charts/tables from the JSON outputs
 make help      # show every target
 ```
@@ -24,7 +24,7 @@ make help      # show every target
 Requires `sbt`, `python3` (`matplotlib`), and `graphviz`
 (`brew install graphviz` on macOS).
 
-Reports land under `engine/reports/statistics/<bench>/<method>/<strategy>/`.
+Reports land under `engine/reports/statistics/<bench>/<method>/<strategy>/seed=<NN>/`.
 
 ## Documentation
 

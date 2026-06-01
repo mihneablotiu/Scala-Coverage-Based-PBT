@@ -72,11 +72,12 @@ adapter, leave the core alone.
 Takes a Scala source file and a method name, returns a
 [`ParsedMethod`](../engine/src/main/scala/domain/ParsedMethod.scala)
 — the method's branch tree of branchy expressions (`if`, `match`,
-`while`, partial functions) **plus the positions of its leaves**.
-The leaf set is computed by the adapter once, at parse time, so
-the use case never has to walk the tree itself. Backed by
-Scalameta today; could be backed by the Scala 3 compiler or a
-pre-cached parse without touching the use case.
+`while`, partial functions) **plus the literal pool mined from its
+body** (the `ConstantPool` the `*-pool` strategies inject). The use
+case derives the leaf positions from the tree itself via
+`BranchTree.leaves`. Backed by Scalameta today; could be backed by
+the Scala 3 compiler or a pre-cached parse without touching the use
+case.
 
 ### `SourceCoverageReader`
 
@@ -108,10 +109,14 @@ Each `Strategy[A]` case class carries its own `gen` method:
 val gen: Gen[A] = strategy.gen(feedback)
 ```
 
-`Random[A]` holds an `Arbitrary[A]`; `MutationGuided[A]` holds an
-`Arbitrary[A]` *plus* a `Mutator[A]`. The trait has no type-class
-bounds, so adding a strategy with a different requirement doesn't
-ripple a bound through the rest of the engine.
+Every case holds a
+[`Generatable[A]`](../engine/src/main/scala/domain/Generatable.scala)
+— the one type class that bundles a uniform draw (`arbitrary`), a
+mutation (`mutate`), and a pool-aware draw (`pooled`), folding into
+one what used to be three separate type classes (`Arbitrary` +
+`Mutator` + `Pooled`). The two `*-pool` cases also hold the mined
+`ConstantPool`. So the whole engine carries a single context bound,
+`[A: Generatable]`, instead of a copy-pasted trio.
 
 **Why not a port?** Strategies are pure in-process modules with no
 side effects to hide. The use case picks the input generator at
@@ -156,29 +161,39 @@ that belong to its method.
 
 ![Per-iteration feedback cycle](images/loop.png)
 
-`SessionFeedback` is the loop's running accumulator: an immutable
-record with two stored fields grown by `append` — `history:
-Vector[InputRecord[A]]` (every iteration's input + delta) and
-`seeds: Vector[A]` (the subset of inputs whose iteration newly
-covered a branch, cached so coverage-guided strategies don't
-re-scan the history each call). `coveredBranches` and `growthCurve`
-are derived as `lazy val`s. Both strategies receive the feedback on
-every iteration via `strategy.gen(feedback)`, wrapped in `Gen.delay`
-so ScalaCheck re-asks for the next `Gen[A]` each step. `Random`
-ignores the feedback; `MutationGuided` reads `feedback.seeds` and
-roughly half the time mutates one of them via the `Mutator[A]`
-type-class instead of sampling uniformly.
+The loop is ScalaCheck's own driver — `Test.check` running a
+`Prop.forAllNoShrink` whose generator is
+`Gen.delay(strategy.gen(feedback))` — not a hand-rolled fold. That
+is the point: the `random` strategy is then *literally*
+`Prop.forAll(arbitrary)`, the exact thing a ScalaCheck user writes,
+so the baseline the thesis measures against is the real tool, not
+an approximation of it. Coverage observation rides along as a side
+effect in the property body, which always returns `true` (the
+engine measures coverage regardless of the predicate's verdict).
+
+`SessionFeedback` is the running accumulator grown by `append`:
+`history: Vector[Set[Pos]]` (each input's newly-covered-branch
+delta — what drives the growth curve and per-leaf first-hit),
+`seeds: Vector[A]` (the inputs whose iteration newly covered a
+branch — the corpus the mutation strategies perturb), and the
+cumulative `coveredBranches: Set[Pos]`, kept as a field so `append`
+is O(delta) rather than re-derived each call. `growthCurve` is
+derived. `Gen.delay` re-reads the live feedback on every draw, so
+the mutation strategies see the corpus grow; `Random` / `RandomPool`
+ignore it.
 
 ---
 
 ## 6. The data the framework produces
 
-`SessionReport[A]` is pure data — five fields, zero methods:
+`SessionReport[A]` is pure data — six fields, zero methods, no I/O
+types:
 
 ```
-methodName, sourceFile   ── identity
+methodName, sourceName   ── identity (plain strings, not a Path)
 branchTree               ── static AST analysis (Option[BranchTree])
 strategy                 ── which strategy ran this session (name string)
+pool                     ── literals the strategy was given (empty for non-pool)
 feedback                 ── loop history
 ```
 
@@ -212,12 +227,13 @@ JSON shape:
 
 ```
 {
-  "method":      string,
-  "sourceFile":  string,
-  "strategy":    string,
-  "totalInputs": int,
-  "growthCurve": [int, …],   cumulative leaf-count per iteration
-  "branchTree":  nested      every leaf carries firstHitInput: int | null
+  "method":       string,
+  "sourceFile":   string,
+  "strategy":     string,
+  "totalInputs":  int,
+  "growthCurve":  [int, …],   cumulative leaf-count per iteration
+  "constantPool": { per-kind arrays of mined literals },
+  "branchTree":   nested      every leaf carries firstHitInput: int | null
 }
 ```
 
@@ -251,7 +267,7 @@ rewritten without touching the other.
 | You want to add…                              | Touch                                                                          |
 |-----------------------------------------------|--------------------------------------------------------------------------------|
 | A new Scala branchy construct                 | One case in `ScalametaBranchTreeBuilder.visit` (+ a new `BranchTree` node only if its shape is genuinely different) |
-| A new input type                              | Use any type ScalaCheck has an `Arbitrary` for — `Main` already does it for tuples |
+| A new input type                              | Provide a `Generatable[A]` (or `Generatable.fromArbitrary` for an `Arbitrary`-only type) — `Main` already does it for tuples |
 | A new input-picking strategy                  | One new `Strategy[A]` case class with its own `gen`, its name in `Strategy.names`, a case in `Strategy.parse`, the same name in the Makefile's `STRATEGIES` |
 | A new coverage source                         | New `SourceCoverageReader` adapter                                              |
 | A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                              |

@@ -1,7 +1,6 @@
 package adapter.driving.fileSystem
 
-import domain.{Mutator, Pooled}
-import org.scalacheck.Arbitrary
+import domain.Generatable
 import port.driving.TestRunner
 import usecase.TestRunnerHandler
 
@@ -17,7 +16,7 @@ final class FileSystemTestRunner(
     cellSuffix: Option[String] = None
 ) extends TestRunner {
 
-  override def runTests[A: Arbitrary: Mutator: Pooled](
+  override def runTests[A: Generatable](
       methodName: String,
       strategyName: String
   )(property: A => Boolean): Unit = {

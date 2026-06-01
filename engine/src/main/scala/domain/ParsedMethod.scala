@@ -1,10 +1,9 @@
 package domain
 
-/** Output of the [[port.driven.BranchTreeBuilder]] port: branch tree, leaf positions, and the literal dictionary mined from the method body. The leaf
-  * set + pool are computed once at parse time so the use case stays free of any tree- or AST-walking logic.
+/** Output of the [[port.driven.BranchTreeBuilder]] port: the method's branch tree plus the literal dictionary mined from its body. Leaf positions are
+  * derived from the tree by the use case via [[BranchTree.leaves]].
   */
 final case class ParsedMethod(
     branchTree: BranchTree,
-    leafPositions: Set[Pos],
     constantPool: ConstantPool
 )

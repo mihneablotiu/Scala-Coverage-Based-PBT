@@ -2,49 +2,38 @@ package domain
 
 /** Read-only view of one fuzz session so far.
   *
-  * Two stored fields, both monotonically grown by [[append]]:
-  *   - `history` — every input ever evaluated, with its newly-covered-branch delta;
-  *   - `seeds`   — the subset of inputs whose iteration newly covered a branch (the corpus consumed by
-  *                 `Strategy.MutationGuided`). Cached here so `gen` is O(1) per call instead of re-scanning
-  *                 the whole `history` each iteration.
+  * Three fields, all monotonically grown by [[append]]:
+  *   - `history` — one entry per input: the set of branches *first* covered by that input (its delta). Drives the growth curve and per-leaf
+  *     first-hit; the input value itself is never needed here, only in `seeds`.
+  *   - `seeds` — the input values whose iteration newly covered a branch (the corpus consumed by the mutation strategies).
+  *   - `coveredBranches` — the cumulative set, kept as a field (not re-derived) so `append` stays O(delta) instead of O(history) per call.
   *
-  * `coveredBranches` and `growthCurve` are derived (`lazy val` because both the writer and `append`'s
-  * delta computation touch them). The two stored fields must stay consistent — go through `empty` +
-  * `append`, never construct a `SessionFeedback` directly with a `seeds` that disagrees with `history`.
+  * Construct only via `empty` + `append`; the three fields must stay consistent.
   */
 final case class SessionFeedback[A](
-    history: Vector[SessionFeedback.InputRecord[A]],
-    seeds: Vector[A]
+    history: Vector[Set[Pos]],
+    seeds: Vector[A],
+    coveredBranches: Set[Pos]
 ) {
 
   def iteration: Int = history.size
 
-  lazy val coveredBranches: Set[Pos] =
-    history.iterator.flatMap(_.newlyCoveredBranches).toSet
-
-  lazy val growthCurve: Vector[Int] =
-    history.scanLeft(0)((c, r) => c + r.newlyCoveredBranches.size).tail
+  /** Cumulative covered-leaf count per iteration. Computed once, by the writer. */
+  def growthCurve: Vector[Int] = history.scanLeft(0)(_ + _.size).tail
 
   /** `nowCovered` is the cumulative set of leaf positions fired so far (the use case intersects scoverage's hits with the method's leaves before
-    * calling). The stored record keeps only the delta against the running `coveredBranches`; `seeds` grows iff that delta is non-empty.
+    * calling). The stored delta is what's new versus `coveredBranches`; `seeds` grows iff that delta is non-empty.
     */
   def append(input: A, nowCovered: Set[Pos]): SessionFeedback[A] = {
-    val delta    = nowCovered -- coveredBranches
-    val record   = SessionFeedback.InputRecord(iteration, input, delta)
-    val newSeeds = if (delta.nonEmpty) seeds :+ input else seeds
-    SessionFeedback(history :+ record, newSeeds)
+    val delta = nowCovered -- coveredBranches
+    SessionFeedback(
+      history :+ delta,
+      if (delta.nonEmpty) seeds :+ input else seeds,
+      coveredBranches ++ delta
+    )
   }
 }
 
 object SessionFeedback {
-
-  def empty[A]: SessionFeedback[A] = SessionFeedback(Vector.empty, Vector.empty)
-
-  /** One iteration's record. `newlyCoveredBranches` is empty when the input only re-covered already-seen branches.
-    */
-  final case class InputRecord[A](
-      index: Int,
-      input: A,
-      newlyCoveredBranches: Set[Pos]
-  )
+  def empty[A]: SessionFeedback[A] = SessionFeedback(Vector.empty, Vector.empty, Set.empty)
 }

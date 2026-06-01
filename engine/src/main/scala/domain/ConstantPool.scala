@@ -1,8 +1,10 @@
 package domain
 
-import org.scalacheck.{Arbitrary, Gen}
+import org.scalacheck.Gen
 
-/** Per-method literal dictionary, keyed by Scala primitive kind. Empty for non-pool strategies. */
+/** Per-method literal dictionary, keyed by Scala primitive kind. Empty for non-pool strategies. Mined once at parse time; consumed by
+  * [[Generatable]]'s `pooled`.
+  */
 final case class ConstantPool(
     ints: Set[Int],
     longs: Set[Long],
@@ -29,15 +31,16 @@ object ConstantPool {
     Set.empty
   )
 
-  /** AFL/Dragen² convention. */
+  /** AFL/Dragen² convention: a mined value is drawn 30% of the time, the base generator 70%. */
   val PoolProb: Double = 0.30
 
-  /** Wrap `base` so each draw returns a pool value with probability `prob`, else defers to `base`. Empty pool ⇒ identity wrap (no overhead). */
-  def withPool[A](pool: Set[A], prob: Double, base: Arbitrary[A]): Arbitrary[A] =
-    if (pool.isEmpty) base
+  /** Mix mined `values` into `base`: each draw returns a pool value with probability [[PoolProb]], else defers to `base`. Empty pool ⇒ `base`
+    * unchanged (no overhead).
+    */
+  def inject[A](values: Set[A], base: Gen[A]): Gen[A] =
+    if (values.isEmpty) base
     else {
-      val poolWeight = math.round(prob * 100).toInt
-      val baseWeight = 100 - poolWeight
-      Arbitrary(Gen.frequency(poolWeight -> Gen.oneOf(pool.toSeq), baseWeight -> base.arbitrary))
+      val poolWeight = math.round(PoolProb * 100).toInt
+      Gen.frequency(poolWeight -> Gen.oneOf(values), (100 - poolWeight) -> base)
     }
 }

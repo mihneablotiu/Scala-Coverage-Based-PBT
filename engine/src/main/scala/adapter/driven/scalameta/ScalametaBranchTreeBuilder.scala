@@ -8,9 +8,9 @@ import java.nio.file.{Files, Path}
 import scala.meta._
 
 /** Builds a [[ParsedMethod]] by parsing the source with Scalameta and deep-walking the method body. `visit` matches known branch constructs;
-  * `descend` recurses through structural children so branches buried in lambda args, `val` RHSes, etc. still get captured. Leaf positions and the
-  * literal pool are derived from the resulting tree right here so the use case never has to walk it itself. Adding a new branchy construct = one new
-  * case in `visit`; adding a new literal kind = one new case in `mineLiterals`.
+  * `descend` recurses through structural children so branches buried in lambda args, `val` RHSes, etc. are still captured. The literal pool is mined
+  * here; the use case derives leaf positions from the tree. Adding a branchy construct = one case in `visit`; a literal kind = one case in
+  * `mineLiterals`.
   */
 object ScalametaBranchTreeBuilder {
 
@@ -24,11 +24,7 @@ object ScalametaBranchTreeBuilder {
         src
           .collect { case d: Defn.Def if d.name.value == methodName => d }
           .headOption
-          .map { defn =>
-            val tree             = visit(defn.body)
-            val leaves: Set[Pos] = BranchTree.leaves(tree).iterator.map(_.pos).toSet
-            ParsedMethod(tree, leaves, mineLiterals(defn.body))
-          }
+          .map(defn => ParsedMethod(visit(defn.body), mineLiterals(defn.body)))
       }
     }
   }
