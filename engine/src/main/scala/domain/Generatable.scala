@@ -40,10 +40,13 @@ object Generatable {
   implicit val int: Generatable[Int] =
     instance(Arbitrary.arbInt.arbitrary)(intNeighbour)(p => ConstantPool.inject(p.ints, Arbitrary.arbInt.arbitrary))
 
+  private val LongSteps: List[Long] = (0 to 62).map(1L << _).toList
+
+  private def longNeighbour(n: Long): Gen[Long] =
+    Gen.oneOf(LongSteps.flatMap(s => List(n + s, n - s)) ++ List(-n, 0L, 1L, -1L, Long.MaxValue, Long.MinValue))
+
   implicit val long: Generatable[Long] =
-    instance(Arbitrary.arbLong.arbitrary)(n => Gen.oneOf(n + 1, n - 1, -n, 0L, 1L, -1L, Long.MaxValue, Long.MinValue))(p =>
-      ConstantPool.inject(p.longs, Arbitrary.arbLong.arbitrary)
-    )
+    instance(Arbitrary.arbLong.arbitrary)(longNeighbour)(p => ConstantPool.inject(p.longs, Arbitrary.arbLong.arbitrary))
 
   /** Edge values random almost never produces (NaN, ±∞, exact 0/1) are the mutation targets; magic constants come from the pool.
     */

@@ -17,8 +17,7 @@ final class TestRunnerHandler(
     treeBuilder: BranchTreeBuilder,
     sourceCoverage: SourceCoverageReader,
     writer: CoverageReportWriter,
-    params: Test.Parameters,
-    objectives: Map[String, Any] = Map.empty // method name → branch-distance objective for `coverage-guided`
+    params: Test.Parameters
 ) {
 
   def handle[A: Generatable](
@@ -33,9 +32,11 @@ final class TestRunnerHandler(
     val pool                  = parsed.map(_.constantPool).getOrElse(ConstantPool.empty)
     val strategy: Strategy[A] =
       if (strategyName == "coverage-guided") {
-        // The objective is keyed by method name; types line up at the call site, so the cast is safe.
-        val objective = objectives.get(methodName).map(_.asInstanceOf[A => Double]).getOrElse((_: A) => 0.0)
-        new Strategy.CoverageGuided[A](Generatable[A], objective)
+        // Autonomous: derive per-leaf path predicates from the source; the strategy targets whatever is
+        // still uncovered using the live coverage in `feedback`.
+        val paths   = tree.map(BranchTree.leafPaths).getOrElse(Map.empty)
+        val nParams = parsed.map(_.paramCount).getOrElse(1)
+        new Strategy.CoverageGuided[A](Generatable[A], paths, nParams)
       } else
         Strategy.parse[A](strategyName, pool).getOrElse(throw new IllegalArgumentException(s"unknown strategy: $strategyName"))
 

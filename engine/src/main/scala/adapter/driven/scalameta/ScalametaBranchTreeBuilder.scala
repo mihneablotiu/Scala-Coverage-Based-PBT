@@ -1,6 +1,6 @@
 package adapter.driven.scalameta
 
-import domain.{BranchTree, ConstantPool, ParsedMethod, Pos}
+import domain.{BranchTree, ConstantPool, ParsedMethod, Pos, Predicate}
 import port.driven.BranchTreeBuilder
 
 import java.nio.charset.StandardCharsets
@@ -10,26 +10,28 @@ import scala.meta._
 /** Parses a source file with Scalameta and walks the named method's body into a [[ParsedMethod]]. `visit` matches the branching constructs; `descend`
   * recurses through structural children so branches buried in lambda bodies (folds, `map`, `filter`), `val` RHSes, etc. are still found.
   *
-  * Two deliberate rules:
-  *   - Nested `def`/`object`/`class` are opaque — they are separate methods (scoverage attributes their statements elsewhere), so we do not expand
-  *     them; only the *call* to them shows up, as a leaf in the enclosing body.
-  *   - A leaf records its full source span (`pos`..`end`), and the use case marks it covered by span containment, so the tree need not agree with
-  *     scoverage on exact statement offsets.
+  * Each arm also gets a [[Predicate.Cond]] guard when the engine can express it numerically (`if`/`match`-on-literal/`case … if`); these feed the
+  * coverage-guided branch-distance objective. Guards it can't express (string ops, `forall`, sizes, …) are left `None` — that leaf simply gets no
+  * gradient. Parameter names are resolved to positional `Par(i)` via `env`, extended by `case` binders.
   *
-  * Adding a branching construct = one case in `visit`; a mined literal kind = one case in `mineLiterals`.
+  * Two deliberate rules: nested `def`/`object`/`class` are opaque (separate scopes), and a leaf records its full source span so coverage matches by
+  * span containment rather than exact offsets.
   */
 object ScalametaBranchTreeBuilder {
 
   def apply(): BranchTreeBuilder = new Live
 
+  private type Env = Map[String, Predicate.Expr]
+
   private final class Live extends BranchTreeBuilder {
     override def build(sourceFile: Path, methodName: String): Option[ParsedMethod] = {
       val text = Files.readString(sourceFile, StandardCharsets.UTF_8)
       text.parse[Source].toOption.flatMap { src =>
-        src
-          .collect { case d: Defn.Def if d.name.value == methodName => d }
-          .headOption
-          .map(defn => ParsedMethod(visit(defn.body), mineLiterals(defn.body)))
+        src.collect { case d: Defn.Def if d.name.value == methodName => d }.headOption.map { defn =>
+          val params = defn.paramClauseGroups.flatMap(_.paramClauses).flatMap(_.values).map(_.name).collect { case n: Term.Name => n.value }
+          val env    = params.zipWithIndex.map { case (name, i) => name -> (Predicate.Par(i): Predicate.Expr) }.toMap
+          ParsedMethod(visit(defn.body, env), mineLiterals(defn.body), params.size)
+        }
       }
     }
   }
@@ -44,26 +46,33 @@ object ScalametaBranchTreeBuilder {
       case (p, _)             => p
     }
 
-  private def visit(tree: Tree): BranchTree = tree match {
+  private def visit(tree: Tree, env: Env): BranchTree = tree match {
     case t: Term.If =>
-      BranchTree.Branch("if", textOf(t.cond), BranchTree.Arm("then", visit(t.thenp)) :: elseArm(t.elsep))
+      val cond  = condOf(t.cond, env)
+      val then0 = BranchTree.Arm("then", cond, visit(t.thenp, env))
+      // An `if` without `else` has a synthetic, zero-width `else` — no meaningful coverage path, so drop it.
+      val elses =
+        if (t.elsep.pos.start == t.elsep.pos.end) Nil
+        else List(BranchTree.Arm("else", cond.map(Predicate.Not), visit(t.elsep, env)))
+      BranchTree.Branch("if", textOf(t.cond), then0 :: elses)
     case t: Term.Match =>
-      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf))
+      val scrut = exprOf(t.expr, env)
+      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, env)))
     case t: Term.While =>
-      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", visit(t.body))))
-    case t: Term.ForYield        => forBranch(t, "for-yield", "yield", t.enumsBlock.enums, t.body)
-    case t: Term.For             => forBranch(t, "for", "do", t.enumsBlock.enums, t.body)
+      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, visit(t.body, env))))
+    case t: Term.ForYield        => forBranch(t, "for-yield", "yield", t.enumsBlock.enums, t.body, env)
+    case t: Term.For             => forBranch(t, "for", "do", t.enumsBlock.enums, t.body, env)
     case t: Term.PartialFunction =>
-      BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf))
+      BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, env)))
     // Nested methods/types are their own scope — do not expand; the call site stays a leaf.
     case _: Defn.Def | _: Defn.Object | _: Defn.Class | _: Defn.Trait =>
       BranchTree.Sequence(Nil)
-    case other => descend(other)
+    case other => descend(other, env)
   }
 
-  private def descend(tree: Tree): BranchTree = {
+  private def descend(tree: Tree, env: Env): BranchTree = {
     val branchy = tree.children.iterator
-      .map(visit)
+      .map(visit(_, env))
       .flatMap {
         case BranchTree.Sequence(cs) => cs
         case n                       => List(n)
@@ -80,23 +89,69 @@ object ScalametaBranchTreeBuilder {
   /** A for-comprehension desugars to `withFilter`/`map` calls that scoverage records as a single statement spanning the whole expression. So a
     * trivial body becomes one leaf over that whole span; a body with its own `if`/`match` keeps those (they map to their own statements).
     */
-  private def forBranch(t: Tree, kind: String, armLabel: String, enums: List[Enumerator], body: Term): BranchTree = {
-    val arm = visit(body) match {
+  private def forBranch(t: Tree, kind: String, armLabel: String, enums: List[Enumerator], body: Term, env: Env): BranchTree = {
+    val arm = visit(body, env) match {
       case _: BranchTree.Leaf => BranchTree.Leaf(posOf(t), endOf(t), lineOf(body), textOf(body))
       case branchy            => branchy
     }
-    BranchTree.Branch(kind, enumsOf(enums), List(BranchTree.Arm(armLabel, arm)))
+    BranchTree.Branch(kind, enumsOf(enums), List(BranchTree.Arm(armLabel, None, arm)))
   }
 
-  /** An `if` without `else` has a synthetic, zero-width `else` — no meaningful coverage path, so drop it. */
-  private def elseArm(elsep: Term): List[BranchTree.Arm] =
-    if (elsep.pos.start == elsep.pos.end) Nil
-    else List(BranchTree.Arm("else", visit(elsep)))
+  private def armOf(c: Case, scrut: Option[Predicate.Expr], env: Env): BranchTree.Arm = {
+    val patText                       = textOf(c.pat)
+    val label                         = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
+    val guard: Option[Predicate.Cond] = c.pat match {
+      case l: Lit.Int    => scrut.map(s => Predicate.Cmp("==", s, Predicate.Num(l.value.toDouble)))
+      case l: Lit.Long   => scrut.map(s => Predicate.Cmp("==", s, Predicate.Num(l.value.toDouble)))
+      case Pat.Var(name) => for (g <- c.cond; s <- scrut; cnd <- condOf(g, env + (name.value -> s))) yield cnd
+      case _             => None
+    }
+    BranchTree.Arm(label, guard, visit(c.body, env))
+  }
 
-  private def armOf(c: Case): BranchTree.Arm = {
-    val patText = textOf(c.pat)
-    val label   = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
-    BranchTree.Arm(label, visit(c.body))
+  // ── Scalameta condition → domain Predicate (numeric subset only; anything else ⇒ None) ──────────
+
+  private def condOf(t: Tree, env: Env): Option[Predicate.Cond] = t match {
+    case t: Term.ApplyInfix =>
+      t.argClause.values match {
+        case List(r) =>
+          t.op.value match {
+            case "&&"                                         => for (a <- condOf(t.lhs, env); b <- condOf(r, env)) yield Predicate.And(a, b)
+            case "||"                                         => for (a <- condOf(t.lhs, env); b <- condOf(r, env)) yield Predicate.Or(a, b)
+            case op @ ("==" | "!=" | "<" | "<=" | ">" | ">=") => for (a <- exprOf(t.lhs, env); b <- exprOf(r, env)) yield Predicate.Cmp(op, a, b)
+            case _                                            => None
+          }
+        case _ => None
+      }
+    case t: Term.ApplyUnary if t.op.value == "!" => condOf(t.arg, env).map(Predicate.Not)
+    // A bare boolean parameter used as a condition (e.g. `if (enabled)`): true ⇔ its 0/1 encoding ≠ 0.
+    case n: Term.Name => env.get(n.value).map(e => Predicate.Cmp("!=", e, Predicate.Num(0.0)))
+    case _            => None
+  }
+
+  private def exprOf(t: Tree, env: Env): Option[Predicate.Expr] = t match {
+    case n: Term.Name                                              => env.get(n.value)
+    case l: Lit.Int                                                => Some(Predicate.Num(l.value.toDouble))
+    case l: Lit.Long                                               => Some(Predicate.Num(l.value.toDouble))
+    case l: Lit.Double                                             => Some(Predicate.Num(l.value.asInstanceOf[Double]))
+    case t: Term.ApplyUnary if t.op.value == "-"                   => exprOf(t.arg, env).map(Predicate.Unary("neg", _))
+    case t: Term.ApplyInfix if Set("+", "-", "*", "%")(t.op.value) =>
+      t.argClause.values match {
+        case List(r) => for (a <- exprOf(t.lhs, env); b <- exprOf(r, env)) yield Predicate.Binary(t.op.value, a, b)
+        case _       => None
+      }
+    case Term.Select(q, name) if name.value == "abs"                            => exprOf(q, env).map(Predicate.Unary("abs", _))
+    case Term.Select(q, name) if Set("toLong", "toInt", "toDouble")(name.value) => exprOf(q, env) // numeric coercion is identity here
+    case t: Term.Apply                                                          =>                // math.abs(e)
+      t.fun match {
+        case Term.Select(Term.Name("math"), name) if name.value == "abs" =>
+          t.argClause.values match {
+            case List(x) => exprOf(x, env).map(Predicate.Unary("abs", _))
+            case _       => None
+          }
+        case _ => None
+      }
+    case _ => None
   }
 
   private def enumsOf(enums: List[Enumerator]): String = clip(enums.map(_.toString).mkString("; "))
