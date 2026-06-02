@@ -10,7 +10,7 @@ PY             ?= python3
 # One JVM per (strategy, seed) keeps scoverage's process-global Invoker from leaking coverage
 # between runs. STRATEGIES must stay aligned with Strategy.names; SEEDS is swept for K-seed
 # variability so downstream charts can report median + IQR instead of a single noisy point.
-STRATEGIES     := random random-pool mutation-guided mutation-guided-pool
+STRATEGIES     := random random-pool mutation-guided mutation-guided-pool mutation-guided-energy
 SEEDS          := 1 2 3 4 5 6 7 8 9 10
 
 .PHONY: help all build run analyze clean clean-reports fmt diagrams
