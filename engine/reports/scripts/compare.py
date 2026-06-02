@@ -673,6 +673,62 @@ def write_per_seed_csv(cells: list, out_path: Path) -> None:
             ])
 
 
+# ── Coverage vs input budget (efficiency curve) ──────────────────────────
+#
+# Final coverage % hides *how fast* a strategy gets there. This curve plots
+# suite-wide coverage against the number of inputs spent per method (log x),
+# so "guidance reaches the same coverage in fewer inputs" becomes visible.
+
+_BUDGETS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+
+
+def _suite_coverage_at(cells: list, budget: int) -> Optional[float]:
+    """Σ covered-leaves-after-`budget`-inputs / Σ total-leaves over a seed's cells. `growth_curve[i]`
+    is the cumulative covered-leaf count after input i+1, so budget t reads index min(t, len) - 1."""
+    cov = tot = 0
+    for c in cells:
+        total = len(leaves(c.branch_tree))
+        if total == 0 or not c.growth_curve:
+            continue
+        cov += c.growth_curve[min(budget, len(c.growth_curve)) - 1]
+        tot += total
+    return (100.0 * cov / tot) if tot else None
+
+
+def time_to_coverage(cells: list) -> dict:
+    """{strategy: [median suite-coverage % at each budget in _BUDGETS]}, median across seeds."""
+    by_strat_seed: dict = {}
+    for c in cells:
+        by_strat_seed.setdefault(c.strategy, {}).setdefault(c.seed, []).append(c)
+    curves: dict = {}
+    for strat, seeds in by_strat_seed.items():
+        curve = []
+        for b in _BUDGETS:
+            vals = [v for sc in seeds.values() for v in [_suite_coverage_at(sc, b)] if v is not None]
+            curve.append(statistics.median(vals) if vals else 0.0)
+        curves[strat] = curve
+    return curves
+
+
+def write_time_to_coverage(curves: dict, out_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(10.0, 6.0), facecolor=BG)
+    for strat in ordered_strategies(curves.keys()):
+        ax.plot(_BUDGETS, curves[strat], marker="o", markersize=3, linewidth=1.8, color=color_for(strat), label=strat)
+    ax.set_xscale("log")
+    ax.set_xlim(1, 10000)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel("inputs per method (log scale)")
+    ax.set_ylabel("suite coverage (%)")
+    ax.set_title(f"Coverage vs input budget (suite-wide median across K={SEED_COUNT} seeds)", color=TEXT, fontsize=12, pad=10)
+    ax.legend(loc="lower right", framealpha=0.95, edgecolor=BORDER)
+    ax.grid(True, which="both", axis="both", alpha=0.5, color=GRID, linewidth=0.6)
+    style_axes(ax)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor())
+    plt.close(fig)
+
+
 def main() -> None:
     if not STATS_ROOT.exists():
         sys.exit(f"No data at {STATS_ROOT}. Run `make run` first.")
@@ -708,7 +764,9 @@ def main() -> None:
     write_overall_bars(cells, SUMMARY_DIR / "overall.svg")
     write_blindspot_bars(by_bench, SUMMARY_DIR / "blindspot.svg")
     write_per_seed_csv(cells, SUMMARY_DIR / "per_seed.csv")
-    print(f"  wrote suite.svg, overall.svg, blindspot.svg, per_seed.csv in {SUMMARY_DIR}")
+    curves = time_to_coverage(cells)
+    write_time_to_coverage(curves, SUMMARY_DIR / "time_to_coverage.svg")
+    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, per_seed.csv in {SUMMARY_DIR}")
 
     # Suite-wide blind-spot summary: of the leaves random never reached, how many did
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
@@ -729,6 +787,15 @@ def main() -> None:
                 )
             else:
                 print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
+
+    # Efficiency: suite-wide coverage reached at a few input budgets (median across seeds).
+    print()
+    print("Coverage vs input budget (suite-wide median %):")
+    checkpoints = [10, 100, 1000, 10000]
+    cols = {b: _BUDGETS.index(b) for b in checkpoints}
+    print(f"  {'strategy':<24}" + "".join(f"{('@' + str(b)):>10}" for b in checkpoints))
+    for strat in ordered_strategies(curves.keys()):
+        print(f"  {strat:<24}" + "".join(f"{curves[strat][cols[b]]:>9.1f}%" for b in checkpoints))
 
 
 if __name__ == "__main__":
