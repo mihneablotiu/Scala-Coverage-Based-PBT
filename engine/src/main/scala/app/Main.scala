@@ -40,13 +40,34 @@ object Main {
     }
   }
 
+  /** Branch-distance objectives for the `coverage-guided` strategy, keyed by method name. Each is a hand-written distance to a hard,
+    * currently-uncovered leaf (0 = reached) — Löscher-style targeting. Methods without an entry fall back to plain random under `coverage-guided`.
+    */
+  private val Objectives: Map[String, Any] = Map(
+    // tightBand: reach the [1000, 1009] band.
+    "tightBand" -> ((n: Int) => math.max(0.0, math.max(1000.0 - n, n - 1009.0))),
+    // compareInts: reach "big-negatives" (|a| > 1000 and a == -b).
+    "compareInts" -> ((p: (Int, Int)) => { val (a, b) = p; math.max(0.0, 1001.0 - math.abs(a.toLong)) + math.abs(a.toLong + b.toLong) }),
+    // triangleType: reach "isosceles" (the arm random misses) — drive toward (a == b >= 2, c == 1),
+    // e.g. (2, 2, 1): a valid, non-equilateral triangle with two equal sides.
+    "triangleType" -> ((t: (Int, Int, Int)) => {
+      val (a, b, c) = t
+      math.abs(a.toLong - b).toDouble + math.max(0L, 2L - a) + math.abs(c.toLong - 1)
+    }),
+    // isStrictlySorted: reach a strictly-sorted list of length >= 8 (structural — a harder climb).
+    "isStrictlySorted" -> ((xs: List[Int]) =>
+      if (xs.size < 8) (8 - xs.size).toDouble else xs.lazyZip(xs.tail).count { case (a, b) => a >= b }.toDouble
+    )
+  )
+
   private def runAll(strategyName: String, seed: Long): Unit = {
     val params  = Test.Parameters.default.withInitialSeed(rng.Seed(seed)).withMinSuccessfulTests(Inputs)
     val handler = new TestRunnerHandler(
       treeBuilder = ScalametaBranchTreeBuilder(),
       sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
       writer = FileSystemCoverageReportWriter(),
-      params = params
+      params = params,
+      objectives = Objectives
     )
     val seedLabel                     = f"seed=$seed%02d"
     def runner(c: String): TestRunner = new FileSystemTestRunner(handler, src(c), ReportsBase, Some(seedLabel))

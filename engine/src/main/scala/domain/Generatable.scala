@@ -30,10 +30,15 @@ object Generatable {
   implicit val boolean: Generatable[Boolean] =
     instance(Arbitrary.arbBool.arbitrary)(b => Gen.const(!b))(_ => Arbitrary.arbBool.arbitrary)
 
+  // Multi-scale steps (±2^k) so a hill-climber can both jump across large numeric gaps and refine
+  // locally; the boundary/zero values stay as AFL-style "interesting" deltas.
+  private val IntSteps: List[Int] = (0 to 30).map(1 << _).toList
+
+  private def intNeighbour(n: Int): Gen[Int] =
+    Gen.oneOf(IntSteps.flatMap(s => List(n + s, n - s)) ++ List(-n, 0, 1, -1, Int.MaxValue, Int.MinValue))
+
   implicit val int: Generatable[Int] =
-    instance(Arbitrary.arbInt.arbitrary)(n => Gen.oneOf(n + 1, n - 1, -n, 0, 1, -1, Int.MaxValue, Int.MinValue))(p =>
-      ConstantPool.inject(p.ints, Arbitrary.arbInt.arbitrary)
-    )
+    instance(Arbitrary.arbInt.arbitrary)(intNeighbour)(p => ConstantPool.inject(p.ints, Arbitrary.arbInt.arbitrary))
 
   implicit val long: Generatable[Long] =
     instance(Arbitrary.arbLong.arbitrary)(n => Gen.oneOf(n + 1, n - 1, -n, 0L, 1L, -1L, Long.MaxValue, Long.MinValue))(p =>

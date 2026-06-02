@@ -56,6 +56,7 @@ STRATEGY_COLORS = {
     "random-pool": "#1F8A70",           # deep teal
     "mutation-guided": "#E67E22",       # vibrant orange
     "mutation-guided-pool": "#8E44AD",  # plum
+    "coverage-guided": "#C0392B",       # brick red
 }
 FALLBACK_COLOR = "#7F8C8D"
 BORDER = "#2C3E50"
@@ -71,7 +72,7 @@ COV_TXT, MIS_TXT = "#196F3D", "#922B21"
 RANDOM = "random"
 
 # Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
-STRATEGY_ORDER = ["random", "random-pool", "mutation-guided", "mutation-guided-pool"]
+STRATEGY_ORDER = ["random", "random-pool", "mutation-guided", "mutation-guided-pool", "coverage-guided"]
 
 # Number of seed-runs found; set in main(), used in chart titles.
 SEED_COUNT = 0

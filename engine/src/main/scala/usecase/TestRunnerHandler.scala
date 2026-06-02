@@ -17,7 +17,8 @@ final class TestRunnerHandler(
     treeBuilder: BranchTreeBuilder,
     sourceCoverage: SourceCoverageReader,
     writer: CoverageReportWriter,
-    params: Test.Parameters
+    params: Test.Parameters,
+    objectives: Map[String, Any] = Map.empty // method name → branch-distance objective for `coverage-guided`
 ) {
 
   def handle[A: Generatable](
@@ -26,13 +27,17 @@ final class TestRunnerHandler(
       methodName: String,
       strategyName: String
   )(property: A => Boolean): Unit = {
-    val parsed   = treeBuilder.build(sourceFile, methodName)
-    val tree     = parsed.map(_.branchTree)
-    val leaves   = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
-    val pool     = parsed.map(_.constantPool).getOrElse(ConstantPool.empty)
-    val strategy = Strategy
-      .parse[A](strategyName, pool)
-      .getOrElse(throw new IllegalArgumentException(s"unknown strategy: $strategyName"))
+    val parsed                = treeBuilder.build(sourceFile, methodName)
+    val tree                  = parsed.map(_.branchTree)
+    val leaves                = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
+    val pool                  = parsed.map(_.constantPool).getOrElse(ConstantPool.empty)
+    val strategy: Strategy[A] =
+      if (strategyName == "coverage-guided") {
+        // The objective is keyed by method name; types line up at the call site, so the cast is safe.
+        val objective = objectives.get(methodName).map(_.asInstanceOf[A => Double]).getOrElse((_: A) => 0.0)
+        new Strategy.CoverageGuided[A](Generatable[A], objective)
+      } else
+        Strategy.parse[A](strategyName, pool).getOrElse(throw new IllegalArgumentException(s"unknown strategy: $strategyName"))
 
     val feedback = runScalaCheck(sourceFile, strategy, leaves, property)
     writer.write(SessionReport(methodName, sourceFile.getFileName.toString, tree, strategy.name, strategy.pool, feedback), outDir)
