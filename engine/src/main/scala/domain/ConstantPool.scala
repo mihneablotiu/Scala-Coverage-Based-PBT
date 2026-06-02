@@ -2,45 +2,25 @@ package domain
 
 import org.scalacheck.Gen
 
-/** Per-method literal dictionary, keyed by Scala primitive kind. Empty for non-pool strategies. Mined once at parse time; consumed by
-  * [[Generatable]]'s `pooled`.
+/** Literals mined from a method body, by kind. Only the kinds a [[Generatable]] actually injects are kept (the SUT's guards use `Int`, `Long`,
+  * `Double`, `String`); a new kind is added here and consumed in the matching `Generatable.pooled`.
   */
 final case class ConstantPool(
     ints: Set[Int],
     longs: Set[Long],
-    floats: Set[Float],
     doubles: Set[Double],
-    booleans: Set[Boolean],
-    chars: Set[Char],
-    strings: Set[String],
-    bytes: Set[Byte],
-    shorts: Set[Short]
+    strings: Set[String]
 )
 
 object ConstantPool {
 
-  val empty: ConstantPool = ConstantPool(
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty,
-    Set.empty
-  )
+  val empty: ConstantPool = ConstantPool(Set.empty, Set.empty, Set.empty, Set.empty)
 
-  /** AFL/Dragen² convention: a mined value is drawn 30% of the time, the base generator 70%. */
-  val PoolProb: Double = 0.30
+  /** Percent of draws that return a mined literal instead of the base generator (AFL/Dragen²). */
+  val PoolPercent: Int = 30
 
-  /** Mix mined `values` into `base`: each draw returns a pool value with probability [[PoolProb]], else defers to `base`. Empty pool ⇒ `base`
-    * unchanged (no overhead).
-    */
+  /** Draw a mined value with probability [[PoolPercent]]%, else defer to `base`. Empty pool ⇒ `base`. */
   def inject[A](values: Set[A], base: Gen[A]): Gen[A] =
     if (values.isEmpty) base
-    else {
-      val poolWeight = math.round(PoolProb * 100).toInt
-      Gen.frequency(poolWeight -> Gen.oneOf(values), (100 - poolWeight) -> base)
-    }
+    else Gen.frequency(PoolPercent -> Gen.oneOf(values), (100 - PoolPercent) -> base)
 }

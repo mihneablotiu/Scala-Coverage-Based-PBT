@@ -94,10 +94,12 @@ actually helps.
 
 ## 7. What this prototype does today
 
-1. We point the framework at our example file of small methods.
+1. We point the framework at our catalogue of small methods.
 2. For each method and each strategy (four today: random,
    random-pool, mutation-guided, and mutation-guided-pool), we ask
-   a number generator for 10000 inputs.
+   an input generator for 10000 inputs (integers, longs, booleans,
+   strings, doubles, options, lists, maps, or little trees, as the
+   method needs).
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
@@ -125,21 +127,35 @@ that picks the next input is the thing under study.
 
 ## 8. The little examples we test
 
-Three methods, picked from the catalogue, make the point.
+The catalogue is grouped not by input type but by the **kind of
+problem** random testing runs into — so each group asks a different
+question:
 
-- **`isPositive(n)`** — `"positive"` if `n > 0`, otherwise
-  `"non-positive"`. Both branches are easy: roughly half the
-  random integers fall on each side. The saturated baseline —
-  random covers it fully.
-- **`mod97(n)`** — `"divisible"` when `n % 97 == 0`, `"lucky"`
-  when `n % 97 == 13`, `"ordinary"` otherwise. The rare branches
-  are hit by random only after several hundred iterations; the
-  mutation-guided strategy lands on them in single-digit input
-  counts once it has a seed to perturb.
-- **`classify(n)`** — a five-arm match on `n`, with `42` as one
-  of the literals. Random virtually never hits `42` exactly.
+- **Saturated** — every branch is easy; random covers it fully.
+  The calibration floor (e.g. `sign(n)`).
+- **MagicConstants** — a branch hides behind `== 42`, `== "admin"`,
+  a magic `Long`, or a particular `Option`/`Map` key. Random
+  virtually never guesses the literal; the pool strategies mine it
+  from the source and walk straight in.
+- **NarrowRanges** — a branch fires only for a tiny slice: a
+  10-wide integer or long band, a value near π, or a floating-point
+  `NaN`/`∞`. Mutation reaches the float edges; literal injection
+  supplies the bounds.
+- **Relational** — two arguments must agree (a list and its
+  reverse, two maps with the same keys). Independent random draws
+  almost never coincide.
+- **StructuralInvariants** — the input must be *sorted*, a valid
+  *binary-search tree*, and so on. The chance a random value
+  qualifies collapses as it grows.
+- **DeepConditionals** — deeply nested `if`s where several
+  guards must hold at once; good for rich diagrams.
+- **StagedValidity** — the input must first *parse* or be *valid*
+  (a version string, a signed integer, balanced brackets, a Luhn
+  checksum) and only then is it classified. Random inputs rarely
+  pass even the first gate — the hardest group.
 
-The full catalogue lives under `sut/src/main/scala/benchmark/`.
+The full catalogue lives under `sut/src/main/scala/benchmark/`,
+one file per group.
 
 ---
 
@@ -150,10 +166,11 @@ JSON with everything observed during the session:
 
 ```
 engine/reports/statistics/
-└── <bench file>/        e.g. IntBench
-    └── <method name>/   e.g. mod97
+└── <category>/          e.g. MagicConstants
+    └── <method name>/   e.g. classify
         └── <strategy>/  e.g. random, mutation-guided
-            └── coverage.json   — raw measurement
+            └── seed=01/
+                └── coverage.json   — raw measurement
 ```
 
 `make analyze` then runs the Python script

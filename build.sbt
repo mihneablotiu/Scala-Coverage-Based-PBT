@@ -31,10 +31,8 @@ lazy val engine = (project in file("engine"))
       "org.scalameta"  %% "scalameta"                   % "4.17.0",
       "org.scoverage"  %% "scalac-scoverage-serializer" % "2.5.2",
       "org.scoverage"  %% "scalac-scoverage-domain"     % "2.5.2",
-      "org.scoverage"  %% "scalac-scoverage-runtime"    % "2.5.2",
-      "org.scalameta"  %% "munit"                       % "0.7.29" % Test
-    ),
-    testFrameworks += new TestFramework("munit.Framework")
+      "org.scoverage"  %% "scalac-scoverage-runtime"    % "2.5.2"
+    )
   )
 
 lazy val root = (project in file("."))

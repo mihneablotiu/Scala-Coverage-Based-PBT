@@ -73,6 +73,9 @@ RANDOM = "random"
 # Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
 STRATEGY_ORDER = ["random", "random-pool", "mutation-guided", "mutation-guided-pool"]
 
+# Number of seed-runs found; set in main(), used in chart titles.
+SEED_COUNT = 0
+
 # ── Data model ───────────────────────────────────────────────────────────
 
 
@@ -442,7 +445,7 @@ def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
         methods,
         pcts_by_strategy,
         strategies,
-        title=f"{bench} — coverage per method per strategy (median, [min–max] across K=10 seeds)",
+        title=f"{bench} — coverage per method per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         label_fontsize=8,
@@ -490,7 +493,7 @@ def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
         benches,
         pcts_by_strategy,
         strategies,
-        title="Per-bench aggregate coverage per strategy (median, [min–max] across K=10 seeds)",
+        title=f"Per-bench aggregate coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -530,7 +533,7 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
     ax.set_xlim(0, 130)
     ax.set_xlabel("coverage (%)")
     ax.set_title(
-        "Suite-wide aggregate coverage per strategy (median, [min–max] across K=10 seeds)",
+        f"Suite-wide aggregate coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         color=TEXT, fontsize=12, pad=10,
     )
     ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
@@ -626,7 +629,7 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
         categories,
         pcts_by_strategy,
         non_random,
-        title="Blind-spot fill — % of leaves random missed that the strategy covered (median, [min–max] across K=10 seeds)",
+        title=f"Blind-spot fill — % of leaves random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -681,7 +684,9 @@ def main() -> None:
         )
 
     ensure_dot_available()
-    print(f"loaded {len(cells)} cells")
+    global SEED_COUNT
+    SEED_COUNT = len({c.seed for c in cells})
+    print(f"loaded {len(cells)} cells across {SEED_COUNT} seeds")
 
     for cell in cells:
         write_cell_dot_svg(cell)

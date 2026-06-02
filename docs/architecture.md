@@ -12,24 +12,26 @@ A single sbt build with two subprojects:
 
 | Subproject | Role                                                                                        |
 |------------|---------------------------------------------------------------------------------------------|
-| `sut`      | System under test — small example methods. Compiled with scoverage instrumentation.         |
+| `sut`      | System under test — benchmark methods grouped by problem kind. Compiled with scoverage instrumentation. |
 | `engine`   | Framework — domain types, ports, adapters, the use case, the `app.Main` composition root.   |
 
-Almost all interesting code lives in `engine/`. The SUT is a small
-catalogue (`BoolBench`, `IntBench`, `ListBench`) plus a
-number-theoretic helper. `app.Main` is the only file that imports
-concrete adapter classes; it is also the entry point (a plain
-`def main(args: Array[String])`). One invocation runs every
-benchmark against one strategy, picked from the first CLI
-argument.
+Almost all interesting code lives in `engine/`. The SUT is a
+catalogue of small methods, one file per *kind of problem* random
+PBT faces (`Saturated`, `MagicConstants`, `NarrowRanges`,
+`Relational`, `StructuralInvariants`, `DeepConditionals`,
+`StagedValidity`) plus a `Tree` data type. `app.Main` is the only
+file that imports concrete adapter classes; it is also the entry
+point (a plain `def main(args: Array[String])`). One invocation
+runs every benchmark against one (strategy, seed) pair from the
+CLI args.
 
 The driven ports and their adapters:
 
-| Port                       | Adapter                              | What it does                                       |
-|----------------------------|--------------------------------------|----------------------------------------------------|
-| `BranchTreeBuilder`        | `ScalametaBranchTreeBuilder`         | Parses source to a `BranchTree` via Scalameta      |
-| `SourceCoverageReader`     | `ScoverageSourceCoverageReader`      | Reads per-method fired statements from scoverage   |
-| `CoverageReportWriter`     | `FileSystemCoverageReportWriter`     | Writes one `coverage.json` per (method, strategy)  |
+| Port                       | Adapter                              | What it does                                        |
+|----------------------------|--------------------------------------|-----------------------------------------------------|
+| `BranchTreeBuilder`        | `ScalametaBranchTreeBuilder`         | Parses source to a `BranchTree` via Scalameta       |
+| `SourceCoverageReader`     | `ScoverageSourceCoverageReader`      | Reads fired statement offsets per source file       |
+| `CoverageReportWriter`     | `FileSystemCoverageReportWriter`     | Writes one `coverage.json` per cell                 |
 
 The single driving port `TestRunner` has one adapter:
 `FileSystemTestRunner`. It delegates to the use-case
@@ -54,7 +56,7 @@ can ask for fired statements, a writer it can hand a finished
 report to.
 
 Adapters fit a port without leaking concrete details into it. The
-scoverage adapter exposes `coverage(sourceFile, methodName): Set[Pos]`,
+scoverage adapter exposes `coverage(sourceFile): Set[Pos]`,
 not `getScoverageStatement`. Generic word, generic shape.
 
 The result is a small core in the middle (the "hexagon"),
@@ -72,22 +74,36 @@ adapter, leave the core alone.
 Takes a Scala source file and a method name, returns a
 [`ParsedMethod`](../engine/src/main/scala/domain/ParsedMethod.scala)
 — the method's branch tree of branchy expressions (`if`, `match`,
-`while`, partial functions) **plus the literal pool mined from its
-body** (the `ConstantPool` the `*-pool` strategies inject). The use
-case derives the leaf positions from the tree itself via
-`BranchTree.leaves`. Backed by Scalameta today; could be backed by
-the Scala 3 compiler or a pre-cached parse without touching the use
-case.
+`while`, `for`-comprehensions, partial functions) **plus the
+literals mined from its body** (`ints`, `longs`, `doubles`, `strings` — what the
+`*-pool` strategies inject). Two rules keep the tree honest:
+
+- *Branches split, sequences don't.* A decision point becomes a
+  `Branch` with one arm per outcome; everything non-branchy is a
+  flat `Leaf`. An `if` with no `else` drops its synthetic else arm.
+  A `for`-comprehension desugars to `withFilter`/`map` calls that
+  scoverage records as one statement, so its body becomes one leaf
+  over the whole comprehension; branches *inside* a fold/`for` body
+  still surface.
+- *Nested `def`s are opaque.* They are separate methods, so the
+  walker does not descend into them; only the *call* shows up, as a
+  leaf in the enclosing body.
+
+Each leaf records its source span (`pos`..`end`). Backed by
+Scalameta today; could be the Scala 3 compiler without touching the
+use case.
 
 ### `SourceCoverageReader`
 
-One operation: `coverage(sourceFile, methodName)` returns the set
-of source positions scoverage has seen fired so far for that
-method. The use case intersects this set with the method's leaf
-positions to get the "newly covered branches" — keeping the "what
-counts as a branch" decision in the domain, not the adapter. The
-reader is called once per fuzz iteration so the per-input delta
-can be computed.
+One operation: `coverage(sourceFile)` returns the offsets of every
+statement scoverage has fired so far in that file. The use case
+marks a leaf covered when one of those offsets falls **inside the
+leaf's span** — matching by *file + span containment*, never by
+scoverage's method attribution (which is unreliable around nested
+`def`s, where it mis-files the enclosing method's own statements).
+Leaf spans are method-local, so this scopes correctly on its own.
+The reader is called once per iteration so the per-input delta can
+be computed.
 
 ### `CoverageReportWriter`
 
@@ -121,9 +137,10 @@ one what used to be three separate type classes (`Arbitrary` +
 **Why not a port?** Strategies are pure in-process modules with no
 side effects to hide. The use case picks the input generator at
 one specific point in the loop body; sealed-trait exhaustiveness
-captures that decision cleanly. Adding a strategy is: one new case
-class, its name in `Strategy.names`, a case in `Strategy.parse`,
-and the same name in the Makefile's `STRATEGIES` list.
+captures that decision cleanly. The four are listed once in
+`Strategy.all`; `names` and `parse` derive from it, so adding a
+strategy is: one new case class, one entry in `Strategy.all`, and
+the same name in the Makefile's `STRATEGIES` list.
 
 The `TestRunner` port's `property: A => Boolean` signature is
 honest about what a client passes in. Today the engine always
@@ -152,10 +169,10 @@ Each invocation forks a fresh JVM (`fork := true` in `build.sbt`)
 and runs every benchmark against that one strategy. The Makefile's
 `run` target loops over `STRATEGIES`.
 
-Per-method scoping inside one JVM is enforced by
-`ScoverageSourceCoverageReader.coverage` filtering by
-`(sourceFile, methodName)`, so each report only sees statements
-that belong to its method.
+Per-method scoping inside one JVM needs no method filtering: the
+reader returns the whole file's fired offsets, and each method's
+leaf spans only match offsets within its own body (other methods
+in the same file live in disjoint source ranges).
 
 ### 5b. The per-iteration feedback cycle
 
@@ -207,20 +224,20 @@ be re-run, restyled, and extended without touching the engine.
 A *leaf* of `BranchTree` is the canonical "branch" for coverage:
 each leaf is one distinct path through the method body, and the
 decision points (rectangles in the rendered tree) are not counted
-— they're intermediate nodes, not paths. The handler intersects
-scoverage's fired positions with the leaf set before feeding the
-delta into `SessionFeedback`, so the loop never sees non-leaf
-hits. The unit reported throughout the framework is therefore
-**leaf-only branch coverage** — distinct paths through the method
-body — *not* scoverage's raw statement-level coverage, which
-would also count the intermediate decision-point statements.
+— they're intermediate nodes, not paths. The handler marks a leaf
+covered when a fired scoverage offset lands inside its span (§3),
+feeding that set into `SessionFeedback`, so the loop never sees
+non-leaf hits. The unit reported throughout the framework is
+therefore **leaf-only branch coverage** — distinct paths through
+the method body — *not* scoverage's raw statement-level coverage,
+which would also count the intermediate decision-point statements.
 
 ### What ends up on disk
 
 One file per cell, written by the engine:
 
 ```
-engine/reports/statistics/<sourceStem>/<methodName>/<strategy>/coverage.json
+engine/reports/statistics/<category>/<methodName>/<strategy>/seed=<NN>/coverage.json
 ```
 
 JSON shape:
@@ -232,7 +249,7 @@ JSON shape:
   "strategy":     string,
   "totalInputs":  int,
   "growthCurve":  [int, …],   cumulative leaf-count per iteration
-  "constantPool": { per-kind arrays of mined literals },
+  "constantPool": { "ints": [...], "longs": [...], "doubles": [...], "strings": [...] },
   "branchTree":   nested      every leaf carries firstHitInput: int | null
 }
 ```
@@ -267,8 +284,8 @@ rewritten without touching the other.
 | You want to add…                              | Touch                                                                          |
 |-----------------------------------------------|--------------------------------------------------------------------------------|
 | A new Scala branchy construct                 | One case in `ScalametaBranchTreeBuilder.visit` (+ a new `BranchTree` node only if its shape is genuinely different) |
-| A new input type                              | Provide a `Generatable[A]` (or `Generatable.fromArbitrary` for an `Arbitrary`-only type) — `Main` already does it for tuples |
-| A new input-picking strategy                  | One new `Strategy[A]` case class with its own `gen`, its name in `Strategy.names`, a case in `Strategy.parse`, the same name in the Makefile's `STRATEGIES` |
+| A new input type                              | Provide a `Generatable[A]` via `Generatable.instance`. Built-ins (`Int`, `Long`, `Boolean`, `String`, `Double`, `Option[A]`, `List[A]`, `Map[K,V]`, tuples) live in `Generatable`; SUT-specific types are wired in `app.Generators` (see `Tree`) |
+| A new input-picking strategy                  | One new `Strategy[A]` case class with its own `gen`, one entry in `Strategy.all`, the same name in the Makefile's `STRATEGIES` |
 | A new coverage source                         | New `SourceCoverageReader` adapter                                              |
 | A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                              |
 

@@ -10,14 +10,9 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.Using
 
-/** scoverage-backed reader.
-  *
-  * scoverage's `Invoker` writes each statement id to a measurement file exactly once, on first fire, append-only and flushed immediately. So coverage
-  * is read by tailing those files — see [[MeasurementTail]] — rather than re-parsing them whole each iteration. The static statement map (id → source
-  * position) is deserialised once and cached.
-  *
-  * The constructor wipes stale `scoverage.measurements.*` files once; doing it later would orphan the `FileWriter`s scoverage caches on first SUT
-  * execution.
+/** scoverage-backed reader. scoverage writes each fired statement id once, append-only, so coverage is read by tailing the measurement files
+  * ([[MeasurementTail]]) rather than re-parsing them each iteration. The static id → position map is deserialised and cached once. The constructor
+  * wipes stale measurement files (doing it later would orphan scoverage's cached writers).
   */
 object ScoverageSourceCoverageReader {
 
@@ -31,47 +26,37 @@ object ScoverageSourceCoverageReader {
     private val coverageFile = dataDir.resolve("scoverage.coverage").toFile
     private val tail         = new MeasurementTail(dataDir)
 
-    // `Files.list` returns a directory-handle-holding `Stream`; close it deterministically with `Using`.
     if (Files.isDirectory(dataDir))
       Using.resource(Files.list(dataDir)) { stream =>
-        stream
-          .iterator()
-          .asScala
-          .filter(_.getFileName.toString.startsWith("scoverage.measurements."))
-          .foreach(Files.deleteIfExists)
+        stream.iterator().asScala.filter(_.getFileName.toString.startsWith("scoverage.measurements.")).foreach(Files.deleteIfExists)
       }
 
     private lazy val staticCoverage: scoverage.domain.Coverage = {
       if (!coverageFile.exists())
-        sys.error(
-          s"scoverage data file not found at $coverageFile. " +
-            "Make sure `coverageEnabled := true` is set on the SUT and `sut/compile` ran."
-        )
+        sys.error(s"scoverage data not found at $coverageFile. Set `coverageEnabled := true` on the SUT and run `sut/compile`.")
       Serializer.deserialize(coverageFile, sutRoot.toFile)
     }
 
-    // Bucket statements by enclosing method once so each per-iteration call only inspects one method's handful of statements. Source-file
-    // disambiguation stays per-call via `endsWith` (two files could share a method name).
-    private lazy val statementsByMethod: Map[String, List[scoverage.domain.Statement]] =
-      staticCoverage.statements.toList.groupBy(_.location.method)
+    // Bucket statements by source-file basename once; each call then inspects only that file's statements.
+    private lazy val statementsBySource: Map[String, List[scoverage.domain.Statement]] =
+      staticCoverage.statements.toList.groupBy(s => fileName(s.source))
 
-    override def coverage(sourceFile: Path, methodName: String): Set[Pos] = {
-      val sourceFileName = sourceFile.getFileName.toString
-      val fired          = tail.firedIds
-      statementsByMethod
-        .getOrElse(methodName, Nil)
+    override def coverage(sourceFile: Path): Set[Pos] = {
+      val fired = tail.firedIds
+      statementsBySource
+        .getOrElse(sourceFile.getFileName.toString, Nil)
         .iterator
-        .filter(s => s.source.endsWith(sourceFileName))
         .filter(s => fired(s.id))
         .map(_.start)
         .toSet
     }
+
+    private def fileName(source: String): String = source.replace('\\', '/').split('/').last
   }
 }
 
-/** Incrementally tails scoverage's append-only measurement files. Each call reads only the bytes appended since the previous call (tracked per file)
-  * and unions the new ids into a cumulative set — O(new ids) per call instead of re-reading the whole file. Because scoverage writes each id once,
-  * the cumulative set is exactly the set of statements fired so far.
+/** Tails scoverage's append-only measurement files, reading only bytes appended since the last call and unioning new ids into a cumulative set —
+  * O(new ids) per call. Each id is written once, so the set is exactly the statements fired so far.
   */
 private[scoverage] final class MeasurementTail(dataDir: Path) {
 
@@ -79,11 +64,7 @@ private[scoverage] final class MeasurementTail(dataDir: Path) {
   private val offsets           = mutable.Map.empty[Path, Long]
   private var files: List[Path] = Nil
 
-  /** The cumulative set of statement ids fired so far, refreshed from any newly-appended measurement bytes. */
   def firedIds: collection.Set[Int] = {
-    // Re-list the directory only until the measurement file appears, then cache it: with one SUT
-    // thread (workers=1) scoverage writes a single file, so the per-iteration cost is the read tail,
-    // not a directory scan.
     if (files.isEmpty) files = discover()
     files.foreach(readNew)
     fired

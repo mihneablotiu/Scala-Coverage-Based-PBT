@@ -6,21 +6,13 @@ import port.driven.CoverageReportWriter
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 
-/** Writes a [[SessionReport]] to `outDir/coverage.json`. One file per (method, strategy, seed) cell. Everything visual is produced downstream by the
-  * Python scripts under `engine/reports/scripts/`. The `constantPool` block records which literals the strategy was given (empty for non-pool runs).
-  *
-  * JSON shape:
+/** Writes one `coverage.json` per cell — raw measurement only; all graphics/tables are produced downstream by the Python scripts.
   *
   * {{{
-  *   {
-  *     "method":       "<methodName>",
-  *     "sourceFile":   "<file name>",
-  *     "strategy":     "<strategy name>",
-  *     "totalInputs":  <int>,
-  *     "growthCurve":  [<cumulative covered leaves per iteration>],
-  *     "constantPool": { "ints": [...], "strings": [...], ... },
-  *     "branchTree":   <nested tree with firstHitInput annotated on each leaf>
-  *   }
+  *   { "method", "sourceFile", "strategy", "totalInputs",
+  *     "growthCurve": [cumulative covered leaves per iteration],
+  *     "constantPool": { "ints": [...], "strings": [...] },
+  *     "branchTree":  <nested tree; each leaf carries firstHitInput: int | null> }
   * }}}
   */
 object FileSystemCoverageReportWriter {
@@ -30,11 +22,7 @@ object FileSystemCoverageReportWriter {
   private final class Live extends CoverageReportWriter {
     override def write[A](report: SessionReport[A], outDir: Path): Unit = {
       Files.createDirectories(outDir)
-      Files.writeString(
-        outDir.resolve("coverage.json"),
-        renderJson(report),
-        StandardCharsets.UTF_8
-      )
+      Files.writeString(outDir.resolve("coverage.json"), renderJson(report), StandardCharsets.UTF_8)
     }
   }
 
@@ -53,14 +41,11 @@ object FileSystemCoverageReportWriter {
        |""".stripMargin
   }
 
-  /** Sorted per-kind arrays for deterministic diffs across runs. Numeric kinds emit bare JSON numbers; chars / strings emit JSON strings. */
+  /** Sorted arrays for deterministic diffs. */
   private def renderPool(p: ConstantPool): String = {
-    def nums[T](xs: Set[T])(implicit ord: Ordering[T]): String                      = xs.toSeq.sorted.mkString("[", ", ", "]")
-    def strs[T](xs: Set[T], render: T => String)(implicit ord: Ordering[T]): String =
-      xs.toSeq.sorted.map(t => jstr(render(t))).mkString("[", ", ", "]")
-    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "floats": ${nums(p.floats)}, "doubles": ${nums(p.doubles)}, """ +
-      s""""booleans": ${nums(p.booleans)}, "chars": ${strs(p.chars, (c: Char) => c.toString)}, "strings": ${strs(p.strings, identity[String])}, """ +
-      s""""bytes": ${nums(p.bytes)}, "shorts": ${nums(p.shorts)}}"""
+    def nums[A](xs: Set[A])(implicit ord: Ordering[A]): String = xs.toSeq.sorted.mkString("[", ", ", "]")
+    val strings                                                = p.strings.toSeq.sorted.map(jstr).mkString("[", ", ", "]")
+    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "doubles": ${nums(p.doubles)}, "strings": $strings}"""
   }
 
   private def renderTree(tree: BranchTree, firstHits: Map[Pos, Int], indent: Int): String = {
@@ -69,10 +54,7 @@ object FileSystemCoverageReportWriter {
     tree match {
       case b: BranchTree.Branch =>
         val arms = b.arms
-          .map { a =>
-            val body = renderTree(a.body, firstHits, indent + 4)
-            s"""$padChild{"label": ${jstr(a.label)}, "body": $body}"""
-          }
+          .map(a => s"""$padChild{"label": ${jstr(a.label)}, "body": ${renderTree(a.body, firstHits, indent + 4)}}""")
           .mkString(",\n")
         s"""{
            |$padChild"kind": "branch",
@@ -83,9 +65,7 @@ object FileSystemCoverageReportWriter {
            |$pad]
            |$pad}""".stripMargin
       case s: BranchTree.Sequence =>
-        val children = s.children
-          .map(c => s"$padChild${renderTree(c, firstHits, indent + 2)}")
-          .mkString(",\n")
+        val children = s.children.map(c => s"$padChild${renderTree(c, firstHits, indent + 2)}").mkString(",\n")
         s"""{
            |$padChild"kind": "sequence",
            |$padChild"children": [
@@ -94,17 +74,10 @@ object FileSystemCoverageReportWriter {
            |$pad}""".stripMargin
       case l: BranchTree.Leaf =>
         val firstHit = firstHits.get(l.pos).fold("null")(_.toString)
-        s"""{"kind": "leaf", "line": ${l.line}, "text": ${jstr(
-            l.text
-          )}, "firstHitInput": $firstHit}"""
+        s"""{"kind": "leaf", "line": ${l.line}, "text": ${jstr(l.text)}, "firstHitInput": $firstHit}"""
     }
   }
 
   private def jstr(s: String): String =
-    "\"" +
-      s.replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r") +
-      "\""
+    "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
 }

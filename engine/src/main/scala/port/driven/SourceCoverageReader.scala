@@ -4,11 +4,10 @@ import domain.Pos
 
 import java.nio.file.Path
 
-/** Returns the source positions that have been fired so far for the named method.
-  *
-  * The use case intersects this set with the method's leaf positions to decide what counts as a "covered branch", keeping the branch definition in
-  * the domain rather than the adapter.
+/** Returns the source offsets of every statement fired so far in the given file. The use case marks a leaf covered when one of these offsets falls
+  * inside the leaf's span. Matching is by *file + span*, never by scoverage's method attribution (which is unreliable around nested `def`s), so the
+  * tree and the coverage source need not agree on how statements are named.
   */
 trait SourceCoverageReader {
-  def coverage(sourceFile: Path, methodName: String): Set[Pos]
+  def coverage(sourceFile: Path): Set[Pos]
 }
