@@ -32,16 +32,19 @@ object Strategy {
     def gen(feedback: SessionFeedback[A]): Gen[A] = mix(feedback, g.pooled(pool), g.mutate)
   }
 
-  /** Autonomous coverage-guided search. From the live coverage it knows which leaves are still uncovered; for each it has a path predicate (from the
-    * source), so it hill-climbs the **branch distance** to the *nearest* uncovered leaf — keeping the best input seen and mutating it (with the
-    * multi-scale numeric neighbourhood) plus the occasional restart. Leaves whose guard the engine can't express numerically contribute no gradient,
-    * so where none applies it just explores randomly. No hand-written objective — the target is derived from the source and the coverage so far.
+  /** Autonomous coverage-guided search, as a *wrapper* over a `base` strategy. From the live coverage it knows which leaves are still uncovered; for
+    * each it has a path predicate (from the source), so it hill-climbs the **branch distance** to the *nearest* uncovered leaf — keeping the best
+    * input seen and mutating it (multi-scale numeric neighbourhood). When no numeric gradient applies (string/structure guards), or as the occasional
+    * restart, it falls back to `base.gen` — so composing it with the pool or mutation simply means the fallback also injects literals / perturbs the
+    * corpus. No hand-written objective: the target is derived from the source and the coverage so far.
     *
     * The candidate is scored one draw late (the loop samples the returned `Gen` itself), so we stash it in `pending`. Holds per-session mutable
     * state; one instance per session, so it isn't shared.
     */
-  final class CoverageGuided[A](g: Generatable[A], leafPaths: Map[Pos, List[Predicate.Cond]], paramCount: Int)
-      extends Strategy[A]("coverage-guided") {
+  final class CoverageGuided[A](g: Generatable[A], leafPaths: Map[Pos, List[Predicate.Cond]], paramCount: Int, base: Strategy[A])
+      extends Strategy[A](coverageName(base.name)) {
+
+    override def pool: ConstantPool = base.pool
 
     private var best: Option[A]    = None
     private var pending: Option[A] = None
@@ -49,13 +52,10 @@ object Strategy {
     def gen(feedback: SessionFeedback[A]): Gen[A] = {
       val targets = leafPaths.collect { case (pos, guards) if !feedback.coveredBranches(pos) => guards }.toList
       pending.foreach(c => if (closerThanBest(c, targets)) best = Some(c))
-      val next =
-        if (targets.isEmpty) g.arbitrary
-        else
-          best match {
-            case Some(b) if fitness(b, targets).exists(_ > 0.0) => Gen.frequency(4 -> g.mutate(b), 1 -> g.arbitrary)
-            case _                                              => g.arbitrary
-          }
+      val next = best match {
+        case Some(b) if targets.nonEmpty && fitness(b, targets).exists(_ > 0.0) => Gen.frequency(4 -> g.mutate(b), 1 -> base.gen(feedback))
+        case _                                                                  => base.gen(feedback)
+      }
       next.map { c => pending = Some(c); c }
     }
 
@@ -75,16 +75,33 @@ object Strategy {
     if (feedback.seeds.isEmpty) fresh
     else Gen.frequency(1 -> fresh, 1 -> Gen.oneOf(feedback.seeds).flatMap(mutate))
 
-  /** Single source of truth for the registry strategies, simplest → most complex. `coverage-guided` is built separately (it needs the parsed leaf
-    * paths, not just a `Generatable`), so it's appended to `names` by hand.
-    */
+  /** The four base strategies, simplest → most complex. */
   private def all[A: Generatable](pool: ConstantPool): List[Strategy[A]] = {
     val g = Generatable[A]
     List(Random(g), RandomPool(g, pool), MutationGuided(g), MutationGuidedPool(g, pool))
   }
 
-  val names: List[String] = all[Int](ConstantPool.empty).map(_.name) :+ "coverage-guided"
+  /** `coverage-guided` wraps each base, naming itself after what it adds (e.g. base `random-pool` → `coverage-guided-pool`, base `mutation-guided` →
+    * `coverage-guided-mutation-guided`).
+    */
+  private val CoverageBases: List[String] = List("random", "random-pool", "mutation-guided", "mutation-guided-pool")
+
+  private def coverageName(base: String): String = base match {
+    case "random" => "coverage-guided"
+    case other    => "coverage-guided-" + other.stripPrefix("random-")
+  }
+
+  val names: List[String] = all[Int](ConstantPool.empty).map(_.name) ++ CoverageBases.map(coverageName)
 
   def parse[A: Generatable](name: String, pool: ConstantPool): Option[Strategy[A]] =
     all[A](pool).find(_.name == name)
+
+  /** Build a `coverage-guided[-…]` variant, or `None` if `name` isn't one of them. */
+  def buildCoverage[A: Generatable](
+      name: String,
+      leafPaths: Map[Pos, List[Predicate.Cond]],
+      paramCount: Int,
+      pool: ConstantPool
+  ): Option[Strategy[A]] =
+    CoverageBases.find(coverageName(_) == name).flatMap(parse[A](_, pool)).map(new CoverageGuided[A](Generatable[A], leafPaths, paramCount, _))
 }

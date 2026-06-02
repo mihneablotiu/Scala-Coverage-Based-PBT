@@ -26,19 +26,19 @@ final class TestRunnerHandler(
       methodName: String,
       strategyName: String
   )(property: A => Boolean): Unit = {
-    val parsed                = treeBuilder.build(sourceFile, methodName)
-    val tree                  = parsed.map(_.branchTree)
-    val leaves                = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
-    val pool                  = parsed.map(_.constantPool).getOrElse(ConstantPool.empty)
+    val parsed = treeBuilder.build(sourceFile, methodName)
+    val tree   = parsed.map(_.branchTree)
+    val leaves = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
+    val pool   = parsed.map(_.constantPool).getOrElse(ConstantPool.empty)
+    // `coverage-guided[-…]` is autonomous: derive per-leaf path predicates from the source and target
+    // whatever is still uncovered using the live coverage in `feedback`. Everything else parses directly.
+    val paths                 = tree.map(BranchTree.leafPaths).getOrElse(Map.empty)
+    val nParams               = parsed.map(_.paramCount).getOrElse(1)
     val strategy: Strategy[A] =
-      if (strategyName == "coverage-guided") {
-        // Autonomous: derive per-leaf path predicates from the source; the strategy targets whatever is
-        // still uncovered using the live coverage in `feedback`.
-        val paths   = tree.map(BranchTree.leafPaths).getOrElse(Map.empty)
-        val nParams = parsed.map(_.paramCount).getOrElse(1)
-        new Strategy.CoverageGuided[A](Generatable[A], paths, nParams)
-      } else
-        Strategy.parse[A](strategyName, pool).getOrElse(throw new IllegalArgumentException(s"unknown strategy: $strategyName"))
+      Strategy
+        .buildCoverage[A](strategyName, paths, nParams, pool)
+        .orElse(Strategy.parse[A](strategyName, pool))
+        .getOrElse(throw new IllegalArgumentException(s"unknown strategy: $strategyName"))
 
     val feedback = runScalaCheck(sourceFile, strategy, leaves, property)
     writer.write(SessionReport(methodName, sourceFile.getFileName.toString, tree, strategy.name, strategy.pool, feedback), outDir)

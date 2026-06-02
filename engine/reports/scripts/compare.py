@@ -52,11 +52,14 @@ SUMMARY_DIR = STATS_ROOT / "_summary"
 # ── Palette (editorial duo) ──────────────────────────────────────────────
 
 STRATEGY_COLORS = {
-    "random": "#2E5C8A",                # cobalt blue
-    "random-pool": "#1F8A70",           # deep teal
-    "mutation-guided": "#E67E22",       # vibrant orange
-    "mutation-guided-pool": "#8E44AD",  # plum
-    "coverage-guided": "#C0392B",       # brick red
+    "random": "#2E5C8A",                                 # cobalt blue
+    "random-pool": "#1F8A70",                            # deep teal
+    "mutation-guided": "#E67E22",                        # vibrant orange
+    "mutation-guided-pool": "#8E44AD",                   # plum
+    "coverage-guided": "#C0392B",                        # brick red
+    "coverage-guided-pool": "#117A65",                   # deep green
+    "coverage-guided-mutation-guided": "#B7950B",        # gold
+    "coverage-guided-mutation-guided-pool": "#6C3483",   # dark purple
 }
 FALLBACK_COLOR = "#7F8C8D"
 BORDER = "#2C3E50"
@@ -72,7 +75,10 @@ COV_TXT, MIS_TXT = "#196F3D", "#922B21"
 RANDOM = "random"
 
 # Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
-STRATEGY_ORDER = ["random", "random-pool", "mutation-guided", "mutation-guided-pool", "coverage-guided"]
+STRATEGY_ORDER = [
+    "random", "random-pool", "mutation-guided", "mutation-guided-pool",
+    "coverage-guided", "coverage-guided-pool", "coverage-guided-mutation-guided", "coverage-guided-mutation-guided-pool",
+]
 
 # Number of seed-runs found; set in main(), used in chart titles.
 SEED_COUNT = 0
