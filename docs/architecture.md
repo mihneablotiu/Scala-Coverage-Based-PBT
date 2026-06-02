@@ -89,9 +89,15 @@ literals mined from its body** (`ints`, `longs`, `doubles`, `strings` — what t
   walker does not descend into them; only the *call* shows up, as a
   leaf in the enclosing body.
 
-Each leaf records its source span (`pos`..`end`). Backed by
-Scalameta today; could be the Scala 3 compiler without touching the
-use case.
+Each leaf records its source span (`pos`..`end`). The builder also
+translates each branch guard into a small numeric condition language
+([`Predicate`](../engine/src/main/scala/domain/Predicate.scala)) when
+it can (comparisons, arithmetic, `&&`/`||`/`!`, boolean params,
+literal `case`s) and records the method's parameter count — both feed
+the `coverage-guided` branch-distance objective (§4). Guards it can't
+express (string/structure/`forall`) are left empty; that leaf just
+gets no gradient. Backed by Scalameta today; could be the Scala 3
+compiler without touching the use case.
 
 ### `SourceCoverageReader`
 
@@ -119,34 +125,81 @@ Prometheus — one new adapter, zero changes to the use case.
 
 ## 4. Strategies — sealed-trait dispatch, not a port
 
-Each `Strategy[A]` case class carries its own `gen` method:
+Each `Strategy[A]` produces the next input from the running feedback:
 
 ```
 val gen: Gen[A] = strategy.gen(feedback)
 ```
 
-Every case holds a
+Every strategy holds a
 [`Generatable[A]`](../engine/src/main/scala/domain/Generatable.scala)
 — the one type class that bundles a uniform draw (`arbitrary`), a
 mutation (`mutate`), and a pool-aware draw (`pooled`), folding into
-one what used to be three separate type classes (`Arbitrary` +
-`Mutator` + `Pooled`). The two `*-pool` cases also hold the mined
-`ConstantPool`. So the whole engine carries a single context bound,
-`[A: Generatable]`, instead of a copy-pasted trio.
+one what used to be three separate type classes. So the whole engine
+carries a single context bound, `[A: Generatable]`.
 
-**Why not a port?** Strategies are pure in-process modules with no
-side effects to hide. The use case picks the input generator at
-one specific point in the loop body; sealed-trait exhaustiveness
-captures that decision cleanly. The four are listed once in
-`Strategy.all`; `names` and `parse` derive from it, so adding a
-strategy is: one new case class, one entry in `Strategy.all`, and
-the same name in the Makefile's `STRATEGIES` list.
+There are **three feedback channels** layered over the `random`
+baseline, each attacking a different *kind* of hard branch:
 
-The `TestRunner` port's `property: A => Boolean` signature is
-honest about what a client passes in. Today the engine always
-returns `true` to ScalaCheck so coverage measurement keeps going
-regardless of the predicate's outcome, but a future client wiring
-a real assertion is free to depend on the boolean being honoured.
+- **pool** (`random-pool`) — `pooled` mixes in the literals mined
+  from the method's source (the `42`, the `"admin"`). Hits magic
+  *literal* branches.
+- **mutation** (`mutation-guided`) — 50/50 fresh draw vs. perturbing
+  a corpus seed (an input that previously covered a new leaf). Hits
+  *edge values* (`NaN`/`∞`, boundaries) the multi-scale `mutate`
+  emits.
+- **coverage-guided** — an autonomous **branch-distance** search
+  (§4a). Hits *numeric targets and relations between inputs*.
+
+The first two are four small `Strategy` case classes (`random`,
+`random-pool`, `mutation-guided`, `mutation-guided-pool`) listed in
+`Strategy.all`. The third **wraps** any of those four, giving eight
+strategies in total, up to `coverage-guided-mutation-guided-pool`
+(all three channels). The channels are **complementary** — a method
+like `compareInts` (a relation) is reachable only by the gradient,
+`accessLevel` (a magic string) only by the pool, `magnitude` (`NaN`)
+only by mutation — so the all-three composite covers the most.
+
+![Feedback channels are complementary](images/mechanisms.png)
+
+### 4a. The coverage-guided branch-distance objective
+
+`coverage-guided` is the one strategy that gets a genuinely new
+signal. Random only ever learns *hit or miss*; this strategy learns
+*how close a miss was*, and steers downhill — classic search-based
+testing (Korel; EvoSuite), in the spirit of targeted PBT (Löscher &
+Sagonas), but **autonomous** rather than user-driven:
+
+1. The builder has already turned each branch guard into a
+   [`Predicate.Cond`](../engine/src/main/scala/domain/Predicate.scala)
+   where possible (§3), and `BranchTree.leafPaths` gives each leaf
+   the conjunction of guards on its path.
+2. Each draw, it reads the **live coverage** (`feedback.coveredBranches`)
+   to see which leaves are still uncovered, binds the input's numeric
+   parameters, and computes the **branch distance** to the *nearest*
+   uncovered leaf (e.g. for `n == 700014`, distance `|n − 700014|`;
+   distances are raw, not normalised, so large gaps still slope).
+3. It hill-climbs: keep the lowest-distance input, mutate it
+   (multi-scale numeric steps), accept if closer, restart
+   occasionally. Once a leaf is covered it drops out of the live set
+   and the search re-targets the next.
+4. When no guard on the path is numerically expressible (strings,
+   structure), there's no gradient, so it **defers to its base
+   strategy** — which is exactly what makes the composites work:
+   `coverage-guided-pool` falls back to literal injection, etc.
+
+`CoverageGuided` is a plain `final class` (not a case class): it
+holds per-session mutable search state (the current best input), so
+unlike the stateless base strategies it isn't a value. One instance
+is built per session, so the state isn't shared. Adding a strategy
+is one entry in `Strategy.all` (a new channel base) plus the matching
+name in the Makefile's `STRATEGIES`.
+
+The `TestRunner` port's `property: A => Boolean` signature is honest
+about what a client passes in. Today the engine always returns `true`
+to ScalaCheck so coverage measurement keeps going regardless of the
+predicate's outcome, but a future client wiring a real assertion is
+free to depend on the boolean being honoured.
 
 ---
 
@@ -161,8 +214,8 @@ second's view. The composition root sidesteps this by running one
 strategy per invocation:
 
 ```
-sbt "engine/runMain app.Main random"
-sbt "engine/runMain app.Main mutation-guided"
+sbt "engine/runMain app.Main random 1"
+sbt "engine/runMain app.Main coverage-guided 1"
 ```
 
 Each invocation forks a fresh JVM (`fork := true` in `build.sbt`)
@@ -271,6 +324,9 @@ by_bench/<bench>.svg   horizontal bars per (method, strategy); each bar's
                        speed comparison against random
 suite.svg              horizontal bars per (bench, strategy)
 overall.svg            one bar per strategy across the whole suite
+blindspot.svg          % of random's blind spot each strategy recovers
+time_to_coverage.svg   coverage vs input budget (log x) — efficiency
+per_seed.csv           one row per (bench, method, strategy, seed)
 ```
 
 The split is deliberate: the engine produces the *measurement*,
@@ -285,7 +341,8 @@ rewritten without touching the other.
 |-----------------------------------------------|--------------------------------------------------------------------------------|
 | A new Scala branchy construct                 | One case in `ScalametaBranchTreeBuilder.visit` (+ a new `BranchTree` node only if its shape is genuinely different) |
 | A new input type                              | Provide a `Generatable[A]` via `Generatable.instance`. Built-ins (`Int`, `Long`, `Boolean`, `String`, `Double`, `Option[A]`, `List[A]`, `Map[K,V]`, tuples) live in `Generatable`; SUT-specific types are wired in `app.Generators` (see `Tree`) |
-| A new input-picking strategy                  | One new `Strategy[A]` case class with its own `gen`, one entry in `Strategy.all`, the same name in the Makefile's `STRATEGIES` |
+| A new input-picking strategy                  | One new `Strategy[A]` with its own `gen` + one entry in `Strategy.all` (and the name in the Makefile's `STRATEGIES`). `coverage-guided` wraps each base automatically |
+| A guard the gradient can't yet express        | One case in `ScalametaBranchTreeBuilder.condOf`/`exprOf` (e.g. a string or structural distance) + the matching case in `Predicate` |
 | A new coverage source                         | New `SourceCoverageReader` adapter                                              |
 | A new output format (HTML, Prometheus, …)     | New `CoverageReportWriter` adapter                                              |
 

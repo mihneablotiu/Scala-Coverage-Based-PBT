@@ -9,7 +9,7 @@ import os
 import runpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["hexagon.py", "loop.py"]
+SCRIPTS = ["hexagon.py", "loop.py", "mechanisms.py"]
 
 if __name__ == "__main__":
     for name in SCRIPTS:

@@ -4,7 +4,8 @@ import org.scalacheck.{Arbitrary, Gen}
 
 /** Everything a [[Strategy]] needs to produce inputs of type `A`:
   *   - `arbitrary` — a uniform draw (exactly ScalaCheck's `Arbitrary[A]`);
-  *   - `mutate` — a "nearby" variant of a seed (AFL-style edits);
+  *   - `mutate` — a variant of a seed: AFL-style edits and edge values, plus multi-scale ±2^k numeric steps so the coverage-guided climber can both
+  *     traverse large gaps and refine locally;
   *   - `pooled` — a fresh draw that splices in mined source literals ([[ConstantPool]]).
   *
   * One bound `[A: Generatable]` carries all three through the engine. New input types plug in by providing an instance via [[Generatable.instance]]

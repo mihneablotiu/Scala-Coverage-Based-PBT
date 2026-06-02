@@ -95,11 +95,9 @@ actually helps.
 ## 7. What this prototype does today
 
 1. We point the framework at our catalogue of small methods.
-2. For each method and each strategy (four today: random,
-   random-pool, mutation-guided, and mutation-guided-pool), we ask
-   an input generator for 10000 inputs (integers, longs, booleans,
-   strings, doubles, options, lists, maps, or little trees, as the
-   method needs).
+2. For each method and each strategy, we ask an input generator for
+   10000 inputs (integers, longs, booleans, strings, doubles,
+   options, lists, maps, or little trees, as the method needs).
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
@@ -109,19 +107,38 @@ actually helps.
 
 **Random** samples uniformly and ignores past observations — it is
 exactly what a ScalaCheck user gets today, and serves as the honest
-baseline. **Mutation-guided** keeps a list of "seeds" — inputs
-whose iteration covered a previously-uncovered branch — and roughly
-half the time picks a seed and asks for a nearby variant (flip a
-bit, bump an int, drop a list tail, swap one tuple component); the
-other half falls back to a fresh draw. The two **-pool** variants
-add *literal injection*: they mine the constants written in the
-method's own source (the `42` in `case 42`, say) and splice them
-into the draw — the one reliable way to hit needle-in-a-haystack
-literal branches that mutation can't bootstrap its way into.
+baseline. On top of it the framework adds three **feedback
+channels**, each attacking a different *kind* of hard branch:
 
-The project is a **measuring stick** with two needles: the part
-that observes and reports is identical across strategies; the part
-that picks the next input is the thing under study.
+- **Pool** mines the constants written in the method's own source
+  (the `42` in `case 42`, the string `"admin"`) and splices them
+  into the draw — the reliable way to hit needle-in-a-haystack
+  *literal* branches.
+- **Mutation-guided** keeps a list of "seeds" — inputs whose
+  iteration covered a previously-uncovered branch — and half the
+  time perturbs one (bump a number, drop a list tail, flip a bool),
+  which is good at reaching *edge values* like `NaN`/`∞`.
+- **Coverage-guided** is a "warmer / colder" homing game. Random
+  only ever learns "hit or miss"; this channel instead reads the
+  *guard* of an as-yet-uncovered branch straight from the source
+  (e.g. `n == 700014`) and measures **how far** the current input is
+  from satisfying it (here, `|n − 700014|`). It then keeps the
+  closest input and nudges it downhill until it lands on the branch.
+  It does this **on its own** — nobody writes the target by hand —
+  and it is the only channel that can steer *relations between
+  inputs* (e.g. make `a == −b`). Where a guard isn't a number
+  comparison (text, structure), it has no gradient and falls back to
+  the others.
+
+These channels **compose** (e.g. coverage-guided-mutation-guided-
+pool uses all three), and they are **complementary** — the pool
+hits magic literals, mutation hits float edges, the gradient hits
+numeric targets and relations — so combining all three covers the
+most.
+
+The project is a **measuring stick**: the part that observes and
+reports is identical across strategies; the part that picks the next
+input is the thing under study.
 
 ---
 
