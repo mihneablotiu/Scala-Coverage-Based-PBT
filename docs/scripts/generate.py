@@ -9,7 +9,7 @@ import os
 import runpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["loop.py", "mechanisms.py", "sources.py", "composition.py"]
+SCRIPTS = ["mechanisms.py", "composition.py", "sources.py", "strategies.py"]
 
 if __name__ == "__main__":
     for name in SCRIPTS:

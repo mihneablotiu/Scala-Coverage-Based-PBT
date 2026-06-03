@@ -77,7 +77,13 @@ composite covers the most.
 
 ## 4. The loop
 
-![Per-input feedback cycle](images/loop.png)
+![All four tactics combined](images/combined.png)
+
+Each tactic combined with the random baseline is drawn on its own —
+[pool](images/pool.png), [mutation](images/mutation.png),
+[gradient](images/gradient.png) — and [`sources.png`](images/sources.png)
+contrasts the single random source of stock ScalaCheck with this engine's
+four.
 
 The driver is ScalaCheck's own (`Test.check` over a
 `Prop.forAllNoShrink` whose generator is `Gen.delay(...)` re-read each
@@ -88,7 +94,7 @@ ScalaCheck. Per input:
 2. **run** the property (guarded, so a thrown exception still counts);
 3. **read** the offsets scoverage fired in the method's file;
 4. **mark** the leaves those offsets land inside as covered;
-5. **record** into [`Feedback`](../engine/src/main/scala/pbt/Feedback.scala)
+5. **record** into [`Feedback`](../engine/src/main/scala/pbt/strategy/Feedback.scala)
    and let each tactic `observe` the input.
 
 `Feedback` is the single running signal every tactic reads:
