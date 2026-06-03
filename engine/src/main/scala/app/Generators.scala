@@ -1,11 +1,11 @@
 package app
 
 import benchmark.data.Tree
-import domain.Generatable
 import org.scalacheck.Gen
+import pbt.gen.{ConstantPool, Generatable}
 
-/** [[Generatable]] instances for SUT-specific input types. This is the extension point for new types: the built-in primitive/collection instances
-  * live in [[Generatable]]; user types are wired here.
+/** [[Generatable]] instances for SUT-specific input types. The built-in primitives/collections live in [[Generatable]]; user types are wired here —
+  * this single file is the template for adding any new input type (give it `arbitrary`, `mutate`, `pooled`).
   */
 object Generators {
 
@@ -30,8 +30,8 @@ object Generators {
         )
     }
 
-    Generatable.instance(Gen.sized(s => grow(s.min(15), Generatable[Int].arbitrary)))(mutate)(p =>
-      Gen.sized(s => grow(s.min(15), Generatable[Int].pooled(p)))
-    )
+    def pooled(p: ConstantPool): Gen[Tree] = Gen.sized(s => grow(s.min(15), Generatable[Int].pooled(p)))
+
+    Generatable.instance(Gen.sized(s => grow(s.min(15), Generatable[Int].arbitrary)))(mutate)(pooled)
   }
 }

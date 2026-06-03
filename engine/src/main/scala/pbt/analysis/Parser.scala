@@ -1,82 +1,63 @@
-package adapter.driven.scalameta
+package pbt.analysis
 
-import domain.{BranchTree, ConstantPool, ParsedMethod, Pos, Predicate}
-import port.driven.BranchTreeBuilder
+import pbt.Pos
+import pbt.gen.ConstantPool
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.meta._
 
-/** Parses a source file with Scalameta and walks the named method's body into a [[ParsedMethod]]. `visit` matches the branching constructs; `descend`
-  * recurses through structural children so branches buried in lambda bodies (folds, `map`, `filter`), `val` RHSes, etc. are still found.
-  *
-  * Each arm also gets a [[Predicate.Cond]] guard when the engine can express it numerically (`if`/`match`-on-literal/`case … if`); these feed the
-  * coverage-guided branch-distance objective. Guards it can't express (string ops, `forall`, sizes, …) are left `None` — that leaf simply gets no
-  * gradient. Parameter names are resolved to positional `Par(i)` via `env`, extended by `case` binders.
-  *
-  * Two deliberate rules: nested `def`/`object`/`class` are opaque (separate scopes), and a leaf records its full source span so coverage matches by
-  * span containment rather than exact offsets.
-  */
-object ScalametaBranchTreeBuilder {
+/** The method's decision graph plus its parameter count (so the gradient can bind inputs to parameters). */
+final case class ParsedMethod(tree: BranchTree, paramCount: Int)
 
-  def apply(): BranchTreeBuilder = new Live
+/** Parses a source file with Scalameta and walks the named method's body into a [[BranchTree]]. `visit` matches the branching constructs; `descend`
+  * recurses so branches buried in lambdas/folds and `val` RHSes still surface.
+  *
+  * Each arm records what its guard told us: a numeric [[Predicate.Cond]] when expressible (for the gradient) and the literals it mentions (for the
+  * pool). Two deliberate rules keep the graph honest: nested `def`/`object`/`class` are opaque (their own scope — only the call shows), and a leaf
+  * stores its full source span so coverage matches by span containment, not exact offsets.
+  */
+object Parser {
 
   private type Env = Map[String, Predicate.Expr]
 
-  private final class Live extends BranchTreeBuilder {
-    override def build(sourceFile: Path, methodName: String): Option[ParsedMethod] = {
-      val text = Files.readString(sourceFile, StandardCharsets.UTF_8)
-      text.parse[Source].toOption.flatMap { src =>
-        src.collect { case d: Defn.Def if d.name.value == methodName => d }.headOption.map { defn =>
-          val params = defn.paramClauseGroups.flatMap(_.paramClauses).flatMap(_.values).map(_.name).collect { case n: Term.Name => n.value }
-          val env    = params.zipWithIndex.map { case (name, i) => name -> (Predicate.Par(i): Predicate.Expr) }.toMap
-          ParsedMethod(visit(defn.body, env), mineLiterals(defn.body), params.size)
-        }
+  def parse(sourceFile: Path, method: String): Option[ParsedMethod] = {
+    val text = Files.readString(sourceFile, StandardCharsets.UTF_8)
+    text.parse[Source].toOption.flatMap { src =>
+      src.collect { case d: Defn.Def if d.name.value == method => d }.headOption.map { defn =>
+        val params = defn.paramClauseGroups.flatMap(_.paramClauses).flatMap(_.values).map(_.name).collect { case n: Term.Name => n.value }
+        val env    = params.zipWithIndex.map { case (name, i) => name -> (Predicate.Par(i): Predicate.Expr) }.toMap
+        ParsedMethod(visit(defn.body, env), params.size)
       }
     }
   }
 
-  /** Only the kinds a [[ConstantPool]] consumer injects (`ints`, `longs`, `doubles`, `strings`). */
-  private def mineLiterals(body: Tree): ConstantPool =
-    body.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
-      case (p, l: Lit.Int)    => p.copy(ints = p.ints + l.value)
-      case (p, l: Lit.Long)   => p.copy(longs = p.longs + l.value)
-      case (p, l: Lit.Double) => p.copy(doubles = p.doubles + l.value.asInstanceOf[Double]) // Lit.Double.value is typed Any in 4.17
-      case (p, l: Lit.String) => p.copy(strings = p.strings + l.value)
-      case (p, _)             => p
-    }
-
   private def visit(tree: Tree, env: Env): BranchTree = tree match {
     case t: Term.If =>
       val cond  = condOf(t.cond, env)
-      val then0 = BranchTree.Arm("then", cond, visit(t.thenp, env))
-      // An `if` without `else` has a synthetic, zero-width `else` — no meaningful coverage path, so drop it.
+      val then0 = BranchTree.Arm("then", cond, litsOf(t.cond), visit(t.thenp, env))
+      // An `if` without `else` has a synthetic, zero-width `else` — no meaningful path, so drop it. The else satisfies ¬cond, which no literal helps.
       val elses =
         if (t.elsep.pos.start == t.elsep.pos.end) Nil
-        else List(BranchTree.Arm("else", cond.map(Predicate.Not), visit(t.elsep, env)))
+        else List(BranchTree.Arm("else", cond.map(Predicate.Not), ConstantPool.empty, visit(t.elsep, env)))
       BranchTree.Branch("if", textOf(t.cond), then0 :: elses)
     case t: Term.Match =>
       val scrut = exprOf(t.expr, env)
       BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, env)))
     case t: Term.While =>
-      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, visit(t.body, env))))
+      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, ConstantPool.empty, visit(t.body, env))))
     case t: Term.ForYield        => forBranch(t, "for-yield", "yield", t.enumsBlock.enums, t.body, env)
     case t: Term.For             => forBranch(t, "for", "do", t.enumsBlock.enums, t.body, env)
-    case t: Term.PartialFunction =>
-      BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, env)))
+    case t: Term.PartialFunction => BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, env)))
     // Nested methods/types are their own scope — do not expand; the call site stays a leaf.
-    case _: Defn.Def | _: Defn.Object | _: Defn.Class | _: Defn.Trait =>
-      BranchTree.Sequence(Nil)
-    case other => descend(other, env)
+    case _: Defn.Def | _: Defn.Object | _: Defn.Class | _: Defn.Trait => BranchTree.Sequence(Nil)
+    case other                                                        => descend(other, env)
   }
 
   private def descend(tree: Tree, env: Env): BranchTree = {
     val branchy = tree.children.iterator
       .map(visit(_, env))
-      .flatMap {
-        case BranchTree.Sequence(cs) => cs
-        case n                       => List(n)
-      }
+      .flatMap { case BranchTree.Sequence(cs) => cs; case n => List(n) }
       .filter(BranchTree.hasBranch)
       .toList
     branchy match {
@@ -86,15 +67,15 @@ object ScalametaBranchTreeBuilder {
     }
   }
 
-  /** A for-comprehension desugars to `withFilter`/`map` calls that scoverage records as a single statement spanning the whole expression. So a
-    * trivial body becomes one leaf over that whole span; a body with its own `if`/`match` keeps those (they map to their own statements).
+  /** A for-comprehension desugars to `withFilter`/`map`, which scoverage records as one statement spanning the whole expression — so a trivial body
+    * becomes one leaf over that span; a body with its own `if`/`match` keeps those.
     */
   private def forBranch(t: Tree, kind: String, armLabel: String, enums: List[Enumerator], body: Term, env: Env): BranchTree = {
     val arm = visit(body, env) match {
       case _: BranchTree.Leaf => BranchTree.Leaf(posOf(t), endOf(t), lineOf(body), textOf(body))
       case branchy            => branchy
     }
-    BranchTree.Branch(kind, enumsOf(enums), List(BranchTree.Arm(armLabel, None, arm)))
+    BranchTree.Branch(kind, clip(enums.map(_.toString).mkString("; ")), List(BranchTree.Arm(armLabel, None, ConstantPool.empty, arm)))
   }
 
   private def armOf(c: Case, scrut: Option[Predicate.Expr], env: Env): BranchTree.Arm = {
@@ -106,10 +87,21 @@ object ScalametaBranchTreeBuilder {
       case Pat.Var(name) => for (g <- c.cond; s <- scrut; cnd <- condOf(g, env + (name.value -> s))) yield cnd
       case _             => None
     }
-    BranchTree.Arm(label, guard, visit(c.body, env))
+    val literals = litsOf(c.pat) ++ c.cond.fold(ConstantPool.empty)(litsOf)
+    BranchTree.Arm(label, guard, literals, visit(c.body, env))
   }
 
-  // ── Scalameta condition → domain Predicate (numeric subset only; anything else ⇒ None) ──────────
+  /** Literals mentioned anywhere in a guard expression, by type — the pool the satisfying arm carries. */
+  private def litsOf(t: Tree): ConstantPool =
+    t.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
+      case (p, l: Lit.Int)    => p.copy(ints = p.ints + l.value)
+      case (p, l: Lit.Long)   => p.copy(longs = p.longs + l.value)
+      case (p, l: Lit.Double) => p.copy(doubles = p.doubles + l.value.asInstanceOf[Double]) // Lit.Double.value is typed Any in 4.17
+      case (p, l: Lit.String) => p.copy(strings = p.strings + l.value)
+      case (p, _)             => p
+    }
+
+  // ── Scalameta guard → numeric Predicate (the gradient's subset; anything else ⇒ None) ──────────
 
   private def condOf(t: Tree, env: Env): Option[Predicate.Cond] = t match {
     case t: Term.ApplyInfix =>
@@ -154,12 +146,9 @@ object ScalametaBranchTreeBuilder {
     case _ => None
   }
 
-  private def enumsOf(enums: List[Enumerator]): String = clip(enums.map(_.toString).mkString("; "))
-
-  private def posOf(t: Tree): Pos = t.pos.start
-  private def endOf(t: Tree): Pos = t.pos.end
-  // Scalameta lines are 0-based; scoverage and editors are 1-based.
-  private def lineOf(t: Tree): Int    = t.pos.startLine + 1
+  private def posOf(t: Tree): Pos     = t.pos.start
+  private def endOf(t: Tree): Pos     = t.pos.end
+  private def lineOf(t: Tree): Int    = t.pos.startLine + 1 // Scalameta lines are 0-based; scoverage and editors are 1-based
   private def textOf(t: Tree): String = clip(t.toString)
   private def clip(s: String): String = s.replaceAll("\\s+", " ").trim.take(80)
 }

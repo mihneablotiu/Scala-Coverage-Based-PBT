@@ -1,100 +1,78 @@
 package app
 
-import adapter.driven.fileSystem.FileSystemCoverageReportWriter
-import adapter.driven.scalameta.ScalametaBranchTreeBuilder
-import adapter.driven.scoverage.ScoverageSourceCoverageReader
-import adapter.driving.fileSystem.FileSystemTestRunner
-import app.Generators.tree // Generatable[Tree] — the user-type extension point
+import app.Generators.tree // Generatable[Tree] — a user-type instance, the extension point
 import benchmark._
-import domain.{Generatable, Strategy}
-import org.scalacheck.{rng, Test}
-import port.driving.TestRunner
-import usecase.TestRunnerHandler
+import pbt.gen.Generatable
+import pbt.strategy.Strategy
+import pbt.{Coverage, Pbt}
 
 import java.nio.file.{Path, Paths}
 
-/** Composition root. Runs every benchmark against one (strategy, seed) pair from the CLI.
+/** Experiment harness: runs every benchmark method against one (strategy, seed) pair from the CLI.
   *
-  * One JVM per (strategy, seed): scoverage's `Invoker` accumulates hits process-globally with no notion of a session, so each
-  * `engine/runMain app.Main <strategy> <seed>` is forked (`fork := true`). The Makefile sweeps STRATEGIES × SEEDS. Reports land under
-  * `engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`.
+  * One forked JVM per pair (scoverage's `Invoker` is process-global with no notion of a session, so a shared JVM would leak coverage between runs).
+  * The Makefile sweeps strategies × seeds; each report lands at `engine/reports/statistics/<category>/<method>/<strategy>/seed=NN/coverage.json`.
+  *
+  * This is *experiment* wiring. A user runs a single property with one call — see [[Pbt.check]].
   */
 object Main {
 
-  private val SutRoot: Path     = Paths.get("sut")
-  private val ReportsBase: Path = Paths.get("engine/reports/statistics")
-  private val Inputs            = 10000
+  private val SutRoot     = Paths.get("sut")
+  private val ReportsBase = Paths.get("engine/reports/statistics")
+  private val Inputs      = 10000
 
-  private def src(category: String): Path = Paths.get(s"sut/src/main/scala/benchmark/$category.scala")
+  private def source(category: String): Path = Paths.get(s"sut/src/main/scala/benchmark/$category.scala")
 
-  def main(args: Array[String]): Unit = {
-    val strategy = args.headOption.filter(Strategy.names.contains)
-    val seed     = args.lift(1).flatMap(_.toLongOption)
-    (strategy, seed) match {
-      case (Some(name), Some(s)) => runAll(name, s)
-      case _                     =>
+  def main(args: Array[String]): Unit =
+    (args.headOption.flatMap(Strategy.byName), args.lift(1).flatMap(_.toLongOption)) match {
+      case (Some(strategy), Some(seed)) => runAll(strategy, seed)
+      case _                            =>
         println("usage: engine/runMain app.Main <strategy> <seed>")
         println(s"  strategies: ${Strategy.names.mkString(", ")}")
-        println("  seed:       any signed Long (the Makefile sweeps SEEDS=1..10)")
         sys.exit(1)
     }
-  }
 
-  private def runAll(strategyName: String, seed: Long): Unit = {
-    val params  = Test.Parameters.default.withInitialSeed(rng.Seed(seed)).withMinSuccessfulTests(Inputs)
-    val handler = new TestRunnerHandler(
-      treeBuilder = ScalametaBranchTreeBuilder(),
-      sourceCoverage = ScoverageSourceCoverageReader(SutRoot),
-      writer = FileSystemCoverageReportWriter(),
-      params = params
-    )
-    val seedLabel                     = f"seed=$seed%02d"
-    def runner(c: String): TestRunner = new FileSystemTestRunner(handler, src(c), ReportsBase, Some(seedLabel))
+  private def runAll(strategy: Strategy, seed: Long): Unit = {
+    val coverage = new Coverage(SutRoot)
 
-    // The SUT methods return String/Boolean; the engine measures coverage regardless of the verdict,
-    // so the property body just exercises the method and returns true.
-    def bench[A: Generatable](r: TestRunner, name: String)(body: A => Any): Unit =
-      r.runTests[A](name, strategyName)(in => { body(in); true })
+    // The SUT methods return String/Boolean; coverage is measured regardless of the verdict, so the property just exercises the method.
+    def bench[A: Generatable](category: String, method: String)(body: A => Any): Unit =
+      Pbt
+        .check[A](source(category), method, strategy, coverage, seed, Inputs)(in => { body(in); true })
+        .write(ReportsBase.resolve(category).resolve(method).resolve(strategy.name).resolve(f"seed=$seed%02d"))
 
-    val saturated = runner("Saturated")
-    bench(saturated, "sign")(Saturated.sign)
-    bench(saturated, "headSign")(Saturated.headSign)
+    bench[Int]("Saturated", "sign")(Saturated.sign)
+    bench[List[Int]]("Saturated", "headSign")(Saturated.headSign)
 
-    val magic = runner("MagicConstants")
-    bench(magic, "classify")(MagicConstants.classify)
-    bench(magic, "accessLevel")(MagicConstants.accessLevel)
-    bench(magic, "luckyLong")(MagicConstants.luckyLong)
-    bench(magic, "routeOption")(MagicConstants.routeOption)
-    bench(magic, "lookupRole")(MagicConstants.lookupRole)
-    bench[(Boolean, Int)](magic, "gatedMagic")((MagicConstants.gatedMagic _).tupled)
+    bench[Int]("MagicConstants", "classify")(MagicConstants.classify)
+    bench[String]("MagicConstants", "accessLevel")(MagicConstants.accessLevel)
+    bench[Long]("MagicConstants", "luckyLong")(MagicConstants.luckyLong)
+    bench[Option[Int]]("MagicConstants", "routeOption")(MagicConstants.routeOption)
+    bench[Map[String, Int]]("MagicConstants", "lookupRole")(MagicConstants.lookupRole)
+    bench[(Boolean, Int)]("MagicConstants", "gatedMagic")((MagicConstants.gatedMagic _).tupled)
 
-    val narrow = runner("NarrowRanges")
-    bench(narrow, "tightBand")(NarrowRanges.tightBand)
-    bench(narrow, "longBand")(NarrowRanges.longBand)
-    bench(narrow, "magnitude")(NarrowRanges.magnitude)
-    bench(narrow, "nearPi")(NarrowRanges.nearPi)
+    bench[Int]("NarrowRanges", "tightBand")(NarrowRanges.tightBand)
+    bench[Long]("NarrowRanges", "longBand")(NarrowRanges.longBand)
+    bench[Double]("NarrowRanges", "magnitude")(NarrowRanges.magnitude)
+    bench[Double]("NarrowRanges", "nearPi")(NarrowRanges.nearPi)
 
-    val relational = runner("Relational")
-    bench[(Int, Int)](relational, "compareInts")((Relational.compareInts _).tupled)
-    bench[(List[Int], List[Int])](relational, "isReverseOf")((Relational.isReverseOf _).tupled)
-    bench[(Map[String, Int], Map[String, Int])](relational, "sameKeys")((Relational.sameKeys _).tupled)
+    bench[(Int, Int)]("Relational", "compareInts")((Relational.compareInts _).tupled)
+    bench[(List[Int], List[Int])]("Relational", "isReverseOf")((Relational.isReverseOf _).tupled)
+    bench[(Map[String, Int], Map[String, Int])]("Relational", "sameKeys")((Relational.sameKeys _).tupled)
 
-    val structural = runner("StructuralInvariants")
-    bench(structural, "isStrictlySorted")(StructuralInvariants.isStrictlySorted)
-    bench(structural, "runLengthShape")(StructuralInvariants.runLengthShape)
-    bench(structural, "bstShape")(StructuralInvariants.bstShape)
+    bench[List[Int]]("StructuralInvariants", "isStrictlySorted")(StructuralInvariants.isStrictlySorted)
+    bench[List[Int]]("StructuralInvariants", "runLengthShape")(StructuralInvariants.runLengthShape)
+    bench[benchmark.data.Tree]("StructuralInvariants", "bstShape")(StructuralInvariants.bstShape)
 
-    val deep = runner("DeepConditionals")
-    bench[(Int, Int, Int)](deep, "triangleType")((DeepConditionals.triangleType _).tupled)
-    bench(deep, "deepClassify")(DeepConditionals.deepClassify)
-    bench(deep, "gridShape")(DeepConditionals.gridShape)
-    bench[(Int, String, List[Int])](deep, "mixedClassify")((DeepConditionals.mixedClassify _).tupled)
+    bench[(Int, Int, Int)]("DeepConditionals", "triangleType")((DeepConditionals.triangleType _).tupled)
+    bench[Int]("DeepConditionals", "deepClassify")(DeepConditionals.deepClassify)
+    bench[List[List[Int]]]("DeepConditionals", "gridShape")(DeepConditionals.gridShape)
+    bench[(Int, String, List[Int])]("DeepConditionals", "mixedClassify")((DeepConditionals.mixedClassify _).tupled)
 
-    val staged = runner("StagedValidity")
-    bench(staged, "parseVersion")(StagedValidity.parseVersion)
-    bench(staged, "parseSignedInt")(StagedValidity.parseSignedInt)
-    bench[(List[Int], Int)](staged, "elementAt")((StagedValidity.elementAt _).tupled)
-    bench(staged, "balancedBrackets")(StagedValidity.balancedBrackets)
-    bench(staged, "luhnCheck")(StagedValidity.luhnCheck)
+    bench[String]("StagedValidity", "parseVersion")(StagedValidity.parseVersion)
+    bench[String]("StagedValidity", "parseSignedInt")(StagedValidity.parseSignedInt)
+    bench[(List[Int], Int)]("StagedValidity", "elementAt")((StagedValidity.elementAt _).tupled)
+    bench[String]("StagedValidity", "balancedBrackets")(StagedValidity.balancedBrackets)
+    bench[List[Int]]("StagedValidity", "luhnCheck")(StagedValidity.luhnCheck)
   }
 }
