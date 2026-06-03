@@ -46,40 +46,25 @@ final class Pbt(sutRoot: Path) {
       tactics.foreach(_.observe(input, feedback))
       true
     }
+    val t0 = System.nanoTime()
     Test.check(Test.Parameters.default.withInitialSeed(rng.Seed(seed)).withMinSuccessfulTests(inputs).withWorkers(1), prop)
+    val elapsedMillis = (System.nanoTime() - t0) / 1000000L
 
-    Report(method, sourceFile.getFileName.toString, strategy.name, tree, pool, feedback)
+    Report(method, sourceFile.getFileName.toString, strategy.name, tree, pool, feedback, elapsedMillis)
   }
-
-  /** Multi-argument convenience: write the property with natural parameters (no tuple at the call site). Internally the input is a tuple — exactly
-    * what ScalaCheck does, and what the gradient's `bind` splits back into parameters.
-    */
-  def check2[A: Generatable, B: Generatable](
-      sourceFile: Path,
-      method: String,
-      strategy: Strategy,
-      seed: Long = 0L,
-      inputs: Int = 10000
-  )(property: (A, B) => Boolean): Report[(A, B)] =
-    check[(A, B)](sourceFile, method, strategy, seed, inputs)(property.tupled)
-
-  def check3[A: Generatable, B: Generatable, C: Generatable](
-      sourceFile: Path,
-      method: String,
-      strategy: Strategy,
-      seed: Long = 0L,
-      inputs: Int = 10000
-  )(property: (A, B, C) => Boolean): Report[(A, B, C)] =
-    check[(A, B, C)](sourceFile, method, strategy, seed, inputs)(property.tupled)
 
   /** The leaves some fired offset lands inside — leaf-only branch coverage. */
   private def covered(leaves: List[BranchTree.Leaf], fired: Set[Pos]): Set[Pos] =
     leaves.iterator.filter(l => fired.exists(l.contains)).map(_.pos).toSet
 
-  /** Mix the active tactics' proposals with a plain random draw, all equally weighted, so random stays a healthy escape hatch. No proposals ⇒ pure
-    * random ⇒ stock ScalaCheck.
+  /** Mix the active tactics' proposals with a plain random draw. Random keeps a fixed minority share (`RandomWeight` vs `TacticWeight` each) so it stays
+    * an escape hatch and seeds the corpus, but the guided tactics — the point of the run — get the bulk of the draws (FuzzChick: rarely generate, mostly
+    * use the guided proposer). No proposals ⇒ pure random ⇒ stock ScalaCheck, untouched.
     */
+  private val RandomWeight = 1
+  private val TacticWeight = 4
+
   private def mix[A](random: Gen[A], proposals: List[Gen[A]]): Gen[A] =
     if (proposals.isEmpty) random
-    else Gen.frequency(((1, random) :: proposals.map((1, _))): _*)
+    else Gen.frequency(((RandomWeight, random) :: proposals.map((TacticWeight, _))): _*)
 }

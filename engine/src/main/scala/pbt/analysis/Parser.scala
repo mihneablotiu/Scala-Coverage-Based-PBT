@@ -15,9 +15,9 @@ final case class ParsedMethod(tree: BranchTree, paramCount: Int, pool: ConstantP
   * recurses so branches buried in lambdas/folds and `val` RHSes still surface.
   *
   * Each arm records the numeric [[Predicate.Cond]] its guard implies when expressible (for the gradient). The pool, by contrast, is mined in bulk:
-  * *every* literal in the method body, regardless of where it sits — over-approximating is cheap (a literal that fits no branch is just a wasted draw)
-  * and means we never miss one. Two deliberate rules keep the graph honest: nested `def`/`object`/`class` are opaque (their own scope — only the call
-  * shows), and a leaf stores its full source span so coverage matches by span containment, not exact offsets.
+  * *every* literal in the method body, regardless of where it sits — over-approximating is cheap (a literal that fits no branch is just a wasted
+  * draw) and means we never miss one. Two deliberate rules keep the graph honest: nested `def`/`object`/`class` are opaque (their own scope — only
+  * the call shows), and a leaf stores its full source span so coverage matches by span containment, not exact offsets.
   */
 object Parser {
 

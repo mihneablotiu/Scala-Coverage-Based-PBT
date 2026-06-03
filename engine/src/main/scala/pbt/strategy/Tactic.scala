@@ -36,10 +36,16 @@ object Tactic {
       Option.when(!pool.isEmpty && leaves.exists(p => !fb.covered(p)))(g.pooled(pool))
   }
 
-  /** Perturb a corpus seed — an input that previously grew coverage (FuzzChick / AFL). */
+  /** Perturb a corpus seed — an input that previously grew coverage (FuzzChick / AFL). Bias hard toward the *most recent* grower: it sits on the current
+    * coverage frontier, so mutating it is the springboard that ratchets one rung deeper (extend the sorted prefix, grow the tree). A slice of draws still
+    * pick an older seed for diversity. This lightweight power schedule is what lets mutation climb deep structured targets instead of spinning on shallow
+    * seeds.
+    */
   private final class MutationTactic[A](g: Generatable[A]) extends Tactic[A] {
     def propose(fb: Feedback[A]): Option[Gen[A]] =
-      Option.when(fb.corpus.nonEmpty)(Gen.oneOf(fb.corpus).flatMap(g.mutate))
+      Option.when(fb.corpus.nonEmpty)(
+        Gen.frequency(4 -> g.mutate(fb.corpus.last), 1 -> Gen.oneOf(fb.corpus).flatMap(g.mutate))
+      )
   }
 
   /** Hill-climb the branch distance to the nearest uncovered leaf (Korel / targeted PBT): keep the closest input seen, then mutate it. */

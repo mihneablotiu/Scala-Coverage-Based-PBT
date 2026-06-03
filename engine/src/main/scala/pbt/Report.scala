@@ -11,11 +11,14 @@ import java.nio.file.{Files, Path}
   * scripts. `pool` is the literals mined from the method's branch conditions — exactly the values the pool tactic can inject.
   *
   * {{{
-  *   { "method", "sourceFile", "strategy", "totalInputs",
+  *   { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
   *     "growthCurve": [cumulative covered leaves after each input],
   *     "pool":        { "ints": [...], "strings": [...] },   // the pool's injectable values
   *     "branchTree":  <nested tree; each leaf carries firstHitInput: int | null> }
   * }}}
+  *
+  * `elapsedMillis` times just the generate-run-measure loop (not parsing), so `totalInputs / elapsedMillis` is the per-strategy throughput — what the
+  * tactics cost on top of the shared coverage-measurement overhead.
   */
 final case class Report[A](
     method: String,
@@ -23,7 +26,8 @@ final case class Report[A](
     strategy: String,
     tree: Option[BranchTree],
     pool: ConstantPool,
-    feedback: Feedback[A]
+    feedback: Feedback[A],
+    elapsedMillis: Long
 ) {
 
   def write(outDir: Path): Unit = {
@@ -38,6 +42,7 @@ final case class Report[A](
        |  "sourceFile": ${str(sourceFile)},
        |  "strategy": ${str(strategy)},
        |  "totalInputs": ${feedback.iteration},
+       |  "elapsedMillis": $elapsedMillis,
        |  "growthCurve": ${feedback.growthCurve.mkString("[", ", ", "]")},
        |  "pool": ${poolJson(pool)},
        |  "branchTree": ${tree.fold("null")(treeJson(_, firstHits, indent = 4))}
@@ -47,7 +52,9 @@ final case class Report[A](
 
   private def poolJson(p: ConstantPool): String = {
     def nums[N](xs: Set[N])(implicit ord: Ordering[N]): String = xs.toSeq.sorted.mkString("[", ", ", "]")
-    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "doubles": ${nums(p.doubles)}, "strings": ${p.strings.toSeq.sorted.map(str).mkString("[", ", ", "]")}}"""
+    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "doubles": ${nums(p.doubles)}, "strings": ${p.strings.toSeq.sorted
+        .map(str)
+        .mkString("[", ", ", "]")}}"""
   }
 
   private def treeJson(tree: BranchTree, firstHits: Map[Pos, Int], indent: Int): String = {

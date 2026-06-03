@@ -99,9 +99,14 @@ class Cell:
     strategy: str
     seed: int
     total_inputs: int
+    elapsed_millis: int
     growth_curve: list
     branch_tree: Optional[dict]
     path: Path
+
+    @property
+    def inputs_per_sec(self) -> Optional[float]:
+        return None if self.elapsed_millis <= 0 else 1000.0 * self.total_inputs / self.elapsed_millis
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,7 @@ def load_cells() -> list:
                 strategy=jp.parts[-3],
                 seed=int(m.group(1)),
                 total_inputs=data["totalInputs"],
+                elapsed_millis=data.get("elapsedMillis", 0),
                 growth_curve=data["growthCurve"],
                 branch_tree=data["branchTree"],
                 path=jp.parent,
@@ -671,7 +677,7 @@ def write_per_seed_csv(cells: list, out_path: Path) -> None:
     rank = {s: i for i, s in enumerate(STRATEGY_ORDER)}
     with out_path.open("w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["bench", "method", "strategy", "seed", "covered", "total", "pct", "saturation_input"])
+        w.writerow(["bench", "method", "strategy", "seed", "covered", "total", "pct", "saturation_input", "elapsed_millis", "inputs_per_sec"])
         for c in sorted(cells, key=lambda x: (x.bench, x.method, rank.get(x.strategy, len(STRATEGY_ORDER)), x.strategy, x.seed)):
             s = stats(c)
             w.writerow([
@@ -683,6 +689,8 @@ def write_per_seed_csv(cells: list, out_path: Path) -> None:
                 s.total,
                 f"{s.pct:.2f}",
                 "" if s.saturation is None else s.saturation,
+                c.elapsed_millis,
+                "" if c.inputs_per_sec is None else f"{c.inputs_per_sec:.0f}",
             ])
 
 
@@ -850,6 +858,52 @@ def write_time_to_coverage(curves: dict, out_path: Path) -> None:
     plt.close(fig)
 
 
+# ── Throughput (inputs/sec per strategy) ─────────────────────────────────
+#
+# "Do all those tactics make us slow?" Every strategy runs the same methods,
+# and the dominant per-input cost — reading the scoverage measurement file —
+# is shared, so the per-strategy throughput delta isolates the tactics' own
+# overhead (pool injection, gradient distance, mutation). Reported as the
+# median inputs/sec across all (method, seed) cells, plus the slowdown vs
+# random. (Each forked JVM runs the methods in the same order, so JIT-warmup
+# bias is consistent across strategies and the comparison stays fair.)
+
+
+def throughput(cells: list) -> dict:
+    """{strategy: median inputs/sec across its (method, seed) cells}."""
+    by_strat: dict = {}
+    for c in cells:
+        ips = c.inputs_per_sec
+        if ips is not None:
+            by_strat.setdefault(c.strategy, []).append(ips)
+    return {s: statistics.median(v) for s, v in by_strat.items() if v}
+
+
+def write_throughput_bars(ips_by_strategy: dict, out_path: Path) -> None:
+    strategies = ordered_strategies(ips_by_strategy.keys())
+    if not strategies:
+        return
+    fig_h = max(2.8, 0.9 * len(strategies) + 1.4)
+    fig, ax = plt.subplots(figsize=(9.5, fig_h), facecolor=BG)
+    top = max(ips_by_strategy.values()) if ips_by_strategy else 1.0
+    for i, strategy in enumerate(strategies):
+        ips = ips_by_strategy[strategy]
+        ax.barh(i, ips, 0.55, color=color_for(strategy), edgecolor=BORDER, linewidth=0.6)
+        ax.text(ips + top * 0.01, i, f"{ips:,.0f}/s", va="center", fontsize=11, color=TEXT)
+    ax.set_yticks(list(range(len(strategies))))
+    ax.set_yticklabels(strategies, color=TEXT, fontsize=11)
+    ax.invert_yaxis()
+    ax.set_xlim(0, top * 1.18)
+    ax.set_xlabel("inputs / second (median across cells)")
+    ax.set_title(f"Throughput per strategy (median across K={SEED_COUNT} seeds × methods)", color=TEXT, fontsize=12, pad=10)
+    ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
+    style_axes(ax)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, facecolor=fig.get_facecolor())
+    plt.close(fig)
+
+
 def main() -> None:
     if not STATS_ROOT.exists():
         sys.exit(f"No data at {STATS_ROOT}. Run `make run` first.")
@@ -888,7 +942,9 @@ def main() -> None:
     suite_sig = write_significance(by_bench, SUMMARY_DIR / "significance.csv")
     curves = time_to_coverage(cells)
     write_time_to_coverage(curves, SUMMARY_DIR / "time_to_coverage.svg")
-    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, per_seed.csv, significance.csv in {SUMMARY_DIR}")
+    ips_by_strategy = throughput(cells)
+    write_throughput_bars(ips_by_strategy, SUMMARY_DIR / "throughput.svg")
+    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, throughput.svg, per_seed.csv, significance.csv in {SUMMARY_DIR}")
 
     # Suite-wide blind-spot summary: of the leaves random never reached, how many did
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
@@ -917,6 +973,17 @@ def main() -> None:
         print(f"  {'strategy':<38}{'med%':>6}{'rand%':>7}{'Â12':>7}  {'magnitude':<11}{'p':>10}  sig")
         for _, s, _n, mp, rp, a12, mag, p in suite_sig:
             print(f"  {s:<38}{mp:>5.1f}%{rp:>6.1f}%{a12:>7.3f}  {mag:<11}{p:>10.3g}  {'*' if p < 0.05 else ''}")
+
+    # Throughput: do the tactics slow us down? Median inputs/sec per strategy, with slowdown vs random.
+    if ips_by_strategy:
+        rand_ips = ips_by_strategy.get(RANDOM)
+        print()
+        print(f"Throughput (median inputs/sec across K={SEED_COUNT} seeds × methods):")
+        print(f"  {'strategy':<40}{'inputs/sec':>12}{'vs random':>11}")
+        for strat in ordered_strategies(ips_by_strategy.keys()):
+            ips = ips_by_strategy[strat]
+            rel = f"{rand_ips / ips:.2f}× slower" if rand_ips and ips > 0 and strat != RANDOM else "—"
+            print(f"  {strat:<40}{ips:>12,.0f}{rel:>11}")
 
     # Efficiency: suite-wide coverage reached at a few input budgets (median across seeds).
     print()

@@ -41,10 +41,11 @@ object Main {
     // The SUT methods return String/Boolean; coverage is measured regardless of the verdict, so the property just exercises the method.
     def bench[A: Generatable](category: String, method: String)(body: A => Any): Unit =
       pbt.check[A](source(category), method, strategy, seed, Inputs)(in => { body(in); true }).write(out(category, method))
+    // Multi-arg methods are checked over a tuple input — the same thing ScalaCheck does — so the single `check` covers every arity; the body tuples in.
     def bench2[A: Generatable, B: Generatable](category: String, method: String)(body: (A, B) => Any): Unit =
-      pbt.check2[A, B](source(category), method, strategy, seed, Inputs)((a, b) => { body(a, b); true }).write(out(category, method))
+      pbt.check[(A, B)](source(category), method, strategy, seed, Inputs)(in => { body.tupled(in); true }).write(out(category, method))
     def bench3[A: Generatable, B: Generatable, C: Generatable](category: String, method: String)(body: (A, B, C) => Any): Unit =
-      pbt.check3[A, B, C](source(category), method, strategy, seed, Inputs)((a, b, c) => { body(a, b, c); true }).write(out(category, method))
+      pbt.check[(A, B, C)](source(category), method, strategy, seed, Inputs)(in => { body.tupled(in); true }).write(out(category, method))
 
     bench[Int]("Saturated", "sign")(Saturated.sign)
     bench[List[Int]]("Saturated", "headSign")(Saturated.headSign)
@@ -82,5 +83,11 @@ object Main {
     bench2[String, Int]("Mixed", "classifyCode")(Mixed.classifyCode)
     bench2[String, Double]("Mixed", "classifyFloat")(Mixed.classifyFloat)
     bench3[String, Int, Double]("Mixed", "triage")(Mixed.triage)
+
+    bench[List[Int]]("Sequences", "risingRun")(Sequences.risingRun)
+    bench[benchmark.data.Tree]("Sequences", "deepTree")(Sequences.deepTree)
+    bench2[List[Int], List[Int]]("Sequences", "twoRuns")(Sequences.twoRuns)
+    bench2[List[Int], benchmark.data.Tree]("Sequences", "listThenTree")(Sequences.listThenTree)
+    bench3[List[Int], List[Int], List[Int]]("Sequences", "threeRuns")(Sequences.threeRuns)
   }
 }
