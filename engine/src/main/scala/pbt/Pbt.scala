@@ -31,7 +31,7 @@ final class Pbt(sutRoot: Path) {
     val tree    = parsed.map(_.tree)
     val leaves  = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
     val tactics = parsed.fold(List.empty[Tactic[A]])(pm => strategy.tactics.toList.map(Tactic.of(_, g, pm)))
-    val pool    = tree.fold(ConstantPool.empty)(BranchTree.leafLiterals(_).values.foldLeft(ConstantPool.empty)(_ ++ _))
+    val pool    = parsed.fold(ConstantPool.empty)(_.pool)
 
     var feedback = Feedback.empty[A]
 

@@ -1,7 +1,5 @@
 package pbt.analysis
 
-import pbt.gen.ConstantPool
-
 /** The decision graph of one method body:
   *   - [[Branch]] — a decision point (`if`, `match`, `while`, `for`, partial function); `kind` is a free-form label so a new construct needs no
   *     change here or in the renderer.
@@ -9,9 +7,8 @@ import pbt.gen.ConstantPool
   *   - [[Leaf]] — a terminal arm. **A leaf is what "a branch" means for coverage**: one distinct path through the body, identified by its source
   *     span.
   *
-  * Each [[Arm]] carries what its guard told us: an optional [[Predicate.Cond]] (the gradient's branch distance) and the literals it mentions (the
-  * pool). Only the *satisfying* side of a guard carries literals — taking the `else` of `n == 42` needs `n ≠ 42`, which no literal helps — so they
-  * propagate down the arm they actually unlock.
+  * Each [[Arm]] carries the numeric [[Predicate.Cond]] its guard implies, when expressible — the gradient's branch distance. (Literals for the pool
+  * are not held per-arm; they are mined in bulk on the whole method — see [[ParsedMethod]].)
   */
 sealed trait BranchTree
 
@@ -25,7 +22,7 @@ object BranchTree {
     def contains(offset: Pos): Boolean = offset >= pos && offset < math.max(end, pos + 1)
   }
 
-  final case class Arm(label: String, guard: Option[Predicate.Cond], literals: ConstantPool, body: BranchTree)
+  final case class Arm(label: String, guard: Option[Predicate.Cond], body: BranchTree)
 
   /** Leaves in document order, but only if the tree has a decision point — a pure-`Leaf` (non-branchy) method reports `0/0` and stays out of the
     * comparison.
@@ -42,18 +39,6 @@ object BranchTree {
       case Branch(_, _, arms) => arms.flatMap(a => go(a.body, path ++ a.guard.toList, expressible && a.guard.isDefined)).toMap
     }
     go(tree, Nil, expressible = true)
-  }
-
-  /** Per-leaf literals: the pool of every guard on the path the leaf *satisfies*. The pool tactic injects, for each uncovered leaf, the literals it
-    * still needs.
-    */
-  def leafLiterals(tree: BranchTree): Map[Pos, ConstantPool] = {
-    def go(t: BranchTree, pool: ConstantPool): Map[Pos, ConstantPool] = t match {
-      case l: Leaf            => Map(l.pos -> pool)
-      case Sequence(children) => children.flatMap(go(_, pool)).toMap
-      case Branch(_, _, arms) => arms.flatMap(a => go(a.body, pool ++ a.literals)).toMap
-    }
-    go(tree, ConstantPool.empty)
   }
 
   def hasBranch(tree: BranchTree): Boolean = tree match {

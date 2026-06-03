@@ -6,15 +6,18 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.meta._
 
-/** The method's decision graph plus its parameter count (so the gradient can bind inputs to parameters). */
-final case class ParsedMethod(tree: BranchTree, paramCount: Int)
+/** The method's decision graph, its parameter count (so the gradient can bind inputs to parameters), and its constant pool — every literal in the
+  * body (for the pool tactic to inject).
+  */
+final case class ParsedMethod(tree: BranchTree, paramCount: Int, pool: ConstantPool)
 
 /** Parses a source file with Scalameta and walks the named method's body into a [[BranchTree]]. `visit` matches the branching constructs; `descend`
   * recurses so branches buried in lambdas/folds and `val` RHSes still surface.
   *
-  * Each arm records what its guard told us: a numeric [[Predicate.Cond]] when expressible (for the gradient) and the literals it mentions (for the
-  * pool). Two deliberate rules keep the graph honest: nested `def`/`object`/`class` are opaque (their own scope — only the call shows), and a leaf
-  * stores its full source span so coverage matches by span containment, not exact offsets.
+  * Each arm records the numeric [[Predicate.Cond]] its guard implies when expressible (for the gradient). The pool, by contrast, is mined in bulk:
+  * *every* literal in the method body, regardless of where it sits — over-approximating is cheap (a literal that fits no branch is just a wasted draw)
+  * and means we never miss one. Two deliberate rules keep the graph honest: nested `def`/`object`/`class` are opaque (their own scope — only the call
+  * shows), and a leaf stores its full source span so coverage matches by span containment, not exact offsets.
   */
 object Parser {
 
@@ -26,7 +29,7 @@ object Parser {
       src.collect { case d: Defn.Def if d.name.value == method => d }.headOption.map { defn =>
         val params = defn.paramClauseGroups.flatMap(_.paramClauses).flatMap(_.values).map(_.name).collect { case n: Term.Name => n.value }
         val env    = params.zipWithIndex.map { case (name, i) => name -> (Predicate.Par(i): Predicate.Expr) }.toMap
-        ParsedMethod(visit(defn.body, env), params.size)
+        ParsedMethod(visit(defn.body, env), params.size, litsOf(defn.body))
       }
     }
   }
@@ -34,21 +37,20 @@ object Parser {
   private def visit(tree: Tree, env: Env): BranchTree = tree match {
     case t: Term.If =>
       val cond  = condOf(t.cond, env)
-      val then0 = BranchTree.Arm("then", cond, litsOf(t.cond), visit(t.thenp, env))
-      // An `if` without `else` has a synthetic, zero-width `else` — no meaningful path, so drop it. The else satisfies ¬cond, which no literal helps.
+      val then0 = BranchTree.Arm("then", cond, visit(t.thenp, env))
+      // An `if` without `else` has a synthetic, zero-width `else` — no meaningful path, so drop it.
       val elses =
         if (t.elsep.pos.start == t.elsep.pos.end) Nil
-        else List(BranchTree.Arm("else", cond.map(Predicate.Not), ConstantPool.empty, visit(t.elsep, env)))
+        else List(BranchTree.Arm("else", cond.map(Predicate.Not), visit(t.elsep, env)))
       BranchTree.Branch("if", textOf(t.cond), then0 :: elses)
     case t: Term.Match =>
       val scrut = exprOf(t.expr, env)
-      // The scrutinee is part of the branch condition too: a literal it mentions (e.g. the key in `roles.get("admin")`) is what an arm needs to match.
-      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, litsOf(t.expr), env)))
+      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, env)))
     case t: Term.While =>
-      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, litsOf(t.expr), visit(t.body, env))))
+      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, visit(t.body, env))))
     case t: Term.ForYield        => forBranch(t, "for-yield", "yield", t.enumsBlock.enums, t.body, env)
     case t: Term.For             => forBranch(t, "for", "do", t.enumsBlock.enums, t.body, env)
-    case t: Term.PartialFunction => BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, ConstantPool.empty, env)))
+    case t: Term.PartialFunction => BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, env)))
     // Nested methods/types are their own scope — do not expand; the call site stays a leaf.
     case _: Defn.Def | _: Defn.Object | _: Defn.Class | _: Defn.Trait => BranchTree.Sequence(Nil)
     case other                                                        => descend(other, env)
@@ -75,10 +77,10 @@ object Parser {
       case _: BranchTree.Leaf => BranchTree.Leaf(posOf(t), endOf(t), lineOf(body), textOf(body))
       case branchy            => branchy
     }
-    BranchTree.Branch(kind, clip(enums.map(_.toString).mkString("; ")), List(BranchTree.Arm(armLabel, None, ConstantPool.empty, arm)))
+    BranchTree.Branch(kind, clip(enums.map(_.toString).mkString("; ")), List(BranchTree.Arm(armLabel, None, arm)))
   }
 
-  private def armOf(c: Case, scrut: Option[Predicate.Expr], scrutLits: ConstantPool, env: Env): BranchTree.Arm = {
+  private def armOf(c: Case, scrut: Option[Predicate.Expr], env: Env): BranchTree.Arm = {
     val patText                       = textOf(c.pat)
     val label                         = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
     val guard: Option[Predicate.Cond] = c.pat match {
@@ -87,11 +89,10 @@ object Parser {
       case Pat.Var(name) => for (g <- c.cond; s <- scrut; cnd <- condOf(g, env + (name.value -> s))) yield cnd
       case _             => None
     }
-    val literals = scrutLits ++ litsOf(c.pat) ++ c.cond.fold(ConstantPool.empty)(litsOf)
-    BranchTree.Arm(label, guard, literals, visit(c.body, env))
+    BranchTree.Arm(label, guard, visit(c.body, env))
   }
 
-  /** Literals mentioned anywhere in a guard expression, by type — the pool the satisfying arm carries. */
+  /** Every literal in a tree, by type — used to mine the whole method body into its constant pool (only the types a [[Generatable]] can inject). */
   private def litsOf(t: Tree): ConstantPool =
     t.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
       case (p, l: Lit.Int)    => p.copy(ints = p.ints + l.value)

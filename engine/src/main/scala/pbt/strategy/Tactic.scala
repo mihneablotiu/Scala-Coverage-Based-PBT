@@ -23,17 +23,17 @@ object Tactic {
   case object Gradient extends Kind // hill-climb branch distance to the nearest uncovered leaf
 
   def of[A](kind: Kind, g: Generatable[A], pm: ParsedMethod): Tactic[A] = kind match {
-    case Pool     => new PoolTactic(g, BranchTree.leafLiterals(pm.tree))
+    case Pool     => new PoolTactic(g, pm.pool, BranchTree.leaves(pm.tree).map(_.pos).toSet)
     case Mutation => new MutationTactic(g)
     case Gradient => new GradientTactic(g, BranchTree.leafPaths(pm.tree), pm.paramCount)
   }
 
-  /** Inject the literals that still-uncovered leaves need (DRAGEN²-style mining, coverage-filtered). As leaves are covered, their literals retire. */
-  private final class PoolTactic[A](g: Generatable[A], leafLiterals: Map[Pos, ConstantPool]) extends Tactic[A] {
-    def propose(fb: Feedback[A]): Option[Gen[A]] = {
-      val active = leafLiterals.iterator.collect { case (pos, pool) if !fb.covered(pos) => pool }.foldLeft(ConstantPool.empty)(_ ++ _)
-      Option.when(!active.isEmpty)(g.pooled(active))
-    }
+  /** Inject the literals mined from the method (DRAGEN²-style mining). Coverage-guided in that it stands down once every leaf is covered — there is
+    * nothing left for a literal to unlock.
+    */
+  private final class PoolTactic[A](g: Generatable[A], pool: ConstantPool, leaves: Set[Pos]) extends Tactic[A] {
+    def propose(fb: Feedback[A]): Option[Gen[A]] =
+      Option.when(!pool.isEmpty && leaves.exists(p => !fb.covered(p)))(g.pooled(pool))
   }
 
   /** Perturb a corpus seed — an input that previously grew coverage (FuzzChick / AFL). */

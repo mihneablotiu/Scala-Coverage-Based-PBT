@@ -40,12 +40,12 @@ POOL = f"""digraph pool {{
   {STYLE}
   label=<<b>pool</b>  +  random>;
   {_rand()}
-  pool [label=<<b>pool</b><br/><font point-size="10" color="{TEAL_A}">literals from the<br/>branch conditions</font>>, fillcolor="{TEAL}"];
-  cov  [label=<still-uncovered<br/>branches>, fillcolor="{TEAL}"];
+  pool [label=<<b>pool</b><br/><font point-size="10" color="{TEAL_A}">every literal mined<br/>from the method</font>>, fillcolor="{TEAL}"];
+  cov  [label=<any branch<br/>still uncovered?>, fillcolor="{TEAL}"];
   {_common()}
   rand -> pick [label="typed value"]; pool -> pick [label="typed value"];
   pick -> run; run -> cov [label="coverage", style=dashed];
-  cov -> pool [label="inject their literals", style=dashed, color="{TEAL_E}", fontcolor="{TEAL_A}"];
+  cov -> pool [label="keep injecting", style=dashed, color="{TEAL_E}", fontcolor="{TEAL_A}"];
 }}"""
 
 MUTATION = f"""digraph mutation {{
@@ -84,7 +84,7 @@ COMBINED = f"""digraph combined {{
   {{ rank=same; rand; pool; mut; grad; }}
   rand -> pick [label="typed value"]; pool -> pick; mut -> pick; grad -> pick;
   pick -> run; run -> cov [style=dashed];
-  cov -> pool [label="uncovered → literals", style=dashed, color="{TEAL_E}",  fontcolor="{TEAL_A}"];
+  cov -> pool [label="inject while uncovered", style=dashed, color="{TEAL_E}",  fontcolor="{TEAL_A}"];
   cov -> mut  [label="keep if new",          style=dashed, color="{ORANGE_E}", fontcolor="{ORANGE_A}"];
   cov -> grad [label="keep the closest",      style=dashed, color="{ROSE_E}",   fontcolor="{ROSE_A}"];
 }}"""
