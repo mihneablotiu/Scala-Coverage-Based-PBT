@@ -44,12 +44,13 @@ object Main {
     bench[Int]("Saturated", "sign")(Saturated.sign)
     bench[List[Int]]("Saturated", "headSign")(Saturated.headSign)
 
-    bench[Int]("MagicConstants", "classify")(MagicConstants.classify)
-    bench[String]("MagicConstants", "accessLevel")(MagicConstants.accessLevel)
-    bench[Long]("MagicConstants", "luckyLong")(MagicConstants.luckyLong)
-    bench[Option[Int]]("MagicConstants", "routeOption")(MagicConstants.routeOption)
-    bench[Map[String, Int]]("MagicConstants", "lookupRole")(MagicConstants.lookupRole)
-    bench[(Boolean, Int)]("MagicConstants", "gatedMagic")((MagicConstants.gatedMagic _).tupled)
+    bench[Int]("NumericTargets", "squareTarget")(NumericTargets.squareTarget)
+    bench[Int]("NumericTargets", "narrowWindow")(NumericTargets.narrowWindow)
+    bench[(Int, Int)]("NumericTargets", "product")((NumericTargets.product _).tupled)
+    bench[(Int, Int, Int)]("NumericTargets", "pythagorean")((NumericTargets.pythagorean _).tupled)
+
+    bench[Int]("MagicLiterals", "dispatch")(MagicLiterals.dispatch)
+    bench[String]("MagicLiterals", "accessLevel")(MagicLiterals.accessLevel)
 
     bench[Int]("NarrowRanges", "tightBand")(NarrowRanges.tightBand)
     bench[Long]("NarrowRanges", "longBand")(NarrowRanges.longBand)
@@ -65,7 +66,6 @@ object Main {
     bench[benchmark.data.Tree]("StructuralInvariants", "bstShape")(StructuralInvariants.bstShape)
 
     bench[(Int, Int, Int)]("DeepConditionals", "triangleType")((DeepConditionals.triangleType _).tupled)
-    bench[Int]("DeepConditionals", "deepClassify")(DeepConditionals.deepClassify)
     bench[List[List[Int]]]("DeepConditionals", "gridShape")(DeepConditionals.gridShape)
     bench[(Int, String, List[Int])]("DeepConditionals", "mixedClassify")((DeepConditionals.mixedClassify _).tupled)
 
@@ -74,5 +74,9 @@ object Main {
     bench[(List[Int], Int)]("StagedValidity", "elementAt")((StagedValidity.elementAt _).tupled)
     bench[String]("StagedValidity", "balancedBrackets")(StagedValidity.balancedBrackets)
     bench[List[Int]]("StagedValidity", "luhnCheck")(StagedValidity.luhnCheck)
+
+    bench[Int]("RealWorld", "leapYear")(RealWorld.leapYear)
+    bench[(Int, Int)]("RealWorld", "gcd")((RealWorld.gcd _).tupled)
+    bench[String]("RealWorld", "isValidIp")(RealWorld.isValidIp)
   }
 }

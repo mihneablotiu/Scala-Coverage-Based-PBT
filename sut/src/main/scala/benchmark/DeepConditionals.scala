@@ -1,7 +1,7 @@
 package benchmark
 
 /** Deeply nested conditionals and conjunctions: reaching an inner arm needs several guards true at once, so the joint probability under random
-  * sampling collapses. The deep nesting makes rich thesis graphs, and the innermost arms hide a magic constant the pool can reach.
+  * sampling collapses. Guards are relations and ranges (no magic literal to inject), so the gradient must work for the inner arms.
   */
 object DeepConditionals {
 
@@ -11,18 +11,6 @@ object DeepConditionals {
     else if (a == b && b == c) "equilateral"
     else if (a == b || b == c || a == c) "isosceles"
     else "scalene"
-
-  def deepClassify(n: Int): String =
-    if (n > 0)
-      if (n > 1000)
-        if (n % 2 == 0)
-          if (n % 7 == 0)
-            if (n == 700014) "magic-seven" else "big-even-div7"
-          else "big-even"
-        else if (n % 5 == 0) "big-odd-div5"
-        else "big-odd"
-      else "small-positive"
-    else "non-positive"
 
   // A real matrix (>= 4 equal-length rows of width >= 4) is something random lists almost never form.
   def gridShape(rows: List[List[Int]]): String =
