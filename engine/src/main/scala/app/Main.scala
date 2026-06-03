@@ -35,46 +35,52 @@ object Main {
   private def runAll(strategy: Strategy, seed: Long): Unit = {
     val pbt = new Pbt(SutRoot)
 
+    def out(category: String, method: String): Path =
+      ReportsBase.resolve(category).resolve(method).resolve(strategy.name).resolve(f"seed=$seed%02d")
+
     // The SUT methods return String/Boolean; coverage is measured regardless of the verdict, so the property just exercises the method.
     def bench[A: Generatable](category: String, method: String)(body: A => Any): Unit =
-      pbt
-        .check[A](source(category), method, strategy, seed, Inputs)(in => { body(in); true })
-        .write(ReportsBase.resolve(category).resolve(method).resolve(strategy.name).resolve(f"seed=$seed%02d"))
+      pbt.check[A](source(category), method, strategy, seed, Inputs)(in => { body(in); true }).write(out(category, method))
+    def bench2[A: Generatable, B: Generatable](category: String, method: String)(body: (A, B) => Any): Unit =
+      pbt.check2[A, B](source(category), method, strategy, seed, Inputs)((a, b) => { body(a, b); true }).write(out(category, method))
+    def bench3[A: Generatable, B: Generatable, C: Generatable](category: String, method: String)(body: (A, B, C) => Any): Unit =
+      pbt.check3[A, B, C](source(category), method, strategy, seed, Inputs)((a, b, c) => { body(a, b, c); true }).write(out(category, method))
 
     bench[Int]("Saturated", "sign")(Saturated.sign)
     bench[List[Int]]("Saturated", "headSign")(Saturated.headSign)
+    bench2[Boolean, Boolean]("Saturated", "boolGate")(Saturated.boolGate)
+    bench[Int]("Saturated", "smallRange")(Saturated.smallRange)
 
-    bench[Int]("NumericTargets", "squareTarget")(NumericTargets.squareTarget)
-    bench[Int]("NumericTargets", "narrowWindow")(NumericTargets.narrowWindow)
-    bench[(Int, Int)]("NumericTargets", "product")((NumericTargets.product _).tupled)
-    bench[(Int, Int, Int)]("NumericTargets", "pythagorean")((NumericTargets.pythagorean _).tupled)
+    bench[String]("Literals", "accessLevel")(Literals.accessLevel)
+    bench[String]("Literals", "httpMethod")(Literals.httpMethod)
+    bench[String]("Literals", "featureToggle")(Literals.featureToggle)
+    bench[Option[Int]]("Literals", "routeOption")(Literals.routeOption)
+    bench[Map[String, Int]]("Literals", "lookupRole")(Literals.lookupRole)
 
-    bench[Int]("MagicLiterals", "dispatch")(MagicLiterals.dispatch)
-    bench[String]("MagicLiterals", "accessLevel")(MagicLiterals.accessLevel)
+    bench[Int]("NumericSearch", "squareTarget")(NumericSearch.squareTarget)
+    bench[Int]("NumericSearch", "cubeTarget")(NumericSearch.cubeTarget)
+    bench[Int]("NumericSearch", "narrowWindow")(NumericSearch.narrowWindow)
+    bench[Int]("NumericSearch", "tightBand")(NumericSearch.tightBand)
+    bench2[Int, Int]("NumericSearch", "product")(NumericSearch.product)
+    bench2[Int, Int]("NumericSearch", "difference")(NumericSearch.difference)
+    bench2[Int, Int]("NumericSearch", "compareInts")(NumericSearch.compareInts)
+    bench3[Int, Int, Int]("NumericSearch", "pythagorean")(NumericSearch.pythagorean)
 
-    bench[Int]("NarrowRanges", "tightBand")(NarrowRanges.tightBand)
-    bench[Long]("NarrowRanges", "longBand")(NarrowRanges.longBand)
-    bench[Double]("NarrowRanges", "magnitude")(NarrowRanges.magnitude)
-    bench[Double]("NarrowRanges", "nearPi")(NarrowRanges.nearPi)
+    bench[Double]("Edges", "magnitude")(Edges.magnitude)
+    bench[Double]("Edges", "nearPi")(Edges.nearPi)
+    bench[Double]("Edges", "floatClass")(Edges.floatClass)
 
-    bench[(Int, Int)]("Relational", "compareInts")((Relational.compareInts _).tupled)
-    bench[(List[Int], List[Int])]("Relational", "isReverseOf")((Relational.isReverseOf _).tupled)
-    bench[(Map[String, Int], Map[String, Int])]("Relational", "sameKeys")((Relational.sameKeys _).tupled)
+    bench[String]("Frontier", "parseVersion")(Frontier.parseVersion)
+    bench[String]("Frontier", "isValidIp")(Frontier.isValidIp)
+    bench[String]("Frontier", "balancedBrackets")(Frontier.balancedBrackets)
+    bench[List[Int]]("Frontier", "isStrictlySorted")(Frontier.isStrictlySorted)
+    bench[benchmark.data.Tree]("Frontier", "bstShape")(Frontier.bstShape)
+    bench2[List[Int], List[Int]]("Frontier", "isReverseOf")(Frontier.isReverseOf)
+    bench2[Map[String, Int], Map[String, Int]]("Frontier", "sameKeys")(Frontier.sameKeys)
+    bench[List[Int]]("Frontier", "luhnCheck")(Frontier.luhnCheck)
 
-    bench[List[Int]]("StructuralInvariants", "isStrictlySorted")(StructuralInvariants.isStrictlySorted)
-    bench[benchmark.data.Tree]("StructuralInvariants", "bstShape")(StructuralInvariants.bstShape)
-
-    bench[(Int, Int, Int)]("DeepConditionals", "triangleType")((DeepConditionals.triangleType _).tupled)
-    bench[List[List[Int]]]("DeepConditionals", "gridShape")(DeepConditionals.gridShape)
-    bench[(Int, String, List[Int])]("DeepConditionals", "mixedClassify")((DeepConditionals.mixedClassify _).tupled)
-
-    bench[String]("StagedValidity", "parseVersion")(StagedValidity.parseVersion)
-    bench[String]("StagedValidity", "parseSignedInt")(StagedValidity.parseSignedInt)
-    bench[(List[Int], Int)]("StagedValidity", "elementAt")((StagedValidity.elementAt _).tupled)
-    bench[String]("StagedValidity", "balancedBrackets")(StagedValidity.balancedBrackets)
-    bench[List[Int]]("StagedValidity", "luhnCheck")(StagedValidity.luhnCheck)
-
-    bench[Int]("RealWorld", "leapYear")(RealWorld.leapYear)
-    bench[String]("RealWorld", "isValidIp")(RealWorld.isValidIp)
+    bench2[String, Int]("Mixed", "classifyCode")(Mixed.classifyCode)
+    bench2[String, Double]("Mixed", "classifyFloat")(Mixed.classifyFloat)
+    bench3[String, Int, Double]("Mixed", "triage")(Mixed.triage)
   }
 }

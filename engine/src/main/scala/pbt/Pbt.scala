@@ -50,6 +50,27 @@ final class Pbt(sutRoot: Path) {
     Report(method, sourceFile.getFileName.toString, strategy.name, tree, feedback)
   }
 
+  /** Multi-argument convenience: write the property with natural parameters (no tuple at the call site). Internally the input is a tuple — exactly
+    * what ScalaCheck does, and what the gradient's `bind` splits back into parameters.
+    */
+  def check2[A: Generatable, B: Generatable](
+      sourceFile: Path,
+      method: String,
+      strategy: Strategy,
+      seed: Long = 0L,
+      inputs: Int = 10000
+  )(property: (A, B) => Boolean): Report[(A, B)] =
+    check[(A, B)](sourceFile, method, strategy, seed, inputs)(property.tupled)
+
+  def check3[A: Generatable, B: Generatable, C: Generatable](
+      sourceFile: Path,
+      method: String,
+      strategy: Strategy,
+      seed: Long = 0L,
+      inputs: Int = 10000
+  )(property: (A, B, C) => Boolean): Report[(A, B, C)] =
+    check[(A, B, C)](sourceFile, method, strategy, seed, inputs)(property.tupled)
+
   /** The leaves some fired offset lands inside — leaf-only branch coverage. */
   private def covered(leaves: List[BranchTree.Leaf], fired: Set[Pos]): Set[Pos] =
     leaves.iterator.filter(l => fired.exists(l.contains)).map(_.pos).toSet
