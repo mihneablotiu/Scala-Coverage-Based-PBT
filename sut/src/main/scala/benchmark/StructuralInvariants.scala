@@ -15,18 +15,21 @@ object StructuralInvariants {
     else if (xs.lazyZip(xs.tail).forall(_ <= _)) "non-decreasing"
     else "unsorted"
 
-  def runLengthShape(xs: List[Int]): String = {
-    val longestRun = xs
-      .lazyZip(xs.tail)
-      .foldLeft((1, 1)) { case ((run, best), (a, b)) =>
-        if (a <= b) (run + 1, math.max(best, run + 1)) else (1, best)
-      }
-      ._2
+  // `isEmpty` must be checked first: `xs.tail` on the empty list throws, so the empty arm would be
+  // unreachable dead code if the run-length fold ran before the guard.
+  def runLengthShape(xs: List[Int]): String =
     if (xs.isEmpty) "empty"
-    else if (longestRun == xs.size) "fully-non-decreasing"
-    else if (longestRun >= xs.size / 2) "mostly-ordered"
-    else "scattered"
-  }
+    else {
+      val longestRun = xs
+        .lazyZip(xs.tail)
+        .foldLeft((1, 1)) { case ((run, best), (a, b)) =>
+          if (a <= b) (run + 1, math.max(best, run + 1)) else (1, best)
+        }
+        ._2
+      if (longestRun == xs.size) "fully-non-decreasing"
+      else if (longestRun >= xs.size / 2) "mostly-ordered"
+      else "scattered"
+    }
 
   def bstShape(t: Tree): String = {
     def isBst(node: Tree, lo: Int, hi: Int): Boolean = node match {
