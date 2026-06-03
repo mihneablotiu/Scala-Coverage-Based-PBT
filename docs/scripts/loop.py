@@ -1,9 +1,8 @@
-"""Per-iteration feedback cycle — conceptual view.
+"""Per-input feedback cycle — conceptual view.
 
-A closed cycle of four conceptual stages plus the accumulating session
-state at its centre. The input-picking stage lives inside the use case
-(it is a plain module, not a driven port), so it is coloured as a
-domain step rather than a port step.
+A closed cycle of four stages plus the accumulating Feedback at its
+centre: draw an input (mixing the strategy's tactics with random), run
+the property, snapshot coverage, fold it into Feedback, repeat.
 
 Run: ``python3 docs/scripts/loop.py``.
 """
@@ -36,11 +35,11 @@ R = 3.5
 
 # Four cycle nodes around the centre, plus the centre accumulator.
 NODES = [
-    # (angle°, title,            subtitle,                 fill,           w,    h)
-    ( 90, "Pick Input",          "selected strategy",      COLOR_DOMAIN,  3.0, 1.3),
-    (  0, "Property",            "exercise the SUT",       COLOR_ADAPTER, 3.0, 1.3),
-    (270, "Coverage Reader",     "snapshot scoverage",     COLOR_PORT,    3.2, 1.3),
-    (180, "Session Feedback",    "accumulator + view",     COLOR_DOMAIN,  3.2, 1.3),
+    # (angle°, title,         subtitle,               fill,           w,    h)
+    ( 90, "Draw input",       "tactics + random",     COLOR_DOMAIN,  3.0, 1.3),
+    (  0, "Property",         "exercise the SUT",     COLOR_ADAPTER, 3.0, 1.3),
+    (270, "Coverage",         "snapshot scoverage",   COLOR_PORT,    3.2, 1.3),
+    (180, "Feedback",         "covered + corpus",     COLOR_DOMAIN,  3.2, 1.3),
 ]
 
 positions = []
@@ -87,6 +86,6 @@ labeled_box(ax, CX - 1.8, CY - 0.55, 3.6, 1.1,
             subtitle="feedback grows",
             fill=COLOR_DATA, title_size=13, subtitle_size=10)
 
-draw_title(ax, W / 2, H - 0.35, "Per-iteration Feedback Cycle", fontsize=20)
+draw_title(ax, W / 2, H - 0.35, "Per-input Feedback Cycle", fontsize=20)
 
 save(fig, "loop")

@@ -47,7 +47,7 @@ def cell_x(j: int) -> float:
     return X0 + j * (CW + GAP)
 
 
-ax.text(W / 2, H - 0.45, "Feedback channels are complementary", ha="center", va="center", fontsize=17, fontweight="bold", color=COLOR_TEXT)
+ax.text(W / 2, H - 0.45, "The tactics are complementary", ha="center", va="center", fontsize=17, fontweight="bold", color=COLOR_TEXT)
 
 for j, (name, col) in enumerate(CHANNELS):
     ax.text(cell_x(j) + CW / 2, H - 1.35, name, ha="center", va="center", fontsize=12.5, fontweight="bold", color=col)
@@ -68,7 +68,7 @@ for i, (label, marks) in enumerate(ROWS):
 
 ax.text(
     W / 2, 0.55,
-    "Each channel cracks a different kind of branch → coverage-guided-mutation-guided-pool combines all three.\n"
+    "Each tactic cracks a different kind of branch → coverage-guided-mutation-guided-pool combines all three.\n"
     "Pure structure / parsing is reached by none — the open frontier.",
     ha="center", va="center", fontsize=10, style="italic", color=COLOR_SOFT,
 )

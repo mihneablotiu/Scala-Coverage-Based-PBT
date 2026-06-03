@@ -8,12 +8,11 @@ Outputs go to ``docs/images/<name>.{png,svg}``.
 
 Usage::
 
-    from shapes import box, arrow, column, save
-    fig, ax = canvas(width=18, height=10)
-    column(ax, x=0.5, y=0.5, w=3.5, h=9, label="Driving adapters")
-    box(ax, x=1, y=4, w=2.5, h=1.4, label="Application", fill=COLOR_ADAPTER)
-    arrow(ax, 3.5, 4.7, 4.5, 4.7)
-    save(fig, "hexagon")
+    from shapes import canvas, labeled_box, arrow, save, COLOR_DOMAIN
+    fig, ax = canvas(width=14, height=11)
+    labeled_box(ax, x=1, y=4, w=3, h=1.3, title="Draw input", subtitle="tactics + random", fill=COLOR_DOMAIN)
+    arrow(ax, 4, 4.7, 5, 4.7)
+    save(fig, "loop")
 """
 
 from __future__ import annotations
