@@ -201,7 +201,11 @@ which reads those JSONs and writes:
   chart per bench whose bars carry, beside each strategy's
   coverage %, the input that reached it and (for non-random
   strategies) the speed comparison against random; plus
-  per-bench and suite-wide aggregate bars.
+  per-bench and suite-wide aggregate bars;
+- and a small table (`significance.csv`) reporting, for each
+  strategy, *how reliably* it beats random across the repeated
+  runs — an effect size and a standard significance test — so
+  "better" is a measured claim, not an impression.
 
 The split is intentional: the engine produces the *measurement*,
 the scripts produce the *presentation*. Either side can be

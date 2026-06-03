@@ -27,6 +27,10 @@ written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) an
     per_seed.csv         — one row per (bench, method, strategy, seed) with
                            covered/total/pct/saturation_input. Lets you do
                            ad-hoc analysis without re-loading the JSONs.
+    significance.csv     — per bench + suite-wide, each non-random strategy
+                           vs random: Vargha–Delaney Â₁₂ effect size (+
+                           magnitude) and Mann–Whitney U p-value over the K
+                           per-seed coverage %s (Arcuri–Briand 2014).
 
 Run: ``python3 engine/reports/scripts/compare.py``  (or ``make analyze``)
 """
@@ -38,8 +42,10 @@ import re
 import statistics
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import NormalDist
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -680,6 +686,114 @@ def write_per_seed_csv(cells: list, out_path: Path) -> None:
             ])
 
 
+# ── Effect size + significance vs random ─────────────────────────────────
+#
+# "Median is higher" is not a claim. For a randomized algorithm the SBST
+# community (Arcuri & Briand, "A Practical Guide for Using Statistical Tests
+# to Assess Randomized Algorithms in SE", 2014) reports two things: the
+# Vargha–Delaney Â₁₂ effect size — P(a run of the strategy beats a run of
+# random) — and the Mann–Whitney U test for whether the difference is
+# significant. Both are computed over the K per-seed coverage percentages
+# (per bench and suite-wide), stdlib-only so there is no scipy dependency.
+
+
+def _avg_ranks(values: list) -> list:
+    """1-based ranks; tied values share their mean rank (needed for Mann–Whitney with ties)."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg = (i + j) / 2 + 1  # mean of the 1-based ranks i+1 … j+1
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    return ranks
+
+
+def vargha_delaney_a12(x: list, y: list) -> float:
+    """P(X > Y) + ½·P(X = Y). 0.5 = no effect; > 0.5 means x tends to exceed y."""
+    if not x or not y:
+        return float("nan")
+    gt = eq = 0
+    for a in x:
+        for b in y:
+            if a > b:
+                gt += 1
+            elif a == b:
+                eq += 1
+    return (gt + 0.5 * eq) / (len(x) * len(y))
+
+
+def a12_magnitude(a12: float) -> str:
+    """Vargha–Delaney's thresholds on |Â₁₂ − 0.5|: negligible/small/medium/large."""
+    if a12 != a12:  # nan
+        return "n/a"
+    d = abs(a12 - 0.5)
+    return "negligible" if d < 0.06 else "small" if d < 0.14 else "medium" if d < 0.21 else "large"
+
+
+def mann_whitney_p(x: list, y: list) -> float:
+    """Two-sided Mann–Whitney U p-value via the normal approximation with tie and continuity
+    correction — adequate for K ≈ 30 per group. Identical distributions return 1.0."""
+    n1, n2 = len(x), len(y)
+    if n1 == 0 or n2 == 0:
+        return float("nan")
+    allv = x + y
+    if len(set(allv)) == 1:
+        return 1.0
+    ranks = _avg_ranks(allv)
+    u1 = sum(ranks[:n1]) - n1 * (n1 + 1) / 2
+    mu = n1 * n2 / 2
+    n = n1 + n2
+    ties = sum(t**3 - t for t in Counter(allv).values())
+    sigma2 = (n1 * n2 / 12) * ((n + 1) - ties / (n * (n - 1)))
+    if sigma2 <= 0:
+        return 1.0
+    z = (abs(u1 - mu) - 0.5) / (sigma2**0.5)  # continuity correction toward the mean
+    return min(1.0, 2 * NormalDist().cdf(-z))
+
+
+def write_significance(cells_by_bench: dict, out_path: Path) -> list:
+    """One row per (scope, non-random strategy): Â₁₂ + magnitude + Mann–Whitney p for the
+    strategy's per-seed coverage % against random's, over the K seeds. Scopes are each bench
+    and the whole suite. Returns the suite-wide rows for the stdout summary."""
+    benches = sorted(cells_by_bench.keys())
+    all_strats = {c.strategy for cs in cells_by_bench.values() for c in cs}
+    non_random = [s for s in ordered_strategies(all_strats) if s != RANDOM]
+    suite_cells = [c for cs in cells_by_bench.values() for c in cs]
+
+    def scope_rows(scope: str, cells: list) -> list:
+        rpc = _per_seed_bench_pcts([c for c in cells if c.strategy == RANDOM])
+        out = []
+        for s in non_random:
+            spc = _per_seed_bench_pcts([c for c in cells if c.strategy == s])
+            a12 = vargha_delaney_a12(spc, rpc)
+            out.append((
+                scope, s, len(spc),
+                statistics.median(spc) if spc else 0.0,
+                statistics.median(rpc) if rpc else 0.0,
+                a12, a12_magnitude(a12), mann_whitney_p(spc, rpc),
+            ))
+        return out
+
+    rows = [r for b in benches for r in scope_rows(b, cells_by_bench[b])]
+    suite_rows = scope_rows("— Suite —", suite_cells)
+    rows += suite_rows
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["scope", "strategy", "n_seeds", "median_pct", "random_median_pct",
+                    "a12", "a12_magnitude", "mann_whitney_p", "significant_p<0.05"])
+        for scope, s, n, mp, rp, a12, mag, p in rows:
+            w.writerow([scope, s, n, f"{mp:.2f}", f"{rp:.2f}", f"{a12:.3f}", mag,
+                        f"{p:.4g}", "yes" if p < 0.05 else "no"])
+    return suite_rows
+
+
 # ── Coverage vs input budget (efficiency curve) ──────────────────────────
 #
 # Final coverage % hides *how fast* a strategy gets there. This curve plots
@@ -771,9 +885,10 @@ def main() -> None:
     write_overall_bars(cells, SUMMARY_DIR / "overall.svg")
     write_blindspot_bars(by_bench, SUMMARY_DIR / "blindspot.svg")
     write_per_seed_csv(cells, SUMMARY_DIR / "per_seed.csv")
+    suite_sig = write_significance(by_bench, SUMMARY_DIR / "significance.csv")
     curves = time_to_coverage(cells)
     write_time_to_coverage(curves, SUMMARY_DIR / "time_to_coverage.svg")
-    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, per_seed.csv in {SUMMARY_DIR}")
+    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, per_seed.csv, significance.csv in {SUMMARY_DIR}")
 
     # Suite-wide blind-spot summary: of the leaves random never reached, how many did
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
@@ -794,6 +909,14 @@ def main() -> None:
                 )
             else:
                 print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
+
+    # Effect size + significance vs random (suite-wide), the Arcuri–Briand pair.
+    if suite_sig:
+        print()
+        print(f"Effect size + significance vs random (suite-wide, K={SEED_COUNT} seeds):")
+        print(f"  {'strategy':<38}{'med%':>6}{'rand%':>7}{'Â12':>7}  {'magnitude':<11}{'p':>10}  sig")
+        for _, s, _n, mp, rp, a12, mag, p in suite_sig:
+            print(f"  {s:<38}{mp:>5.1f}%{rp:>6.1f}%{a12:>7.3f}  {mag:<11}{p:>10.3g}  {'*' if p < 0.05 else ''}")
 
     # Efficiency: suite-wide coverage reached at a few input budgets (median across seeds).
     print()

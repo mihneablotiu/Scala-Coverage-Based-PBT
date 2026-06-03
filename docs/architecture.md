@@ -327,6 +327,10 @@ overall.svg            one bar per strategy across the whole suite
 blindspot.svg          % of random's blind spot each strategy recovers
 time_to_coverage.svg   coverage vs input budget (log x) — efficiency
 per_seed.csv           one row per (bench, method, strategy, seed)
+significance.csv       per bench + suite-wide, each strategy vs random:
+                       Vargha–Delaney Â₁₂ effect size (+ magnitude) and
+                       Mann–Whitney U p-value over the K per-seed coverage
+                       %s — the Arcuri–Briand pair for randomized algorithms
 ```
 
 The split is deliberate: the engine produces the *measurement*,

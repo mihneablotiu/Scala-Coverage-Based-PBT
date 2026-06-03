@@ -33,7 +33,7 @@ targets and *relations between inputs* — so the all-three strategy wins.
 make all       # fmt + clean + diagrams + build + run + analyze
 make build     # compile every subproject
 make run       # run every (strategy, seed) pair in its own forked JVM
-make analyze   # render charts/trees from the JSON outputs
+make analyze   # render charts/trees + effect-size/significance stats from the JSON outputs
 make help      # show every target
 ```
 
