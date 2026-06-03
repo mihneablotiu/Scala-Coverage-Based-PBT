@@ -2,9 +2,8 @@ package benchmark
 
 import benchmark.data.Tree
 
-/** Recursive / structural invariants (sorted, ordered runs, BST). P(a random input is valid) decays with size, so the "valid" arms are starved;
-  * mutation can climb toward validity one edit at a time. Exercises a `fold` with a branchy lambda and nested helper `def`s (which stay opaque in the
-  * graph).
+/** Recursive / structural invariants (sorted, BST). P(a random input is valid) decays with size, so the "valid" arms are starved — the frontier.
+  * Exercises nested helper `def`s (which stay opaque in the graph) and a `forall` over adjacent pairs.
   */
 object StructuralInvariants {
 
@@ -14,22 +13,6 @@ object StructuralInvariants {
     else if (xs.lazyZip(xs.tail).forall(_ < _)) "strictly-sorted"
     else if (xs.lazyZip(xs.tail).forall(_ <= _)) "non-decreasing"
     else "unsorted"
-
-  // `isEmpty` must be checked first: `xs.tail` on the empty list throws, so the empty arm would be
-  // unreachable dead code if the run-length fold ran before the guard.
-  def runLengthShape(xs: List[Int]): String =
-    if (xs.isEmpty) "empty"
-    else {
-      val longestRun = xs
-        .lazyZip(xs.tail)
-        .foldLeft((1, 1)) { case ((run, best), (a, b)) =>
-          if (a <= b) (run + 1, math.max(best, run + 1)) else (1, best)
-        }
-        ._2
-      if (longestRun == xs.size) "fully-non-decreasing"
-      else if (longestRun >= xs.size / 2) "mostly-ordered"
-      else "scattered"
-    }
 
   def bstShape(t: Tree): String = {
     def isBst(node: Tree, lo: Int, hi: Int): Boolean = node match {

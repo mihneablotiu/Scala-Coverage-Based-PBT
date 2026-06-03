@@ -13,11 +13,6 @@ object RealWorld {
     else if (year % 4 == 0) "leap"
     else "common"
 
-  // Euclid's algorithm (recursive). The recursive call stays a leaf (it is the method itself, not expanded).
-  def gcd(a: Int, b: Int): Int =
-    if (b == 0) a
-    else gcd(b, a % b)
-
   // IPv4 validation: every arm past the first sits behind "split into exactly 4 numeric parts" — a derived structural gate. Frontier.
   def isValidIp(s: String): String = {
     val parts = s.split('.')

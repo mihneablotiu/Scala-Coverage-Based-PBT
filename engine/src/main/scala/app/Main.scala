@@ -62,7 +62,6 @@ object Main {
     bench[(Map[String, Int], Map[String, Int])]("Relational", "sameKeys")((Relational.sameKeys _).tupled)
 
     bench[List[Int]]("StructuralInvariants", "isStrictlySorted")(StructuralInvariants.isStrictlySorted)
-    bench[List[Int]]("StructuralInvariants", "runLengthShape")(StructuralInvariants.runLengthShape)
     bench[benchmark.data.Tree]("StructuralInvariants", "bstShape")(StructuralInvariants.bstShape)
 
     bench[(Int, Int, Int)]("DeepConditionals", "triangleType")((DeepConditionals.triangleType _).tupled)
@@ -76,7 +75,6 @@ object Main {
     bench[List[Int]]("StagedValidity", "luhnCheck")(StagedValidity.luhnCheck)
 
     bench[Int]("RealWorld", "leapYear")(RealWorld.leapYear)
-    bench[(Int, Int)]("RealWorld", "gcd")((RealWorld.gcd _).tupled)
     bench[String]("RealWorld", "isValidIp")(RealWorld.isValidIp)
   }
 }

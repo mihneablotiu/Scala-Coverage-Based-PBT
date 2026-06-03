@@ -17,7 +17,7 @@ object MagicLiterals {
   def accessLevel(s: String): String =
     if (s == "root") "superuser"
     else if (s == "admin") "privileged"
-    else if (s.length >= 12 && s.distinct.length == s.length) "long-distinct" // structural: no literal helps
+    else if (s.length >= 6 && s == s.reverse) "palindrome" // structural: no literal helps, random never makes one
     else if (s.isEmpty) "anonymous"
     else "user"
 }
