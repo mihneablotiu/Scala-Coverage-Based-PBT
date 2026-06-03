@@ -24,20 +24,22 @@ object NumericSearch {
     else if (n > 0) "positive"
     else "non-positive"
 
+  // strict bounds: the endpoints 1000/1009 are *excluded*, so injecting them misses — the gradient must climb inside (1001..1008).
   def tightBand(n: Int): String =
-    if (n >= 1000 && n <= 1009) "in-band"
+    if (n > 1000 && n < 1009) "in-band"
     else if (n > 0) "positive-out"
     else "non-positive"
 
-  // a*b == t: a product target relating two inputs.
+  // (a-b)² == t: a squared relation between two inputs. Injecting the target overshoots ((10⁶)² ≠ 10⁶); only the gradient, driving a-b to ±1000, reaches it.
   def product(a: Int, b: Int): String =
-    if (a * b == 1000000) "product-million"
+    if ((a - b) * (a - b) == 1000000) "sq-diff-million"
     else if (a * b < 0) "opposite-signs"
     else if (a * b == 0) "has-zero"
     else "other"
 
+  // a - b == 1000, but gated above a million: pooled literals (1000, 0) can't satisfy `a > 1000000`, so only the gradient's climb lands here.
   def difference(a: Int, b: Int): String =
-    if (a - b == 1000) "diff-1000"
+    if (a > 1000000 && a - b == 1000) "diff-1000"
     else if (a + b == 0) "sum-zero"
     else "other"
 
