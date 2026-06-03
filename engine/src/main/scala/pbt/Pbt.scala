@@ -2,7 +2,7 @@ package pbt
 
 import org.scalacheck.{Gen, Prop, Test, rng}
 import pbt.analysis.{BranchTree, Parser, Pos}
-import pbt.gen.Generatable
+import pbt.gen.{ConstantPool, Generatable}
 import pbt.strategy.{Feedback, Strategy, Tactic}
 
 import java.nio.file.Path
@@ -31,6 +31,7 @@ final class Pbt(sutRoot: Path) {
     val tree    = parsed.map(_.tree)
     val leaves  = tree.fold(List.empty[BranchTree.Leaf])(BranchTree.leaves)
     val tactics = parsed.fold(List.empty[Tactic[A]])(pm => strategy.tactics.toList.map(Tactic.of(_, g, pm)))
+    val pool    = tree.fold(ConstantPool.empty)(BranchTree.leafLiterals(_).values.foldLeft(ConstantPool.empty)(_ ++ _))
 
     var feedback = Feedback.empty[A]
 
@@ -47,7 +48,7 @@ final class Pbt(sutRoot: Path) {
     }
     Test.check(Test.Parameters.default.withInitialSeed(rng.Seed(seed)).withMinSuccessfulTests(inputs).withWorkers(1), prop)
 
-    Report(method, sourceFile.getFileName.toString, strategy.name, tree, feedback)
+    Report(method, sourceFile.getFileName.toString, strategy.name, tree, pool, feedback)
   }
 
   /** Multi-argument convenience: write the property with natural parameters (no tuple at the call site). Internally the input is a tuple — exactly

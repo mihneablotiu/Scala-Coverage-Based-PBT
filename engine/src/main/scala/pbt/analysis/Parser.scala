@@ -42,12 +42,13 @@ object Parser {
       BranchTree.Branch("if", textOf(t.cond), then0 :: elses)
     case t: Term.Match =>
       val scrut = exprOf(t.expr, env)
-      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, env)))
+      // The scrutinee is part of the branch condition too: a literal it mentions (e.g. the key in `roles.get("admin")`) is what an arm needs to match.
+      BranchTree.Branch("match", textOf(t.expr), t.casesBlock.cases.toList.map(armOf(_, scrut, litsOf(t.expr), env)))
     case t: Term.While =>
-      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, ConstantPool.empty, visit(t.body, env))))
+      BranchTree.Branch("while", textOf(t.expr), List(BranchTree.Arm("body", None, litsOf(t.expr), visit(t.body, env))))
     case t: Term.ForYield        => forBranch(t, "for-yield", "yield", t.enumsBlock.enums, t.body, env)
     case t: Term.For             => forBranch(t, "for", "do", t.enumsBlock.enums, t.body, env)
-    case t: Term.PartialFunction => BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, env)))
+    case t: Term.PartialFunction => BranchTree.Branch("partial", "⟨arg⟩", t.cases.toList.map(armOf(_, None, ConstantPool.empty, env)))
     // Nested methods/types are their own scope — do not expand; the call site stays a leaf.
     case _: Defn.Def | _: Defn.Object | _: Defn.Class | _: Defn.Trait => BranchTree.Sequence(Nil)
     case other                                                        => descend(other, env)
@@ -77,7 +78,7 @@ object Parser {
     BranchTree.Branch(kind, clip(enums.map(_.toString).mkString("; ")), List(BranchTree.Arm(armLabel, None, ConstantPool.empty, arm)))
   }
 
-  private def armOf(c: Case, scrut: Option[Predicate.Expr], env: Env): BranchTree.Arm = {
+  private def armOf(c: Case, scrut: Option[Predicate.Expr], scrutLits: ConstantPool, env: Env): BranchTree.Arm = {
     val patText                       = textOf(c.pat)
     val label                         = c.cond.fold(s"case $patText")(g => s"case $patText if ${textOf(g)}")
     val guard: Option[Predicate.Cond] = c.pat match {
@@ -86,7 +87,7 @@ object Parser {
       case Pat.Var(name) => for (g <- c.cond; s <- scrut; cnd <- condOf(g, env + (name.value -> s))) yield cnd
       case _             => None
     }
-    val literals = litsOf(c.pat) ++ c.cond.fold(ConstantPool.empty)(litsOf)
+    val literals = scrutLits ++ litsOf(c.pat) ++ c.cond.fold(ConstantPool.empty)(litsOf)
     BranchTree.Arm(label, guard, literals, visit(c.body, env))
   }
 
