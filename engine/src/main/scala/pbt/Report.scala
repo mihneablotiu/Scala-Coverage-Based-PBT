@@ -1,7 +1,7 @@
 package pbt
 
-import pbt.analysis.BranchTree
-import pbt.gen.ConstantPool
+import pbt.analysis.{BranchTree, Pos}
+import pbt.strategy.Feedback
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -12,7 +12,6 @@ import java.nio.file.{Files, Path}
   * {{{
   *   { "method", "sourceFile", "strategy", "totalInputs",
   *     "growthCurve": [cumulative covered leaves after each input],
-  *     "constantPool": { "ints": [...], "strings": [...] },
   *     "branchTree":  <nested tree; each leaf carries firstHitInput: int | null> }
   * }}}
   */
@@ -21,8 +20,7 @@ final case class Report[A](
     sourceFile: String,
     strategy: String,
     tree: Option[BranchTree],
-    feedback: Feedback[A],
-    pool: ConstantPool
+    feedback: Feedback[A]
 ) {
 
   def write(outDir: Path): Unit = {
@@ -38,17 +36,9 @@ final case class Report[A](
        |  "strategy": ${str(strategy)},
        |  "totalInputs": ${feedback.iteration},
        |  "growthCurve": ${feedback.growthCurve.mkString("[", ", ", "]")},
-       |  "constantPool": ${poolJson(pool)},
        |  "branchTree": ${tree.fold("null")(treeJson(_, firstHits, indent = 4))}
        |}
        |""".stripMargin
-  }
-
-  private def poolJson(p: ConstantPool): String = {
-    def nums[N](xs: Set[N])(implicit ord: Ordering[N]): String = xs.toSeq.sorted.mkString("[", ", ", "]")
-    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "doubles": ${nums(p.doubles)}, "strings": ${p.strings.toSeq.sorted
-        .map(str)
-        .mkString("[", ", ", "]")}}"""
   }
 
   private def treeJson(tree: BranchTree, firstHits: Map[Pos, Int], indent: Int): String = {

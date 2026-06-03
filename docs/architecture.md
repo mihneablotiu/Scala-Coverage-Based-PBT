@@ -18,14 +18,14 @@ it is built.
 ## 2. Using the framework — one call
 
 ```scala
-val coverage = new Coverage(Paths.get("sut"))         // reads the instrumented SUT
-val report   = Pbt.check[Int](source, "classify", Strategy.coverageGuided, coverage) { n =>
+val pbt    = new Pbt(Paths.get("sut"))                // reads the instrumented SUT once
+val report = pbt.check[Int](source, "classify", Strategy.coverageGuided) { n =>
   MagicConstants.classify(n); true                    // the property
 }
 ```
 
 You give a **method** (its source file + name), a **property** over
-its input type, and a **strategy**. `Pbt.check` generates inputs,
+its input type, and a **strategy**. `check` generates inputs,
 runs the property on each while measuring coverage, and returns a
 [`Report`](../engine/src/main/scala/pbt/Report.scala). The input type
 needs a [`Generatable`](../engine/src/main/scala/pbt/gen/Generatable.scala)
@@ -196,7 +196,6 @@ per cell at
 ```
 { "method", "sourceFile", "strategy", "totalInputs",
   "growthCurve":  [cumulative covered leaves after each input],
-  "constantPool": { "ints": [...], "longs": [...], "doubles": [...], "strings": [...] },
   "branchTree":   nested tree; each leaf carries firstHitInput: int | null }
 ```
 

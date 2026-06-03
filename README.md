@@ -14,8 +14,8 @@ Two sbt subprojects:
 You give a method, a property, and a strategy — one call:
 
 ```scala
-val coverage = new Coverage(Paths.get("sut"))
-Pbt.check[Int](source, "classify", Strategy.coverageGuided, coverage) { n => MagicConstants.classify(n); true }
+val pbt = new Pbt(Paths.get("sut"))
+pbt.check[Int](source, "classify", Strategy.coverageGuided) { n => MagicConstants.classify(n); true }
 ```
 
 `random` is *literally* `Prop.forAll(arbitrary)` — stock ScalaCheck. Every other

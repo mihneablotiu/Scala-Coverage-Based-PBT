@@ -1,6 +1,5 @@
 package pbt.analysis
 
-import pbt.Pos
 import pbt.gen.ConstantPool
 
 /** The decision graph of one method body:
@@ -33,44 +32,34 @@ object BranchTree {
     */
   def leaves(tree: BranchTree): List[Leaf] = if (hasBranch(tree)) collectLeaves(tree) else Nil
 
-  /** Per-leaf path predicate: the guards that must hold to reach it. Only leaves whose *entire* path is numerically expressible are included. */
-  def leafPaths(tree: BranchTree): Map[Pos, List[Predicate.Cond]] =
-    fold(tree, List.empty[Predicate.Cond])(
-      leaf = (l, acc, ok) => if (ok) Map(l.pos -> acc) else Map.empty,
-      step = (arm, acc) => (acc ++ arm.guard.toList, arm.guard.isDefined)
-    )
-
-  /** Per-leaf literals: the pool of every guard on the path that the leaf *satisfies*. The pool tactic injects, for each uncovered leaf, the literals
-    * it still needs.
+  /** Per-leaf path predicate: the conjunction of guards that must hold to reach it. Only leaves whose *entire* path is numerically expressible are
+    * kept (the gradient needs the whole path); the rest get no gradient.
     */
-  def leafLiterals(tree: BranchTree): Map[Pos, ConstantPool] =
-    fold(tree, ConstantPool.empty)(
-      leaf = (l, acc, _) => Map(l.pos -> acc),
-      step = (arm, acc) => (acc ++ arm.literals, true)
-    )
+  def leafPaths(tree: BranchTree): Map[Pos, List[Predicate.Cond]] = {
+    def go(t: BranchTree, path: List[Predicate.Cond], expressible: Boolean): Map[Pos, List[Predicate.Cond]] = t match {
+      case l: Leaf            => if (expressible) Map(l.pos -> path) else Map.empty
+      case Sequence(children) => children.flatMap(go(_, path, expressible)).toMap
+      case Branch(_, _, arms) => arms.flatMap(a => go(a.body, path ++ a.guard.toList, expressible && a.guard.isDefined)).toMap
+    }
+    go(tree, Nil, expressible = true)
+  }
+
+  /** Per-leaf literals: the pool of every guard on the path the leaf *satisfies*. The pool tactic injects, for each uncovered leaf, the literals it
+    * still needs.
+    */
+  def leafLiterals(tree: BranchTree): Map[Pos, ConstantPool] = {
+    def go(t: BranchTree, pool: ConstantPool): Map[Pos, ConstantPool] = t match {
+      case l: Leaf            => Map(l.pos -> pool)
+      case Sequence(children) => children.flatMap(go(_, pool)).toMap
+      case Branch(_, _, arms) => arms.flatMap(a => go(a.body, pool ++ a.literals)).toMap
+    }
+    go(tree, ConstantPool.empty)
+  }
 
   def hasBranch(tree: BranchTree): Boolean = tree match {
     case _: Branch          => true
     case Sequence(children) => children.exists(hasBranch)
     case _: Leaf            => false
-  }
-
-  /** Shared walk that threads an accumulator down each arm and snapshots it at every leaf. `step` updates the accumulator (and an `ok` flag) per arm;
-    * `leaf` builds the per-leaf entry. `ok` lets [[leafPaths]] drop leaves whose path isn't fully expressible.
-    */
-  private def fold[B](tree: BranchTree, init: B)(
-      leaf: (Leaf, B, Boolean) => Map[Pos, B],
-      step: (Arm, B) => (B, Boolean)
-  ): Map[Pos, B] = {
-    def go(t: BranchTree, acc: B, ok: Boolean): Map[Pos, B] = t match {
-      case l: Leaf            => leaf(l, acc, ok)
-      case Sequence(children) => children.flatMap(go(_, acc, ok)).toMap
-      case Branch(_, _, arms) =>
-        arms.flatMap { a =>
-          val (acc2, ok2) = step(a, acc); go(a.body, acc2, ok && ok2)
-        }.toMap
-    }
-    go(tree, init, ok = true)
   }
 
   private def collectLeaves(tree: BranchTree): List[Leaf] = tree match {

@@ -1,4 +1,6 @@
-package pbt
+package pbt.strategy
+
+import pbt.analysis.Pos
 
 /** The live state of a run, grown one input at a time by [[record]]. It is the single signal every tactic reads, and the report is built from it.
   *   - `covered` — the cumulative set of covered leaves; the pool and gradient read this to know what's still missing.

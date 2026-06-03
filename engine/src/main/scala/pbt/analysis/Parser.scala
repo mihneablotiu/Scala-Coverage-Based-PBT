@@ -1,6 +1,5 @@
 package pbt.analysis
 
-import pbt.Pos
 import pbt.gen.ConstantPool
 
 import java.nio.charset.StandardCharsets

@@ -1,5 +1,6 @@
 package pbt
 
+import pbt.analysis.Pos
 import scoverage.serialize.Serializer
 
 import java.io.RandomAccessFile

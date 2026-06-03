@@ -2,9 +2,9 @@ package app
 
 import app.Generators.tree // Generatable[Tree] — a user-type instance, the extension point
 import benchmark._
+import pbt.Pbt
 import pbt.gen.Generatable
 import pbt.strategy.Strategy
-import pbt.{Coverage, Pbt}
 
 import java.nio.file.{Path, Paths}
 
@@ -33,12 +33,12 @@ object Main {
     }
 
   private def runAll(strategy: Strategy, seed: Long): Unit = {
-    val coverage = new Coverage(SutRoot)
+    val pbt = new Pbt(SutRoot)
 
     // The SUT methods return String/Boolean; coverage is measured regardless of the verdict, so the property just exercises the method.
     def bench[A: Generatable](category: String, method: String)(body: A => Any): Unit =
-      Pbt
-        .check[A](source(category), method, strategy, coverage, seed, Inputs)(in => { body(in); true })
+      pbt
+        .check[A](source(category), method, strategy, seed, Inputs)(in => { body(in); true })
         .write(ReportsBase.resolve(category).resolve(method).resolve(strategy.name).resolve(f"seed=$seed%02d"))
 
     bench[Int]("Saturated", "sign")(Saturated.sign)

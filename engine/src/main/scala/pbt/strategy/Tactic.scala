@@ -1,8 +1,7 @@
 package pbt.strategy
 
 import org.scalacheck.Gen
-import pbt.{Feedback, Pos}
-import pbt.analysis.{BranchTree, ParsedMethod, Predicate}
+import pbt.analysis.{BranchTree, ParsedMethod, Pos, Predicate}
 import pbt.gen.{ConstantPool, Generatable}
 
 /** The one shape every coverage-guided tactic follows: given the live [[Feedback]], optionally `propose` how to draw the next input (`None` =
