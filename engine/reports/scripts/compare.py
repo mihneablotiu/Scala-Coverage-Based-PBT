@@ -58,14 +58,10 @@ SUMMARY_DIR = STATS_ROOT / "_summary"
 # ── Palette (editorial duo) ──────────────────────────────────────────────
 
 STRATEGY_COLORS = {
-    "random": "#2E5C8A",                                 # cobalt blue
-    "random-pool": "#1F8A70",                            # deep teal
-    "mutation-guided": "#E67E22",                        # vibrant orange
-    "mutation-guided-pool": "#8E44AD",                   # plum
-    "coverage-guided": "#C0392B",                        # brick red
-    "coverage-guided-pool": "#117A65",                   # deep green
-    "coverage-guided-mutation-guided": "#B7950B",        # gold
-    "coverage-guided-mutation-guided-pool": "#6C3483",   # dark purple
+    "random": "#2E5C8A",          # cobalt blue
+    "pool": "#1F8A70",            # deep teal
+    "mutation": "#E67E22",      # vibrant orange
+    "pool-mutation": "#C0392B", # brick red
 }
 FALLBACK_COLOR = "#7F8C8D"
 BORDER = "#2C3E50"
@@ -81,10 +77,7 @@ COV_TXT, MIS_TXT = "#196F3D", "#922B21"
 RANDOM = "random"
 
 # Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
-STRATEGY_ORDER = [
-    "random", "random-pool", "mutation-guided", "mutation-guided-pool",
-    "coverage-guided", "coverage-guided-pool", "coverage-guided-mutation-guided", "coverage-guided-mutation-guided-pool",
-]
+STRATEGY_ORDER = ["random", "pool", "mutation", "pool-mutation"]
 
 # Number of seed-runs found; set in main(), used in chart titles.
 SEED_COUNT = 0
@@ -160,6 +153,23 @@ def ordered_strategies(strategies) -> list:
 _SEED_DIR_RE = re.compile(r"^seed=(\d+)$")
 
 
+def reconstruct_growth_curve(tree: Optional[dict], total_inputs: int) -> list:
+    """Cumulative covered-leaf count after each input, rebuilt from the per-leaf ``firstHitInput`` the
+    engine stores (so the JSON stays O(leaves), not O(inputs)). ``curve[i]`` = leaves first hit by input i."""
+    if total_inputs <= 0:
+        return []
+    hits = [leaf["firstHitInput"] for leaf in leaves(tree) if leaf["firstHitInput"] is not None]
+    curve = [0] * total_inputs
+    for h in hits:
+        if h < total_inputs:
+            curve[h] += 1
+    running = 0
+    for i in range(total_inputs):
+        running += curve[i]
+        curve[i] = running
+    return curve
+
+
 def load_cells() -> list:
     cells = []
     for jp in sorted(STATS_ROOT.glob("*/*/*/*/coverage.json")):
@@ -169,6 +179,7 @@ def load_cells() -> list:
         if not m:
             continue
         data = json.loads(jp.read_text())
+        tree = data["branchTree"]
         cells.append(
             Cell(
                 bench=jp.parts[-5],
@@ -177,8 +188,8 @@ def load_cells() -> list:
                 seed=int(m.group(1)),
                 total_inputs=data["totalInputs"],
                 elapsed_millis=data.get("elapsedMillis", 0),
-                growth_curve=data["growthCurve"],
-                branch_tree=data["branchTree"],
+                growth_curve=reconstruct_growth_curve(tree, data["totalInputs"]),
+                branch_tree=tree,
                 path=jp.parent,
             )
         )
@@ -863,7 +874,7 @@ def write_time_to_coverage(curves: dict, out_path: Path) -> None:
 # "Do all those tactics make us slow?" Every strategy runs the same methods,
 # and the dominant per-input cost — reading the scoverage measurement file —
 # is shared, so the per-strategy throughput delta isolates the tactics' own
-# overhead (pool injection, gradient distance, mutation). Reported as the
+# overhead (pool injection, mutation). Reported as the
 # median inputs/sec across all (method, seed) cells, plus the slowdown vs
 # random. (Each forked JVM runs the methods in the same order, so JIT-warmup
 # bias is consistent across strategies and the comparison stays fair.)

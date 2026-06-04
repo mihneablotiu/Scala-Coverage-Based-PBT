@@ -2,29 +2,18 @@ package pbt.gen
 
 import org.scalacheck.Gen
 
-/** Literals harvested from a method's guards, by type. The pool tactic injects these to hit equality/threshold branches; only the types a
-  * [[Generatable]] knows how to inject are kept.
+/** The literals mined from a method's body — just the types we can inject (`Int`, `String`). The Pool tactic splices these into draws to hit equality
+  * / threshold branches a random value would almost never satisfy.
   */
-final case class ConstantPool(
-    ints: Set[Int] = Set.empty,
-    longs: Set[Long] = Set.empty,
-    doubles: Set[Double] = Set.empty,
-    strings: Set[String] = Set.empty
-) {
-  def isEmpty: Boolean = ints.isEmpty && longs.isEmpty && doubles.isEmpty && strings.isEmpty
-
-  def ++(o: ConstantPool): ConstantPool =
-    ConstantPool(ints ++ o.ints, longs ++ o.longs, doubles ++ o.doubles, strings ++ o.strings)
+final case class ConstantPool(ints: Set[Int], strings: Set[String]) {
+  def isEmpty: Boolean = ints.isEmpty && strings.isEmpty
 }
 
 object ConstantPool {
-  val empty: ConstantPool = ConstantPool()
+  val empty: ConstantPool = ConstantPool(Set.empty, Set.empty)
 
-  /** Percent of draws (per injection point) that return a pooled literal instead of the base generator. */
-  private val Percent = 30
-
-  /** Draw a pooled value `Percent`% of the time, else defer to `base`. An empty pool is just `base`. */
-  def inject[A](values: Set[A], base: Gen[A]): Gen[A] =
-    if (values.isEmpty) base
-    else Gen.frequency(Percent -> Gen.oneOf(values), (100 - Percent) -> base)
+  /** Draw a pooled literal 30% of the time, otherwise defer to `base`. An empty set is just `base`. */
+  def inject[A](literals: Set[A], base: Gen[A]): Gen[A] =
+    if (literals.isEmpty) base
+    else Gen.frequency(30 -> Gen.oneOf(literals), 70 -> base)
 }

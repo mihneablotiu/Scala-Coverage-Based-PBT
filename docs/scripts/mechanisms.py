@@ -1,8 +1,8 @@
 """Complementarity of the feedback channels — which *kind* of hard branch each one can reach.
 
-The headline finding: random/pool/mutation/gradient each crack a different kind of branch, so the
-all-three composite (`coverage-guided-mutation-guided-pool`) covers the most. Cells are ticked from the
-benchmark results (e.g. `compareInts` is reached only by the gradient, `accessLevel` only by the pool).
+The headline finding: random/pool/mutation each crack a different kind of branch, so the composite
+(`pool-mutation`) covers the most. Cells are ticked from the benchmark results (e.g. the rising-run /
+deep-tree arms are reached only by mutation, `accessLevel` only by the pool).
 
 Run: ``python3 docs/scripts/mechanisms.py``.
 """
@@ -20,13 +20,12 @@ from matplotlib.patches import FancyBboxPatch  # noqa: E402
 from shapes import COLOR_SOFT, COLOR_STROKE, COLOR_TEXT, save  # noqa: E402
 
 # Columns are the feedback channels (coloured to match the charts); rows are kinds of hard branch.
-CHANNELS = [("random", "#2E5C8A"), ("pool", "#1F8A70"), ("mutation", "#E67E22"), ("gradient", "#C0392B")]
+CHANNELS = [("random", "#2E5C8A"), ("pool", "#1F8A70"), ("mutation", "#E67E22")]
 ROWS = [
-    ('magic int / long   "n == 42"', [0, 1, 0, 1]),
-    ('magic string / key   "admin"', [0, 1, 0, 0]),
-    ("float edge   NaN, ∞", [0, 0, 1, 0]),
-    ("numeric relation   a == −b", [0, 0, 0, 1]),
-    ('structure / parse   sorted, "v1.2"', [0, 0, 0, 0]),
+    ("easy arm   early-exit, sign", [1, 1, 1]),
+    ('magic int / string   "n == 42", "admin"', [0, 1, 0]),
+    ("structure   sorted prefix, deep tree", [0, 0, 1]),
+    ("validity gate   parse, checksum", [0, 0, 0]),
 ]
 
 YES_FILL, NO_FILL = "#A9DFBF", "#F4F6F6"
@@ -34,7 +33,7 @@ YES_TXT, NO_TXT = "#196F3D", "#C0392B"
 
 X0, CW, CH, GAP = 5.0, 1.5, 0.82, 0.14
 W = X0 + len(CHANNELS) * (CW + GAP) + 0.2
-H = 7.0
+H = 6.4
 
 fig, ax = plt.subplots(figsize=(W, H))
 ax.set_xlim(0, W)
@@ -67,9 +66,9 @@ for i, (label, marks) in enumerate(ROWS):
         ax.text(cell_x(j) + CW / 2, cy, "✓" if m else "✗", ha="center", va="center", fontsize=17, fontweight="bold", color=YES_TXT if m else NO_TXT)
 
 ax.text(
-    W / 2, 0.55,
-    "Each tactic cracks a different kind of branch → coverage-guided-mutation-guided-pool combines all three.\n"
-    "Pure structure / parsing is reached by none — the open frontier.",
+    W / 2, 0.45,
+    "Each tactic cracks a different kind of branch → coverage-guided combines them.\n"
+    "Validity gates (parsing, checksums) are reached by none — the open frontier.",
     ha="center", va="center", fontsize=10, style="italic", color=COLOR_SOFT,
 )
 

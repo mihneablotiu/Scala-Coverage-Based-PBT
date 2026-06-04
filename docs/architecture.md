@@ -10,8 +10,8 @@ it is built.
 
 | Subproject | Role |
 |------------|------|
-| `sut`    | System under test — small benchmark methods, one file per *kind of problem* random PBT faces (`Saturated`, `MagicConstants`, `NarrowRanges`, `Relational`, `StructuralInvariants`, `DeepConditionals`, `StagedValidity`) plus a `Tree` type. Compiled with scoverage instrumentation. |
-| `engine` | The `pbt` framework and an `app` experiment harness. |
+| `sut`    | System under test — small branchy benchmark methods, compiled with scoverage instrumentation. Currently a single placeholder group (`Saturated`); the full suite is being rebuilt. |
+| `engine` | The `pbt` framework and an `app` experiment harness (sample input types like `Tree` live in `pbt/dataTypes`). |
 
 ---
 
@@ -19,8 +19,8 @@ it is built.
 
 ```scala
 val pbt    = new Pbt(Paths.get("sut"))                // reads the instrumented SUT once
-val report = pbt.check[Int](source, "classify", Strategy.coverageGuided) { n =>
-  MagicConstants.classify(n); true                    // the property
+val report = pbt.check[Int](source, "sign", Strategy.poolMutation) { n =>
+  Saturated.sign(n); true                             // the property
 }
 ```
 
@@ -29,7 +29,9 @@ its input type, and a **strategy**. `check` generates inputs,
 runs the property on each while measuring coverage, and returns a
 [`Report`](../engine/src/main/scala/pbt/Report.scala). The input type
 needs a [`Generatable`](../engine/src/main/scala/pbt/gen/Generatable.scala)
-in scope (all primitives, collections and tuples are built in).
+in scope; the supported instances (`Int`, `String`, `List`, `Option`,
+`Tree`, and tuples) live together in
+[`app.Generators`](../engine/src/main/scala/app/Generators.scala).
 
 `random` is *literally* `Prop.forAll(arbitrary)` — stock ScalaCheck.
 Every other strategy runs the identical loop and only adds
@@ -38,71 +40,66 @@ approximation.
 
 ---
 
-## 3. The one idea: strategies are sets of tactics
+## 3. The one idea: a strategy is two on/off switches
 
-A **tactic** is the whole vocabulary, behind one tiny interface
-([`Tactic`](../engine/src/main/scala/pbt/strategy/Tactic.scala)):
+A [`Strategy`](../engine/src/main/scala/pbt/strategy/Strategy.scala) is
+just a name plus two booleans — *does it pool?* *does it mutate?*:
 
 ```scala
-trait Tactic[A] {
-  def propose(fb: Feedback[A]): Option[Gen[A]]   // bias the next draw, or None
-  def observe(input: A, fb: Feedback[A]): Unit   // learn from the input just run
-}
+final case class Strategy(name: String, pool: Boolean, mutation: Boolean)
 ```
 
-A [`Strategy`](../engine/src/main/scala/pbt/strategy/Strategy.scala)
-is just a **set of tactics**. Each draw mixes the active tactics'
-proposals with a plain random draw (equal weights, so random stays a
-healthy escape hatch). There are three tactics, each reading the live
-coverage, each independent and composable:
+Each draw is a plain random draw, plus — when the strategy enables them
+and the live coverage says they can still help — a **pooled** draw and a
+**mutated** draw mixed in (random keeps a fixed minority share, so it
+stays a healthy escape hatch and seeds the corpus):
 
-- **Pool** — inject the literals that still-uncovered branches need.
-- **Mutation** — perturb a corpus seed (an input that grew coverage).
-- **Gradient** — hill-climb the branch distance to the nearest
-  uncovered leaf.
+- **pool** — inject the literals that still-uncovered branches need
+  (`Generatable.pooled`), while some leaf is still uncovered.
+- **mutation** — perturb a corpus seed, an input that grew coverage
+  (`Generatable.mutate`).
 
-So the **eight strategies are exactly the eight subsets of
-`{Pool, Mutation, Gradient}`** — `random` is the empty set, the
-all-three composite is the full set. Adding a tactic is: implement
-`Tactic`, add a `Kind`, wire it in `Tactic.of`; nothing else changes.
+So the **four strategies are the four combinations of the two
+switches** — `random` is both off, `pool-mutation` both on. The
+whole mixing logic lives in
+[`Pbt.check`](../engine/src/main/scala/pbt/Pbt.scala); there is no
+tactic class hierarchy.
 
 ![Feedback tactics are complementary](images/mechanisms.png)
 
-The tactics are **complementary** — `compareInts` (a relation) is
-reached only by the gradient, `accessLevel` (a magic string) only by
-the pool, `magnitude` (`NaN`) only by mutation — so the all-three
+The tactics are **complementary** — a branch behind a magic string is
+reached only by the pool, a branch behind a *structured* input (a
+sorted prefix, a tall tree) only by mutation — so the `pool-mutation`
 composite covers the most.
 
 ---
 
 ## 4. The loop
 
-![All four tactics combined](images/combined.png)
+![Both tactics combined](images/combined.png)
 
 Each tactic combined with the random baseline is drawn on its own —
-[pool](images/pool.png), [mutation](images/mutation.png),
-[gradient](images/gradient.png) — and [`sources.png`](images/sources.png)
-contrasts the single random source of stock ScalaCheck with this engine's
-four.
+[pool](images/pool.png), [mutation](images/mutation.png) — and
+[`sources.png`](images/sources.png) contrasts the single random source
+of stock ScalaCheck with this engine's three.
 
 The driver is ScalaCheck's own (`Test.check` over a
 `Prop.forAllNoShrink` whose generator is `Gen.delay(...)` re-read each
 draw) — not a hand-rolled fold, which is what lets `random` *be* plain
 ScalaCheck. Per input:
 
-1. **draw** — mix the active tactics' proposals with a random draw;
+1. **draw** — a random draw, plus pooled/mutated draws the strategy enables;
 2. **run** the property (guarded, so a thrown exception still counts);
 3. **read** the offsets scoverage fired in the method's file;
 4. **mark** the leaves those offsets land inside as covered;
-5. **record** into [`Feedback`](../engine/src/main/scala/pbt/strategy/Feedback.scala)
-   and let each tactic `observe` the input.
+5. **record** into [`Feedback`](../engine/src/main/scala/pbt/strategy/Feedback.scala).
 
-`Feedback` is the single running signal every tactic reads:
-`covered` (cumulative covered leaves — pool & gradient read this),
-`corpus` (inputs that each grew coverage — mutation perturbs these),
-and `history` (per-input deltas — drives the report's growth curve and
-per-leaf first-hit). `Gen.delay` re-reads it every draw, so guided
-tactics see it grow; `random` ignores it.
+`Feedback` is the single running signal:
+`covered` (cumulative covered leaves — pooling stops once nothing is
+left to cover), `corpus` (inputs that each grew coverage — mutation
+perturbs these), and `history` (per-input deltas — gives each leaf its
+first-hit input index). `Gen.delay` re-reads it every draw, so the
+guided draws see it grow; `random` ignores it.
 
 ---
 
@@ -112,18 +109,24 @@ Directory layout mirrors the extension points — root holds the engine,
 each subpackage is one thing you would extend:
 
 ```
-pbt/            engine + core types     Pbt · Feedback · Coverage · Report
-pbt/gen/        add an input type       Generatable · ConstantPool
-pbt/analysis/   add a guard/construct   BranchTree · Predicate · Parser
-pbt/strategy/   add a tactic/strategy   Tactic · Strategy
+pbt/            engine + core types     Pbt · Coverage · Report
+pbt/gen/        the generator interface Generatable · ConstantPool
+pbt/analysis/   add a construct         Analysis (BranchTree + Parser)
+pbt/strategy/   feedback state + presets Feedback · Strategy
+pbt/dataTypes/  sample input types      Tree
+app/            harness + all the       Main · Generators
+                concrete generators
 ```
+
+Each subpackage is one cohesive file, so "where does X live" has one
+answer.
 
 ---
 
 ## 6. Coverage — leaf-only branch coverage
 
-[`Parser`](../engine/src/main/scala/pbt/analysis/Parser.scala) walks a
-method into a [`BranchTree`](../engine/src/main/scala/pbt/analysis/BranchTree.scala):
+[`Parser`](../engine/src/main/scala/pbt/analysis/Analysis.scala) walks a
+method into a [`BranchTree`](../engine/src/main/scala/pbt/analysis/Analysis.scala):
 decision points become `Branch`es (one `Arm` per outcome), arm
 terminals become `Leaf`s. **A leaf is the unit of coverage** — one
 distinct path through the body — so the metric is *leaf-only branch
@@ -141,39 +144,37 @@ Two rules keep the graph honest:
 - **Nested `def`/`object`/`class` are opaque** — separate scopes the
   walker doesn't expand; only the call shows, as a leaf.
 
-`Coverage` tails scoverage's append-only measurement files (reads only
-newly-appended ids each call), so it is O(new ids) per input.
+`Coverage` reads scoverage's append-only measurement files whole on
+every call — they are tiny, so the simple re-read beats tracking
+incremental state. Stale measurements are wiped when it is constructed,
+so each run starts clean.
 
 ---
 
 ## 7. What makes a tactic coverage-guided
 
-Each `Arm` records what its guard told us — and these are the only two
-things the gradient and pool need beyond live coverage:
+Both tactics steer off the *live* coverage — they propose only while
+there is something left to gain, so a strategy is genuinely
+feedback-driven, not a fixed bias:
 
-- a numeric [`Predicate.Cond`](../engine/src/main/scala/pbt/analysis/Predicate.scala)
-  when expressible; `BranchTree.leafPaths` turns these into a per-leaf
-  guard conjunction;
-- the **literals it mentions**, on the *satisfying* side only (the
-  `else` of `n == 42` needs `n ≠ 42`, which no literal helps);
-  `BranchTree.leafLiterals` gives each leaf the pool it needs.
-
-The **gradient** reads the live coverage, finds the nearest uncovered
-leaf, and hill-climbs its **branch distance** (Korel/EvoSuite — e.g.
-`n == 700014` ⇒ `|n − 700014|`, raw so large gaps still slope), keeping
-the closest input and mutating it. It is autonomous — the target comes
-from the source and the coverage, not from the user (cf. targeted PBT,
-Löscher & Sagonas). Distance is defined only for universal type-level
-comparisons (numeric); strings and structure are the other tactics'
-job, or the open frontier.
-
-The **pool** injects, each draw, the union of literals that
-still-uncovered leaves carry; as leaves are covered, their literals
-retire. So literal injection is itself coverage-driven.
+The **pool** mines every `Int`/`String` literal in the method body into
+a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
+(DRAGEN²-style constant mining — over-approximating is cheap, an unused
+literal is just a wasted draw). Each draw it injects one of those
+literals — but only while some leaf is still uncovered; once every leaf
+is hit there is nothing a literal can unlock, so it stands down. That
+is what makes literal injection coverage-driven.
 
 The **mutation** tactic perturbs the corpus of coverage-growing inputs
-with the type's `mutate` (AFL/FuzzChick-style, multi-scale numeric
-steps, shared with the gradient's climb).
+with the type's `mutate` (AFL/FuzzChick-style edits and "interesting"
+edge values). It favours the *most recent* grower — the input on the
+coverage frontier — so each retained seed is the springboard that
+ratchets one rung deeper (extend a sorted prefix, grow a tree), with a
+slice of draws on older seeds for diversity.
+
+Neither needs anything from the parser beyond the `BranchTree`'s leaves
+(for the pool to know when to retire) and the mined literals — the
+guard *text* is kept only for the report's labels.
 
 ---
 
@@ -185,7 +186,7 @@ session, so the harness runs **one forked JVM per (strategy, seed)**
 
 ```
 sbt "engine/runMain app.Main random 1"
-sbt "engine/runMain app.Main coverage-guided 1"
+sbt "engine/runMain app.Main pool-mutation 1"
 ```
 
 Each invocation runs every benchmark against that one strategy and
@@ -200,10 +201,14 @@ per cell at
 `engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`:
 
 ```
-{ "method", "sourceFile", "strategy", "totalInputs",
-  "growthCurve":  [cumulative covered leaves after each input],
-  "branchTree":   nested tree; each leaf carries firstHitInput: int | null }
+{ "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
+  "pool":       { "ints": [...], "strings": [...] },
+  "branchTree": nested tree; each leaf carries firstHitInput: int | null }
 ```
+
+The growth curve is **not** stored: each leaf's `firstHitInput` already
+encodes when coverage grew, so the cumulative curve is reconstructed
+downstream — the file stays O(leaves), not O(inputs).
 
 The engine emits only this raw measurement; all charts and statistics
 are produced downstream by `make analyze`
@@ -211,9 +216,10 @@ are produced downstream by `make analyze`
 per-cell `coverage.svg` (the tree, leaves coloured by coverage), and
 under `_summary/`: per-bench / suite / overall coverage bars,
 `blindspot.svg` (% of random's blind spot each strategy recovers),
-`time_to_coverage.svg` (coverage vs input budget), `per_seed.csv`, and
-`significance.csv` (Vargha–Delaney Â₁₂ effect size + Mann–Whitney U
-p-value vs random — the Arcuri–Briand pair for randomized algorithms).
+`time_to_coverage.svg` (coverage vs input budget, from the
+reconstructed curve), `per_seed.csv`, and `significance.csv`
+(Vargha–Delaney Â₁₂ effect size + Mann–Whitney U p-value vs random —
+the Arcuri–Briand pair for randomized algorithms).
 
 The split is deliberate: the engine produces the *measurement*, Python
 the *presentation*. Either side can be rewritten without the other.
@@ -224,11 +230,10 @@ the *presentation*. Either side can be rewritten without the other.
 
 | You want to add… | Touch |
 |------------------|-------|
-| A new input type | A `Generatable[A]` via `Generatable.instance` (built-ins in `pbt/gen`; SUT types in `app.Generators`, see `Tree`) |
+| A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` (all the concrete generators live there; composites defer to their components, see `list`/`tree`) |
 | A new branchy construct | One case in `Parser.visit` (+ a `BranchTree` node only if its shape is genuinely new) |
-| A guard the gradient can't express yet | One case in `Parser.condOf`/`exprOf` + the matching `Predicate` case |
-| A new tactic | Implement `Tactic`, add a `Tactic.Kind`, wire it in `Tactic.of` |
-| A new strategy | One subset of the tactics in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |
+| A new feedback mode | A draw + guard in `Pbt.check`, and a flag on `Strategy` |
+| A new strategy | One `Strategy` preset in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |
 | A new output format | A new writer alongside `Report` |
 
 ---

@@ -1,24 +1,19 @@
 package pbt
 
-import pbt.analysis.{BranchTree, Pos}
+import pbt.analysis.BranchTree
 import pbt.gen.ConstantPool
 import pbt.strategy.Feedback
 
-import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 
-/** Everything one run produced. [[write]] serialises it to a single `coverage.json`; all charts and tables are built downstream by the Python
-  * scripts. `pool` is the literals mined from the method's branch conditions — exactly the values the pool tactic can inject.
+/** Everything one run produced, serialised by [[write]] to a single compact `coverage.json`; all charts and tables are built downstream by the Python
+  * scripts. The growth curve is not stored — each leaf carries its `firstHitInput`, from which the cumulative curve is reconstructed downstream.
   *
   * {{{
   *   { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
-  *     "growthCurve": [cumulative covered leaves after each input],
-  *     "pool":        { "ints": [...], "strings": [...] },   // the pool's injectable values
-  *     "branchTree":  <nested tree; each leaf carries firstHitInput: int | null> }
+  *     "pool":       { "ints": [...], "strings": [...] },
+  *     "branchTree": <nested tree; each leaf carries firstHitInput: int | null> }
   * }}}
-  *
-  * `elapsedMillis` times just the generate-run-measure loop (not parsing), so `totalInputs / elapsedMillis` is the per-strategy throughput — what the
-  * tactics cost on top of the shared coverage-measurement overhead.
   */
 final case class Report[A](
     method: String,
@@ -32,58 +27,30 @@ final case class Report[A](
 
   def write(outDir: Path): Unit = {
     Files.createDirectories(outDir)
-    Files.writeString(outDir.resolve("coverage.json"), json, StandardCharsets.UTF_8)
+    Files.writeString(outDir.resolve("coverage.json"), json)
   }
+
+  private val firstHits: Map[Int, Int] = feedback.firstHits
 
   private def json: String = {
-    val firstHits = feedback.firstHits
-    s"""{
-       |  "method": ${str(method)},
-       |  "sourceFile": ${str(sourceFile)},
-       |  "strategy": ${str(strategy)},
-       |  "totalInputs": ${feedback.iteration},
-       |  "elapsedMillis": $elapsedMillis,
-       |  "growthCurve": ${feedback.growthCurve.mkString("[", ", ", "]")},
-       |  "pool": ${poolJson(pool)},
-       |  "branchTree": ${tree.fold("null")(treeJson(_, firstHits, indent = 4))}
-       |}
-       |""".stripMargin
+    val ints    = pool.ints.toSeq.sorted.mkString("[", ",", "]")
+    val strings = pool.strings.toSeq.sorted.map(quote).mkString("[", ",", "]")
+    s"""{"method":${quote(method)},"sourceFile":${quote(sourceFile)},"strategy":${quote(strategy)},""" +
+      s""""totalInputs":${feedback.iteration},"elapsedMillis":$elapsedMillis,""" +
+      s""""pool":{"ints":$ints,"strings":$strings},""" +
+      s""""branchTree":${tree.fold("null")(node)}}"""
   }
 
-  private def poolJson(p: ConstantPool): String = {
-    def nums[N](xs: Set[N])(implicit ord: Ordering[N]): String = xs.toSeq.sorted.mkString("[", ", ", "]")
-    s"""{"ints": ${nums(p.ints)}, "longs": ${nums(p.longs)}, "doubles": ${nums(p.doubles)}, "strings": ${p.strings.toSeq.sorted
-        .map(str)
-        .mkString("[", ", ", "]")}}"""
+  private def node(tree: BranchTree): String = tree match {
+    case BranchTree.Branch(kind, label, arms) =>
+      val armsJson = arms.map(a => s"""{"label":${quote(a.label)},"body":${node(a.body)}}""").mkString(",")
+      s"""{"kind":"branch","branchKind":${quote(kind)},"label":${quote(label)},"arms":[$armsJson]}"""
+    case BranchTree.Sequence(children) =>
+      s"""{"kind":"sequence","children":[${children.map(node).mkString(",")}]}"""
+    case l: BranchTree.Leaf =>
+      s"""{"kind":"leaf","line":${l.line},"text":${quote(l.text)},"firstHitInput":${firstHits.get(l.start).fold("null")(_.toString)}}"""
   }
 
-  private def treeJson(tree: BranchTree, firstHits: Map[Pos, Int], indent: Int): String = {
-    val pad      = " " * indent
-    val padChild = " " * (indent + 2)
-    tree match {
-      case BranchTree.Branch(kind, label, arms) =>
-        val armsJson = arms.map(a => s"""$padChild{"label": ${str(a.label)}, "body": ${treeJson(a.body, firstHits, indent + 4)}}""").mkString(",\n")
-        s"""{
-           |$padChild"kind": "branch",
-           |$padChild"branchKind": ${str(kind)},
-           |$padChild"label": ${str(label)},
-           |$padChild"arms": [
-           |$armsJson
-           |$pad]
-           |$pad}""".stripMargin
-      case BranchTree.Sequence(children) =>
-        val childrenJson = children.map(c => s"$padChild${treeJson(c, firstHits, indent + 2)}").mkString(",\n")
-        s"""{
-           |$padChild"kind": "sequence",
-           |$padChild"children": [
-           |$childrenJson
-           |$pad]
-           |$pad}""".stripMargin
-      case l: BranchTree.Leaf =>
-        s"""{"kind": "leaf", "line": ${l.line}, "text": ${str(l.text)}, "firstHitInput": ${firstHits.get(l.pos).fold("null")(_.toString)}}"""
-    }
-  }
-
-  private def str(s: String): String =
+  private def quote(s: String): String =
     "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""
 }
