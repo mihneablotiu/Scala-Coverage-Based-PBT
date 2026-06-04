@@ -26,17 +26,18 @@
 \definecolor{kw}{RGB}{47,92,138}
 \definecolor{cmt}{RGB}{120,120,120}
 \definecolor{str}{RGB}{31,138,112}
+% Listings are used only for language-agnostic PSEUDOCODE (no real Scala),
+% so the keyword set is the pseudocode vocabulary, not a language's.
 \lstset{
   basicstyle=\ttfamily\footnotesize,
   keywordstyle=\color{kw}\bfseries,
   commentstyle=\color{cmt}\itshape,
-  stringstyle=\color{str},
   numbers=left, numberstyle=\tiny\color{cmt}, stepnumber=1, numbersep=8pt,
   breaklines=true, frame=single, framesep=4pt, captionpos=b,
-  showstringspaces=false, tabsize=2,
-  morekeywords={def,val,var,case,class,object,trait,sealed,final,private,implicit,match,if,else,while,for,yield,new,extends,with,return,Option,Some,None,Set,List,Map}
+  showstringspaces=false, tabsize=2, columns=fullflexible,
+  morekeywords={function,for,foreach,in,if,else,then,return,match,case,while,repeat,until,and,or,not,do,end,each,defined,empty,NONE}
 }
-\renewcommand{\lstlistingname}{Listing}
+\renewcommand{\lstlistingname}{Pseudocode}
 
 \title{Coverage-Guided Property-Based Testing}
 \author{Mihnea-Andrei Blotiu}
@@ -240,8 +241,9 @@ mechanism matches the program, and several branches stay hard for everyone.
 \label{sec:contributions}
 
 \begin{enumerate}[leftmargin=1.6em]
-  \item A unifying \emph{tactic} abstraction that expresses literal pooling, mutation, and branch-distance search as interchangeable, coverage-guided components over one value-level generator type class, with the random baseline preserved exactly (Chapter~\ref{ch:solution}).
-  \item A faithful re-use of the host PBT loop (ScalaCheck) together with a span-containment coverage reader built on \texttt{scoverage} and a static branch-tree extractor built on Scalameta, including a small condition language and an autonomous branch-distance gradient (Chapter~\ref{ch:impl}).
+  \item \textbf{A coverage-to-source binding} that, to our knowledge, no existing Scala framework provides: the method is parsed into a branch tree, and \texttt{scoverage}'s runtime measurements are bound back onto it by span containment, turning a bare coverage percentage into a per-branch, source-aware signal — ``\emph{which} branch is still unreached, and \emph{where} it is''. This is the mechanism on which all guidance rests (Section~\ref{sec:cov-impl}).
+  \item A unifying \emph{tactic} abstraction that expresses literal pooling, value-level mutation, and branch-distance search as interchangeable, coverage-guided components over one generator type class, with the random baseline preserved exactly as stock ScalaCheck (Chapter~\ref{ch:solution}).
+  \item An autonomous branch-distance \emph{gradient}, including a small condition language that extracts numeric path predicates directly from the source and a hill-climb over their branch distance (Section~\ref{sec:gradient}).
   \item A purpose-built benchmark organised as a progression of niches, and a rigorous $K{=}30$ evaluation reporting effect size ($\hat{A}_{12}$) and significance (Mann--Whitney $U$) per the Arcuri--Briand protocol~\cite{arcuri2014} (Chapter~\ref{ch:eval}).
   \item An empirical characterisation of \emph{when} each mechanism helps, including an external-validity study on code we did not author, and two structural findings — that the framework's lack of crossover prevents a single branch from requiring two tactics at once, and that mutation contributes only when concentrated — that we believe generalise beyond this implementation.
 \end{enumerate}
@@ -360,10 +362,48 @@ against which we position our contribution.
 \section{Property-Based Generators}
 
 QuickCheck~\cite{claessen2000} established the model of properties plus type-directed random generators and
-shrinking; ScalaCheck is its Scala descendant and the host of our framework. A recurring limitation is that
-hand-written, highly tuned generators are needed to reach demanding inputs, which requires substantial
-manual effort. FEAT~\cite{duregard2012} addresses enumeration of algebraic data types systematically rather
-than randomly. These approaches remain black-box with respect to the SUT.
+shrinking. Its testing loop, sketched in Pseudocode~\ref{lst:qc}, is strikingly simple: repeatedly sample a
+fresh input from a generator, evaluate the property, and on failure search for a smaller counterexample
+(\emph{shrinking}) before reporting it.
+
+\begin{lstlisting}[caption={The QuickCheck loop. Inputs are sampled independently of one another and of the program under test.},label=lst:qc]
+function quickCheck(P, gen, maxTests):
+  for i in 1 .. maxTests:
+    x <- sample(gen)            // a fresh, independent random value
+    if not P(x):
+      x' <- shrink(x, P)        // search for a smaller still-failing input
+      return Falsified(x')
+  return Passed
+\end{lstlisting}
+
+ScalaCheck is QuickCheck's Scala descendant and the host of our framework. Its loop
+(Pseudocode~\ref{lst:sc}) is the same skeleton, refined with the bookkeeping that the JVM tooling needs: a
+\emph{size} parameter that grows over the run so inputs become gradually larger, a count of \emph{discarded}
+inputs for properties with preconditions, and the same shrinking on failure. The essential point for this
+thesis is that both loops are \emph{black-box}: the next input depends only on the generator and a
+pseudo-random seed, never on anything observed about the program under test. This is the loop our random
+baseline reuses verbatim, and the loop our framework minimally extends (Pseudocode~\ref{lst:ours}).
+
+\begin{lstlisting}[caption={The ScalaCheck loop --- QuickCheck on the JVM, with sized generation and discard accounting. Still black-box: nothing about the SUT influences the next input.},label=lst:sc]
+function scalaCheck(P, gen, params):
+  passed <- 0;  discarded <- 0;  size <- 0
+  while passed < params.minSuccessfulTests:
+    x <- sample(gen, size)      // size grows over the run; edge-value biased
+    r <- P(x)                   // verdict: Proof | True | False | Undecided
+    if r is False:
+      x' <- shrink(x, P)
+      return Falsified(x')
+    else if r is Undecided:     // a discarded precondition
+      discarded <- discarded + 1
+    else:
+      passed <- passed + 1;  size <- size + 1
+  return Passed
+\end{lstlisting}
+
+A recurring limitation of both is that hand-written, highly tuned generators are needed to reach demanding
+inputs, which requires substantial manual effort. FEAT~\cite{duregard2012} addresses enumeration of
+algebraic data types systematically rather than randomly. These approaches remain black-box with respect to
+the SUT.
 
 \section{Feedback-Directed and Search-Based Test Generation}
 
@@ -432,10 +472,34 @@ nothing else.
 
 A frequent methodological pitfall when claiming that a clever method beats a simple one is to compare
 against a weakened version of the simple one. We avoid this by making the random strategy \emph{the host
-framework itself}. The generation loop is ScalaCheck's own loop; the random strategy adds nothing to it.
-Every guided strategy runs the identical loop and merely contributes additional proposals for the next
-input. Consequently, ``random'' is not our re-implementation of random testing — it is stock ScalaCheck —
-and every reported gain is the marginal effect of guidance.
+framework itself}. The generation loop is ScalaCheck's own loop (Pseudocode~\ref{lst:sc}); the random
+strategy adds nothing to it. Every guided strategy runs the identical loop and merely contributes additional
+proposals for the next input. Consequently, ``random'' is not our re-implementation of random testing — it
+is stock ScalaCheck — and every reported gain is the marginal effect of guidance.
+
+Pseudocode~\ref{lst:ours} shows our loop. It is the ScalaCheck loop of Pseudocode~\ref{lst:sc} with exactly
+three changes: \textbf{(1)} the generator is rebuilt on every iteration by \emph{mixing} the plain random
+draw with whatever the active tactics propose from the current feedback — with no tactics, \texttt{mix}
+returns the plain generator and the loop is byte-for-byte the baseline; \textbf{(2)} after each run we read
+the coverage the run produced and \emph{bind it back to the source structure} (the highlighted line, the
+subject of Section~\ref{sec:cov-impl}), then record it so the tactics can learn; and \textbf{(3)} shrinking
+is removed and the verdict is ignored, because we measure coverage rather than hunt counterexamples, and we
+want every generated input counted exactly once.
+
+\begin{lstlisting}[caption={Our coverage-guided loop: the ScalaCheck loop plus (1) feedback-driven generation, (2) the coverage-to-source binding, and (3) no shrinking. With no tactics it is exactly the baseline.},label=lst:ours]
+function coverageGuidedCheck(P, baseGen, tactics, budget):
+  feedback <- empty                 // covered branches, corpus, history
+  for i in 1 .. budget:
+    proposals <- [ t.propose(feedback) : t in tactics, defined ]
+    gen <- mix(baseGen, proposals)   // (1) random kept at a minority weight
+    x   <- sample(gen)
+    run P(x)                         // (3) exercise SUT; verdict ignored
+    fired   <- readCoverage()        // source offsets the run touched
+    covered <- { leaf : leaf.span contains some fired offset }  // (2) THE BINDING
+    feedback <- feedback.record(x, covered)
+    foreach t in tactics: t.observe(x, feedback)
+  return coverageReport(feedback)
+\end{lstlisting}
 
 \section{Tactics: A Uniform Abstraction}
 \label{sec:tactics}
@@ -507,37 +571,26 @@ the benchmark methods, and a dependency-light engine that hosts the framework an
 This chapter describes the test loop, how coverage is collected and matched to source, how the static
 branch tree and the gradient's condition language are extracted, and how each tactic is realised.
 
-\section{The Generation Loop is ScalaCheck's}
+\section{Realising the Loop on ScalaCheck}
 \label{sec:loop}
 
-The core entry point runs a single ScalaCheck property whose generator re-reads the live feedback on every
-draw (Listing~\ref{lst:loop}). \texttt{Gen.delay} defers the generator so that each input sees the current
-feedback; \texttt{forAllNoShrink} disables shrinking; the always-true body snapshots coverage as a side
-effect, records it, and lets stateful tactics learn. When the set of tactics is empty, \texttt{mix} returns
-the plain \texttt{arbitrary} generator unchanged — the honest baseline.
+Pseudocode~\ref{lst:ours} is realised directly on top of ScalaCheck, so that the random strategy is the
+unmodified host loop. The feedback-driven generator is built with a deferred generator that re-reads the
+current feedback on every draw; the \texttt{mix} step blends the tactics' proposals with the plain random
+draw using a weighted choice, giving the random draw a fixed minority weight so it remains an escape hatch
+and seeds the corpus, while the guided tactics receive the bulk of the draws — following the FuzzChick maxim
+that inputs should rarely come from the plain generator. The property is checked with shrinking disabled,
+and its body always succeeds: it exercises the SUT only to provoke coverage (any exception is swallowed),
+snapshots that coverage, records it into the feedback, and lets the stateful tactics observe the input. With
+an empty tactic set the mix returns the plain generator and the run is exactly stock ScalaCheck — the honest
+baseline. Because \texttt{scoverage}'s recording back end is process-global, each (strategy, seed) pair is
+executed in its own forked JVM, and a Makefile sweeps the pairs.
 
-\begin{lstlisting}[language=Scala,caption={The test loop. The random strategy is the \texttt{arbitrary} branch of \texttt{mix}, untouched.},label=lst:loop]
-val gen  = Gen.delay(mix(g.arbitrary, tactics.flatMap(_.propose(feedback))))
-val prop = Prop.forAllNoShrink(gen) { (input: A) =>
-  try property(input) catch { case _: Throwable => () }
-  val nowCovered = covered(leaves, coverage.firedOffsets(sourceFile))
-  feedback = feedback.record(input, nowCovered)
-  tactics.foreach(_.observe(input, feedback))
-  true
-}
-Test.check(params.withInitialSeed(seed).withMinSuccessfulTests(inputs).withWorkers(1), prop)
-\end{lstlisting}
-
-The \texttt{mix} function blends proposals with the random draw using \texttt{Gen.frequency}; the random
-draw keeps a fixed minority weight so it remains an escape hatch and seeds the corpus, while the guided
-tactics receive the bulk of the draws — following the FuzzChick maxim that inputs should rarely be produced
-by the plain generator. Because \texttt{scoverage}'s recording back end is process-global, each
-(strategy, seed) pair is executed in its own forked JVM; a Makefile sweeps the pairs.
-
-\section{Collecting and Matching Coverage}
+\section{Binding Runtime Coverage to the Source}
 \label{sec:cov-impl}
 
-We hold two independent views of each method and join them by source position.
+This section describes what we consider the enabling contribution of the framework. We hold two independent
+views of each method and join them by source position.
 
 \paragraph{Runtime view.} The benchmark module is compiled with \texttt{coverageEnabled}, so \texttt{scoverage}
 instruments every statement and, at runtime, appends the identifier of each fired statement to a measurement
@@ -555,30 +608,41 @@ the discrepancies that exact-offset matching suffered around constructs such as 
 definitions. Nested definitions are treated as opaque — their internals are not expanded — so only the call
 site is counted.
 
+\paragraph{Why this binding is the enabling novelty.} Existing Scala coverage tooling — \texttt{scoverage}
+foremost among it — answers only ``\emph{how much} was covered'': it reports a percentage and a flat set of
+fired statement identifiers. It does not reconstruct the method's \emph{decision structure} from the source,
+and it does not bind runtime coverage back to it. Our framework does exactly that: it parses the method into
+a branch tree of leaves carrying source spans, and maps each runtime measurement back onto those leaves by
+span containment, producing a \emph{per-branch, source-aware} coverage signal — not ``$72\%$'', but
+``\emph{which} branches remain unreached, and \emph{where} in the source they are''. This binding is what
+makes every tactic possible: the pool mines the literals of the still-uncovered branches, the gradient forms
+a path predicate for each uncovered leaf, and the mutation corpus retains an input precisely when it lights
+up a previously-unreached leaf. To the best of our knowledge, no existing Scala testing or property-based-testing
+framework connects runtime coverage to the parsed source structure in this way; it is the contribution on
+which the rest of the framework rests, and it is what made coverage-guided generation realisable in the
+Scala ecosystem at all.
+
 \section{Extracting the Gradient's Condition Language}
 \label{sec:gradient}
 
 The gradient needs to turn a Scala condition such as \texttt{x*x == 49} into a numeric formula it can
 evaluate. We define two small languages — numeric expressions (\texttt{Par(i)}, \texttt{Num}, \texttt{Unary},
 \texttt{Binary}) and conditions (\texttt{Cmp}, \texttt{And}, \texttt{Or}, \texttt{Not}) — and a recursive
-translator that walks the Scalameta tree and produces them, mapping each parameter to its \emph{position}
-(Listing~\ref{lst:condof}). Crucially the translation is partial: if any sub-term falls outside the numeric
-fragment — a string, a collection, a method call — the whole condition collapses to \texttt{None} and that
-branch simply gets no gradient. This is what makes the gradient ``numeric only'' by construction.
+translator that walks the parsed syntax tree and produces them, mapping each parameter to its \emph{position}
+(Pseudocode~\ref{lst:condof}). Crucially the translation is partial: if any sub-term falls outside the
+numeric fragment — a string, a collection, a method call — the whole condition collapses to \texttt{NONE} and
+that branch simply gets no gradient. This is what makes the gradient ``numeric only'' by construction.
 
-\begin{lstlisting}[language=Scala,caption={Extracting a numeric condition (excerpt). \texttt{exprOf} is the analogous translator for number-valued sub-terms.},label=lst:condof]
-private def condOf(t: Tree, env: Env): Option[Cond] = t match {
-  case ApplyInfix(lhs, op, rhs) => op match {
-    case "&&" => for (a <- condOf(lhs); b <- condOf(rhs)) yield And(a, b)
-    case "||" => for (a <- condOf(lhs); b <- condOf(rhs)) yield Or(a, b)
-    case "==" | "!=" | "<" | "<=" | ">" | ">=" =>
-      for (a <- exprOf(lhs); b <- exprOf(rhs)) yield Cmp(op, a, b)
-    case _ => None
-  }
-  case "!"(arg)      => condOf(arg).map(Not)
-  case name: TermName => env.get(name) // a bare boolean parameter
-  case _             => None
-}
+\begin{lstlisting}[caption={Extracting a numeric condition. The analogous translator \texttt{exprOf} handles number-valued sub-terms (a parameter becomes its position, a literal a number, $+,-,\times,\%$ become arithmetic nodes). Any sub-term outside the fragment makes the whole condition NONE.},label=lst:condof]
+function condOf(t, env):            // a condition term -> numeric Cond, or NONE
+  match t:
+    a "&&" b:   return And(condOf(a), condOf(b))   // NONE if either side is NONE
+    a "||" b:   return Or (condOf(a), condOf(b))
+    a op b   where op in { ==, !=, <, <=, >, >= }:
+                return Cmp(op, exprOf(a), exprOf(b))
+    "!" a:      return Not(condOf(a))
+    name:       return Cmp("!=", env[name], 0)     // a bare boolean parameter
+    _:          return NONE                        // inexpressible -> no gradient
 \end{lstlisting}
 
 For each leaf, we then accumulate the conditions along the path that reaches it, keeping only leaves whose
@@ -814,8 +878,10 @@ baseline raised median branch coverage from $60.4\%$ to $90.2\%$, with a maximal
 ($\hat{A}_{12}=1.0$) and overwhelming significance, at a throughput cost of only about $1.5\times$. We also
 answer each auxiliary question. \textbf{RQ1}: random generation fails on exact-literal, computed-numeric, and
 structured-input branches, and these are exactly where guidance helps most. \textbf{RQ2}: coverage can be
-collected cheaply by tailing \texttt{scoverage}'s measurement file after every input and matched to the
-source by span containment. \textbf{RQ3}: the same feedback supports three different mechanisms — literal
+collected cheaply by tailing \texttt{scoverage}'s measurement file after every input and — the enabling
+novelty of this work — \emph{bound back to the parsed source structure} (a branch tree) by span containment,
+yielding a per-branch ``which branch is still unreached, and where'' signal that, to our knowledge, no
+existing Scala framework provides and on which all three tactics depend. \textbf{RQ3}: the same feedback supports three different mechanisms — literal
 injection, value-level mutation with a power schedule, and branch-distance hill-climbing — unified by one
 tactic interface. \textbf{RQ4}: each mechanism owns a distinct niche, the composition wins where several
 niches meet, and on external code the tactics help precisely where the program's structure matches them.
