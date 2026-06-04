@@ -87,7 +87,6 @@ object Main {
     bench[List[Int]]("Sequences", "risingRun")(Sequences.risingRun)
     bench[benchmark.data.Tree]("Sequences", "deepTree")(Sequences.deepTree)
     bench2[List[Int], List[Int]]("Sequences", "twoRuns")(Sequences.twoRuns)
-    bench2[List[Int], benchmark.data.Tree]("Sequences", "listThenTree")(Sequences.listThenTree)
     bench3[List[Int], List[Int], List[Int]]("Sequences", "threeRuns")(Sequences.threeRuns)
   }
 }

@@ -8,8 +8,8 @@ import benchmark.data.Tree
   * shallow.
   *
   * Only mutation reaches them, via the FuzzChick springboard — each rung is its own branch, so an input that climbed one rung higher is retained and
-  * mutated one step further. The multi-parameter ones (`twoRuns`, `listThenTree`, `threeRuns`) are the point of the tuple mutators: those mutate *one
-  * coordinate at a time*, so the search can freeze the hard-won part and perturb the rest. This is mutation's exclusive niche.
+  * mutated one step further. The multi-parameter ones (`twoRuns`, `threeRuns`) are the point of the tuple mutators: those mutate *one coordinate at a
+  * time*, so the search can freeze the hard-won part and perturb the rest. This is mutation's exclusive niche.
   */
 object Sequences {
 
@@ -62,19 +62,6 @@ object Sequences {
     else if (pb < 4) "b3"
     else if (pb < 5) "b4"
     else "both-rising"
-  }
-
-  // a list and a tree (tuple2 mutator, mixed types): sort the list, then — holding it — grow the tree. Two different structural mutators in tandem.
-  def listThenTree(xs: List[Int], t: Tree): String = {
-    val p = risingPrefixLen(xs)
-    val d = depth(t)
-    if (p < 2) "list-1"
-    else if (p < 3) "list-2"
-    else if (p < 4) "list-3"
-    else if (p < 5) "list-4"
-    else if (d < 2) "tree-1"
-    else if (d < 4) "tree-2"
-    else "sorted-and-deep"
   }
 
   // three lists (tuple3 mutator): climb each run to length 4 in turn, holding the ones already done.
