@@ -1,16 +1,16 @@
 package benchmark
 
-/** Complex, branchy functions taken from well-known specs / standard-library logic — written the canonical way, NOT shaped to suit any tactic. This is
-  * the external-validity check: we did not choose their control flow, so coverage here is whatever it is. Several are string parsers (deep "valid parse"
-  * branches are genuinely hard for any generator); `isValidDate` is numeric, where the pool and gradient have a real handle. All are deterministic,
-  * self-contained, and over types the framework can generate.
+/** Complex, branchy functions taken from well-known specs / standard-library logic — written the canonical way, NOT shaped to suit any tactic. This
+  * is the external-validity check: we did not choose their control flow, so coverage here is whatever it is. Several are string parsers (deep "valid
+  * parse" branches are genuinely hard for any generator); `isValidDate` is numeric, where the pool and gradient have a real handle. All are
+  * deterministic, self-contained, and over types the framework can generate.
   */
 object RealWorld {
 
   // LeetCode 8 "String to Integer (atoi)": skip spaces, optional sign, accumulate digits, clamp to Int range.
   def atoi(s: String): Int = {
-    var i      = 0
-    val n      = s.length
+    var i = 0
+    val n = s.length
     while (i < n && s(i) == ' ') i += 1
     var sign = 1
     if (i < n && (s(i) == '+' || s(i) == '-')) {
@@ -52,12 +52,12 @@ object RealWorld {
     var i     = 0
     while (i < s.length) {
       val cur = s(i) match {
-        case 'I' => 1; case 'V' => 5; case 'X' => 10; case 'L' => 50
+        case 'I' => 1; case 'V'   => 5; case 'X'   => 10; case 'L' => 50
         case 'C' => 100; case 'D' => 500; case 'M' => 1000; case _ => 0
       }
       val nxt =
         if (i + 1 < s.length) s(i + 1) match {
-          case 'I' => 1; case 'V' => 5; case 'X' => 10; case 'L' => 50
+          case 'I' => 1; case 'V'   => 5; case 'X'   => 10; case 'L' => 50
           case 'C' => 100; case 'D' => 500; case 'M' => 1000; case _ => 0
         }
         else 0

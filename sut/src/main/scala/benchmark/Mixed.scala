@@ -3,10 +3,10 @@ package benchmark
 /** One method, several arms — each a *different* tactic's job; only the composite covers them all, each single tactic covers just its own.
   *
   * Why it's structured this way (a real constraint, not a choice): the framework has **no crossover**, so no single branch can require two tactics at
-  * once — a pool-found string can't be merged with a gradient-found number into one input. Tactics therefore compose by covering *different* branches,
-  * not by combining on one. Two further rules follow: the gradient's arms must sit on top (its whole path has to stay numerically expressible — a string
-  * guard above it would blind it), and **mutation isn't featured here** — it only climbs hard structural gates when *concentrated* (its own strategy), and
-  * in a composite it's too diluted, so its niche stays the dedicated `Sequences` category.
+  * once — a pool-found string can't be merged with a gradient-found number into one input. Tactics therefore compose by covering *different*
+  * branches, not by combining on one. Two further rules follow: the gradient's arms must sit on top (its whole path has to stay numerically
+  * expressible — a string guard above it would blind it), and **mutation isn't featured here** — it only climbs hard structural gates when
+  * *concentrated* (its own strategy), and in a composite it's too diluted, so its niche stays the dedicated `Sequences` category.
   */
 object Mixed {
 

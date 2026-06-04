@@ -24,11 +24,11 @@ object Generators {
         // Favour recursing into a subtree (which grows depth at the leaves) over the shrinking/neutral edits, so mutation can climb deep — but keep
         // all the operators present, prune included.
         Gen.frequency(
-          3 -> mutate(l).map(l2 => Tree.Node(l2, v, r)),               // mutate/grow left
-          3 -> mutate(r).map(r2 => Tree.Node(l, v, r2)),               // mutate/grow right
+          3 -> mutate(l).map(l2 => Tree.Node(l2, v, r)),                // mutate/grow left
+          3 -> mutate(r).map(r2 => Tree.Node(l, v, r2)),                // mutate/grow right
           1 -> Generatable[Int].mutate(v).map(w => Tree.Node(l, w, r)), // perturb a value
-          1 -> Gen.const(Tree.Node(r, v, l)),                          // swap children
-          1 -> Gen.const(Tree.Leaf)                                    // prune
+          1 -> Gen.const(Tree.Node(r, v, l)),                           // swap children
+          1 -> Gen.const(Tree.Leaf)                                     // prune
         )
     }
 

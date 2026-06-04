@@ -57,9 +57,9 @@ final class Pbt(sutRoot: Path) {
   private def covered(leaves: List[BranchTree.Leaf], fired: Set[Pos]): Set[Pos] =
     leaves.iterator.filter(l => fired.exists(l.contains)).map(_.pos).toSet
 
-  /** Mix the active tactics' proposals with a plain random draw. Random keeps a fixed minority share (`RandomWeight` vs `TacticWeight` each) so it stays
-    * an escape hatch and seeds the corpus, but the guided tactics — the point of the run — get the bulk of the draws (FuzzChick: rarely generate, mostly
-    * use the guided proposer). No proposals ⇒ pure random ⇒ stock ScalaCheck, untouched.
+  /** Mix the active tactics' proposals with a plain random draw. Random keeps a fixed minority share (`RandomWeight` vs `TacticWeight` each) so it
+    * stays an escape hatch and seeds the corpus, but the guided tactics — the point of the run — get the bulk of the draws (FuzzChick: rarely
+    * generate, mostly use the guided proposer). No proposals ⇒ pure random ⇒ stock ScalaCheck, untouched.
     */
   private val RandomWeight = 1
   private val TacticWeight = 4
