@@ -9,8 +9,8 @@ import pbt.strategy.Strategy
 import java.nio.file.{Path, Paths}
 
 /** Scratch runner for exploring how the tactics fare on individual (complex/real) methods at a high input budget — WITHOUT writing the statistics
-  * reports, so the K=30 sweep's metrics survive. Prints covered/total per method; one forked JVM per strategy (scoverage's `Invoker` is process-global,
-  * but distinct methods each fire fresh within a run, so one pass is fine).
+  * reports, so the K=30 sweep's metrics survive. Prints covered/total per method; one forked JVM per strategy (scoverage's `Invoker` is
+  * process-global, but distinct methods each fire fresh within a run, so one pass is fine).
   *
   * Usage: `engine/runMain app.Probe <strategy> <seed> <inputs>` (defaults: random, 1, 1000000).
   */
@@ -22,7 +22,7 @@ object Probe {
   def main(args: Array[String]): Unit = {
     val strategy = args.headOption.flatMap(Strategy.byName).getOrElse(Strategy.all.head)
     val seed     = args.lift(1).flatMap(_.toLongOption).getOrElse(1L)
-    val inputs   = args.lift(2).flatMap(_.toIntOption).getOrElse(1000000)
+    val inputs   = args.lift(2).flatMap(_.toIntOption).getOrElse(10000)
     val runner   = new Pbt(SutRoot)
 
     def show[A](cat: String, method: String, r: Report[A]): Unit = {
@@ -30,6 +30,8 @@ object Probe {
       val covered = leaves.count(l => r.feedback.covered(l.pos))
       val pct     = if (leaves.isEmpty) 0.0 else 100.0 * covered / leaves.size
       println(f"  $cat%-10s $method%-15s $covered%2d/${leaves.size}%-2d = $pct%5.1f%%  (${r.elapsedMillis}ms)")
+      // Self-contained, tab-delimited line so `probe_summary.py` can aggregate across the separate forked JVMs.
+      println(s"PROBE\t${strategy.name}\t$seed\t$cat\t$method\t$covered\t${leaves.size}")
     }
     def run[A: Generatable](cat: String, method: String)(body: A => Any): Unit =
       show(cat, method, runner.check[A](source(cat), method, strategy, seed, inputs)(in => { body(in); true }))
