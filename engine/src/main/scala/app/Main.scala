@@ -67,26 +67,20 @@ object Main {
     bench2[Int, Int]("NumericSearch", "compareInts")(NumericSearch.compareInts)
     bench3[Int, Int, Int]("NumericSearch", "pythagorean")(NumericSearch.pythagorean)
 
-    bench[Double]("Edges", "magnitude")(Edges.magnitude)
-    bench[Double]("Edges", "nearPi")(Edges.nearPi)
-    bench[Double]("Edges", "floatClass")(Edges.floatClass)
-
-    bench[String]("Frontier", "parseVersion")(Frontier.parseVersion)
-    bench[String]("Frontier", "isValidIp")(Frontier.isValidIp)
-    bench[String]("Frontier", "balancedBrackets")(Frontier.balancedBrackets)
-    bench[List[Int]]("Frontier", "isStrictlySorted")(Frontier.isStrictlySorted)
-    bench[benchmark.data.Tree]("Frontier", "bstShape")(Frontier.bstShape)
-    bench2[List[Int], List[Int]]("Frontier", "isReverseOf")(Frontier.isReverseOf)
-    bench2[Map[String, Int], Map[String, Int]]("Frontier", "sameKeys")(Frontier.sameKeys)
-    bench[List[Int]]("Frontier", "luhnCheck")(Frontier.luhnCheck)
-
-    bench2[String, Int]("Mixed", "classifyCode")(Mixed.classifyCode)
-    bench2[String, Double]("Mixed", "classifyFloat")(Mixed.classifyFloat)
-    bench3[String, Int, Double]("Mixed", "triage")(Mixed.triage)
-
     bench[List[Int]]("Sequences", "risingRun")(Sequences.risingRun)
     bench[benchmark.data.Tree]("Sequences", "deepTree")(Sequences.deepTree)
     bench2[List[Int], List[Int]]("Sequences", "twoRuns")(Sequences.twoRuns)
     bench3[List[Int], List[Int], List[Int]]("Sequences", "threeRuns")(Sequences.threeRuns)
+
+    bench2[String, Int]("Mixed", "triage")(Mixed.triage)
+    bench3[String, Int, Int]("Mixed", "dispatch")(Mixed.dispatch)
+
+    bench[String]("RealWorld", "atoi")(RealWorld.atoi)
+    bench[String]("RealWorld", "isValidNumber")(RealWorld.isValidNumber)
+    bench[String]("RealWorld", "romanToInt")(RealWorld.romanToInt)
+    bench2[String, String]("RealWorld", "compareVersion")(RealWorld.compareVersion)
+    bench[String]("RealWorld", "isValidIPv4")(RealWorld.isValidIPv4)
+    bench3[Int, Int, Int]("RealWorld", "isValidDate")(RealWorld.isValidDate)
+    bench[String]("RealWorld", "luhn")(RealWorld.luhn)
   }
 }
