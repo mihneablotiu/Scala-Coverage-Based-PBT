@@ -96,8 +96,8 @@ actually helps.
 
 1. We point the framework at our catalogue of small methods.
 2. For each method and each strategy, we ask an input generator for
-   10000 inputs (integers, longs, booleans, strings, doubles,
-   options, lists, maps, or little trees, as the method needs).
+   10000 inputs (integers, strings, lists, options, or little
+   trees, as the method needs).
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
@@ -107,34 +107,27 @@ actually helps.
 
 **Random** samples uniformly and ignores past observations — it is
 exactly what a ScalaCheck user gets today, and serves as the honest
-baseline. On top of it the framework adds three **feedback
+baseline. On top of it the framework adds two **feedback
 channels**, each attacking a different *kind* of hard branch:
 
 - **Pool** mines the constants written in the method's own source
   (the `42` in `case 42`, the string `"admin"`) and splices them
   into the draw — the reliable way to hit needle-in-a-haystack
   *literal* branches.
-- **Mutation-guided** keeps a list of "seeds" — inputs whose
-  iteration covered a previously-uncovered branch — and half the
-  time perturbs one (bump a number, drop a list tail, flip a bool),
-  which is good at reaching *edge values* like `NaN`/`∞`.
-- **Coverage-guided** is a "warmer / colder" homing game. Random
-  only ever learns "hit or miss"; this channel instead reads the
-  *guard* of an as-yet-uncovered branch straight from the source
-  (e.g. `n == 700014`) and measures **how far** the current input is
-  from satisfying it (here, `|n − 700014|`). It then keeps the
-  closest input and nudges it downhill until it lands on the branch.
-  It does this **on its own** — nobody writes the target by hand —
-  and it is the only channel that can steer *relations between
-  inputs* (e.g. make `a == −b`). Where a guard isn't a number
-  comparison (text, structure), it has no gradient and falls back to
-  the others.
+- **Mutation** keeps a list of "seeds" — inputs whose iteration
+  covered a previously-uncovered branch — and mostly perturbs the
+  most recent one (bump a number, drop a list tail, grow a tree).
+  Because each "rung" of a structured target is its own branch, an
+  input that climbed one rung is kept and nudged one step further —
+  the reliable way to reach *structured* targets a random draw never
+  stumbles on (a long sorted prefix, a tall tree).
 
-These channels **compose** (e.g. coverage-guided-mutation-guided-
-pool uses all three), and they are **complementary** — the pool
-hits magic literals, mutation hits float edges, the gradient hits
-numeric targets and relations — so combining all three covers the
-most.
+These channels **compose**: **pool-mutation** switches both on at
+once. They are **complementary** — the pool hits magic literals,
+mutation climbs structure — so combining the two covers the most.
+Validity gates (the input must first *parse* or pass a *checksum*)
+are reached by neither today; that is the open frontier (see the
+proposal).
 
 The project is a **measuring stick**: the part that observes and
 reports is identical across strategies; the part that picks the next
@@ -146,33 +139,21 @@ input is the thing under study.
 
 The catalogue is grouped not by input type but by the **kind of
 problem** random testing runs into — so each group asks a different
-question:
+question. The full suite is currently being rebuilt around four
+stories:
 
-- **Saturated** — every branch is easy; random covers it fully.
-  The calibration floor (e.g. `sign(n)`).
-- **MagicConstants** — a branch hides behind `== 42`, `== "admin"`,
-  a magic `Long`, or a particular `Option`/`Map` key. Random
-  virtually never guesses the literal; the pool strategies mine it
-  from the source and walk straight in.
-- **NarrowRanges** — a branch fires only for a tiny slice: a
-  10-wide integer or long band, a value near π, or a floating-point
-  `NaN`/`∞`. Mutation reaches the float edges; literal injection
-  supplies the bounds.
-- **Relational** — two arguments must agree (a list and its
-  reverse, two maps with the same keys). Independent random draws
-  almost never coincide.
-- **StructuralInvariants** — the input must be *sorted*, a valid
-  *binary-search tree*, and so on. The chance a random value
-  qualifies collapses as it grows.
-- **DeepConditionals** — deeply nested `if`s where several
-  guards must hold at once; good for rich diagrams.
-- **StagedValidity** — the input must first *parse* or be *valid*
-  (a version string, a signed integer, balanced brackets, a Luhn
-  checksum) and only then is it classified. Random inputs rarely
-  pass even the first gate — the hardest group.
+- **saturate** — every branch is easy; *every* strategy covers it
+  fully (the calibration floor, e.g. `sign(n)`).
+- **pool wins** — a branch hides behind an exact magic value; random
+  virtually never guesses it, the pool mines it from the source.
+- **mutation wins** — the input must be a *structured* one (a long
+  sorted prefix, a tall tree); each rung is its own branch, so
+  mutation climbs them one at a time.
+- **mix wins** — one method whose arms are owned by *different*
+  tactics, so only the composite `pool-mutation` covers them all.
 
-The full catalogue lives under `sut/src/main/scala/benchmark/`,
-one file per group.
+The benchmarks live under `sut/src/main/scala/benchmark/`; today there
+is a single placeholder `Saturated` group while the rest is rebuilt.
 
 ---
 
@@ -183,9 +164,9 @@ JSON with everything observed during the session:
 
 ```
 engine/reports/statistics/
-└── <category>/          e.g. MagicConstants
-    └── <method name>/   e.g. classify
-        └── <strategy>/  e.g. random, mutation-guided
+└── <category>/          e.g. Saturated
+    └── <method name>/   e.g. sign
+        └── <strategy>/  e.g. random, pool, mutation, pool-mutation
             └── seed=01/
                 └── coverage.json   — raw measurement
 ```
