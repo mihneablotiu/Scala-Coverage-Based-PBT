@@ -96,8 +96,8 @@ actually helps.
 
 1. We point the framework at our catalogue of small methods.
 2. For each method and each strategy, we ask an input generator for
-   10000 inputs (integers, strings, lists, options, or little
-   trees, as the method needs).
+   10000 inputs (integers, lists, options, tuples, or little trees, as
+   the method needs).
 3. For each input we run the method.
 4. As the method runs, an extra layer records which lines were
    executed.
@@ -110,17 +110,16 @@ exactly what a ScalaCheck user gets today, and serves as the honest
 baseline. On top of it the framework adds two **feedback
 channels**, each attacking a different *kind* of hard branch:
 
-- **Pool** mines the constants written in the method's own source
-  (the `42` in `case 42`, the string `"admin"`) and splices them
-  into the draw — the reliable way to hit needle-in-a-haystack
-  *literal* branches.
+- **Pool** mines the integer constants written in the method's own
+  source and splices them into the draw — the reliable way to hit
+  needle-in-a-haystack *literal* branches.
 - **Mutation** keeps a list of "seeds" — inputs whose iteration
   covered a previously-uncovered branch — and mostly perturbs the
   most recent one (bump a number, drop a list tail, grow a tree).
   Because each "rung" of a structured target is its own branch, an
   input that climbed one rung is kept and nudged one step further —
-  the reliable way to reach *structured* targets a random draw never
-  stumbles on (a long sorted prefix, a tall tree).
+  the reliable way to reach *structured* targets a random draw rarely
+  stumbles on (sorted inputs, preserved tuple components, or tree shape).
 
 These channels **compose**: **pool-mutation** switches both on at
 once. They are **complementary** — the pool hits magic literals,
@@ -138,22 +137,21 @@ input is the thing under study.
 ## 8. The little examples we test
 
 The catalogue is grouped not by input type but by the **kind of
-problem** random testing runs into — so each group asks a different
-question. The full suite is currently being rebuilt around four
-stories:
+problem** random testing runs into:
 
-- **saturate** — every branch is easy; *every* strategy covers it
-  fully (the calibration floor, e.g. `sign(n)`).
-- **pool wins** — a branch hides behind an exact magic value; random
-  virtually never guesses it, the pool mines it from the source.
-- **mutation wins** — the input must be a *structured* one (a long
-  sorted prefix, a tall tree); each rung is its own branch, so
-  mutation climbs them one at a time.
-- **mix wins** — one method whose arms are owned by *different*
-  tactics, so only the composite `pool-mutation` covers them all.
+- **MagicLiterals** — exact integer/list/tree literals; the pool
+  should win.
+- **MutationTargets** — realistic structured inputs; mutation should
+  usually beat random.
+- **MixedTargets** — different hard arms belong to different tactics;
+  the composite should cover the most.
+- **NumericSearch** — narrow computed numeric branches; none of the
+  current tactics should solve these reliably.
+- **Calibration** — ordinary shallow branches; every strategy should
+  behave like random and cover them easily.
 
-The benchmarks live under `sut/src/main/scala/benchmark/`; today there
-is a single placeholder `Saturated` group while the rest is rebuilt.
+The benchmarks live under `sut/src/main/scala/benchmark/`, one file per
+category.
 
 ---
 
@@ -164,7 +162,7 @@ JSON with everything observed during the session:
 
 ```
 engine/reports/statistics/
-└── <category>/          e.g. Saturated
+└── <category>/          e.g. MagicLiterals
     └── <method name>/   e.g. sign
         └── <strategy>/  e.g. random, pool, mutation, pool-mutation
             └── seed=01/

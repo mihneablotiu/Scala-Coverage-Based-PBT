@@ -23,8 +23,8 @@ from shapes import COLOR_SOFT, COLOR_STROKE, COLOR_TEXT, save  # noqa: E402
 CHANNELS = [("random", "#2E5C8A"), ("pool", "#1F8A70"), ("mutation", "#E67E22")]
 ROWS = [
     ("easy arm   early-exit, sign", [1, 1, 1]),
-    ('magic int / string   "n == 42", "admin"', [0, 1, 0]),
-    ("structure   sorted prefix, deep tree", [0, 0, 1]),
+    ('magic int   "n == 42"', [0, 1, 0]),
+    ("structure   sorted list, deep tree", [0, 0, 1]),
     ("validity gate   parse, checksum", [0, 0, 0]),
 ]
 

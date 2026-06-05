@@ -6,14 +6,10 @@ REPORTS_DIR    := engine/reports/statistics
 SCOV_DATA_DIR  := sut/target/scala-2.13/scoverage-data
 SBT            ?= sbt
 PY             ?= python3
+INPUTS         ?= 10000
 
-# One JVM per (strategy, seed) keeps scoverage's process-global Invoker from leaking coverage
-# between runs. STRATEGIES must stay aligned with Strategy.names; SEEDS is swept for K-seed
-# variability so downstream charts can report median + IQR instead of a single noisy point.
-STRATEGIES     := random pool mutation pool-mutation
-# 30 seeds: the conventional minimum for assessing randomized algorithms with
-# Vargha–Delaney Â₁₂ + Mann–Whitney U (Arcuri & Briand 2014), surfaced in significance.csv.
-SEEDS          := $(shell seq 1 30)
+STRATEGIES     ?= random pool mutation pool-mutation
+SEEDS          ?= $(shell seq 1 30)
 
 .PHONY: help all build run analyze clean clean-reports fmt diagrams
 
@@ -23,6 +19,7 @@ help: ## Show this help.
 	@echo "  make all             fmt + clean + diagrams + build + run + analyze"
 	@echo "  make build           Compile all subprojects"
 	@echo "  make run             Run each (strategy, seed) pair in its own forked JVM"
+	@echo "                       Optional: make run SEEDS=\"1 2\" INPUTS=1000"
 	@echo "  make analyze         Build charts/tables from $(REPORTS_DIR)/*/*/*/seed=*/coverage.json"
 	@echo "  make diagrams        Regenerate architecture diagrams under docs/images/"
 	@echo "  make clean-reports   Remove $(REPORTS_DIR) and stale scoverage measurements"
@@ -42,7 +39,7 @@ run: clean-reports ## Run each (strategy, seed) pair in its own forked JVM (app.
 	@for s in $(STRATEGIES); do \
 	  for k in $(SEEDS); do \
 	    echo "── $$s seed=$$k ──"; \
-	    $(SBT) -no-colors -batch "engine/runMain app.Main $$s $$k" || exit 1; \
+	    $(SBT) -no-colors -batch "engine/runMain app.Main $$s $$k $(INPUTS)" || exit 1; \
 	  done; \
 	done
 

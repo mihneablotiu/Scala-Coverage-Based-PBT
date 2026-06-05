@@ -47,7 +47,7 @@ final case class ParsedMethod(tree: BranchTree, pool: ConstantPool)
   *   - `visit` matches the branching constructs; `descend` recurses so branches buried in lambdas / `val` RHSes still surface;
   *   - nested `def` / `object` / `class` are opaque (their own scope) — only the call site shows, as a leaf;
   *   - a leaf stores its full source span, so coverage matches by span containment;
-  *   - literals are mined in bulk (every `Int` / `String` in the body) — over-approximating is cheap, an unused literal is just a wasted draw.
+  *   - integer literals are mined in bulk — over-approximating is cheap, an unused literal is just a wasted draw.
   */
 object Parser {
 
@@ -92,12 +92,10 @@ object Parser {
     BranchTree.Arm(label, visit(c.body))
   }
 
-  /** Every `Int` / `String` literal in the body. */
   private def mineLiterals(t: Tree): ConstantPool =
     t.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
-      case (p, l: Lit.Int)    => p.copy(ints = p.ints + l.value)
-      case (p, l: Lit.String) => p.copy(strings = p.strings + l.value)
-      case (p, _)             => p
+      case (p, l: Lit.Int) => p.copy(ints = p.ints + l.value)
+      case (p, _)          => p
     }
 
   private def leaf(t: Tree): BranchTree.Leaf = BranchTree.Leaf(t.pos.start, t.pos.end, t.pos.startLine + 1, text(t))
