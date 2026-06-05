@@ -10,17 +10,21 @@ it is built.
 
 | Subproject | Role |
 |------------|------|
-| `sut`    | System under test — small branchy benchmark methods, compiled with scoverage instrumentation. Currently a single placeholder group (`Saturated`); the full suite is being rebuilt. |
-| `engine` | The `pbt` framework and an `app` experiment harness (sample input types like `Tree` live in `pbt/dataTypes`). |
+| `sut`    | System under test — benchmark categories compiled with scoverage instrumentation. |
+| `engine` | The `pbt` framework and an `app` experiment harness with concrete generators. |
+
+The SUT catalogue has five categories: `Calibration`, `MagicLiterals`,
+`MutationTargets`, `MixedTargets`, and `NumericSearch`. Each category has
+five methods and isolates a different coverage story.
 
 ---
 
 ## 2. Using the framework — one call
 
 ```scala
-val pbt    = new Pbt(Paths.get("sut"))                // reads the instrumented SUT once
-val report = pbt.check[Int](source, "sign", Strategy.poolMutation) { n =>
-  Saturated.sign(n); true                             // the property
+val pbt    = new Pbt(Paths.get("sut"))
+val report = pbt.check[Int](source, "magicInt", Strategy.pool) { n =>
+  MagicLiterals.magicInt(n); true
 }
 ```
 
@@ -29,8 +33,8 @@ its input type, and a **strategy**. `check` generates inputs,
 runs the property on each while measuring coverage, and returns a
 [`Report`](../engine/src/main/scala/pbt/Report.scala). The input type
 needs a [`Generatable`](../engine/src/main/scala/pbt/gen/Generatable.scala)
-in scope; the supported instances (`Int`, `String`, `List`, `Option`,
-`Tree`, and tuples) live together in
+in scope; the supported instances (`Int`, `List`, `Option`,
+`benchmark.data.Tree`, and tuples) live together in
 [`app.Generators`](../engine/src/main/scala/app/Generators.scala).
 
 `random` is *literally* `Prop.forAll(arbitrary)` — stock ScalaCheck.
@@ -40,13 +44,13 @@ approximation.
 
 ---
 
-## 3. The one idea: a strategy is two on/off switches
+## 3. Strategy = random plus independent tactics
 
 A [`Strategy`](../engine/src/main/scala/pbt/strategy/Strategy.scala) is
-just a name plus two booleans — *does it pool?* *does it mutate?*:
+a name plus the tactics it enables:
 
 ```scala
-final case class Strategy(name: String, pool: Boolean, mutation: Boolean)
+final case class Strategy(name: String, tactics: List[Tactic])
 ```
 
 Each draw is a plain random draw, plus — when the strategy enables them
@@ -59,17 +63,16 @@ stays a healthy escape hatch and seeds the corpus):
 - **mutation** — perturb a corpus seed, an input that grew coverage
   (`Generatable.mutate`).
 
-So the **four strategies are the four combinations of the two
-switches** — `random` is both off, `pool-mutation` both on. The
+So the **four strategies are the combinations of the implemented
+tactics** — `random` has no tactics, `pool-mutation` has both. The
 whole mixing logic lives in
-[`Pbt.check`](../engine/src/main/scala/pbt/Pbt.scala); there is no
-tactic class hierarchy.
+[`Pbt.check`](../engine/src/main/scala/pbt/Pbt.scala).
 
 ![Feedback tactics are complementary](images/mechanisms.png)
 
-The tactics are **complementary** — a branch behind a magic string is
+The tactics are **complementary** — a branch behind a magic integer is
 reached only by the pool, a branch behind a *structured* input (a
-sorted prefix, a tall tree) only by mutation — so the `pool-mutation`
+sorted list, staged tuple, or tree shape) only by mutation — so the `pool-mutation`
 composite covers the most.
 
 ---
@@ -80,8 +83,8 @@ composite covers the most.
 
 Each tactic combined with the random baseline is drawn on its own —
 [pool](images/pool.png), [mutation](images/mutation.png) — and
-[`sources.png`](images/sources.png) contrasts the single random source
-of stock ScalaCheck with this engine's three.
+[`sources.png`](images/sources.png) contrasts stock ScalaCheck's single
+random source with the guided sources.
 
 The driver is ScalaCheck's own (`Test.check` over a
 `Prop.forAllNoShrink` whose generator is `Gen.delay(...)` re-read each
@@ -112,10 +115,10 @@ each subpackage is one thing you would extend:
 pbt/            engine + core types     Pbt · Coverage · Report
 pbt/gen/        the generator interface Generatable · ConstantPool
 pbt/analysis/   add a construct         Analysis (BranchTree + Parser)
-pbt/strategy/   feedback state + presets Feedback · Strategy
-pbt/dataTypes/  sample input types      Tree
+pbt/strategy/   feedback state + presets Feedback · Strategy · Tactic
 app/            harness + all the       Main · Generators
                 concrete generators
+sut/benchmark/  SUT methods + data      Calibration · ... · data.Tree
 ```
 
 Each subpackage is one cohesive file, so "where does X live" has one
@@ -157,10 +160,11 @@ Both tactics steer off the *live* coverage — they propose only while
 there is something left to gain, so a strategy is genuinely
 feedback-driven, not a fixed bias:
 
-The **pool** mines every `Int`/`String` literal in the method body into
+The **pool** mines every `Int` literal in the method body into
 a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
-(DRAGEN²-style constant mining — over-approximating is cheap, an unused
-literal is just a wasted draw). Each draw it injects one of those
+(the AFL *dictionary* idea — splice useful constants from the program into
+inputs — adapted to value-level draws; over-approximating is cheap, an
+unused literal is just a wasted draw). Each draw it injects one of those
 literals — but only while some leaf is still uncovered; once every leaf
 is hit there is nothing a literal can unlock, so it stands down. That
 is what makes literal injection coverage-driven.
@@ -169,7 +173,7 @@ The **mutation** tactic perturbs the corpus of coverage-growing inputs
 with the type's `mutate` (AFL/FuzzChick-style edits and "interesting"
 edge values). It favours the *most recent* grower — the input on the
 coverage frontier — so each retained seed is the springboard that
-ratchets one rung deeper (extend a sorted prefix, grow a tree), with a
+ratchets into nearby structured inputs (sort a list, grow a tree), with a
 slice of draws on older seeds for diversity.
 
 Neither needs anything from the parser beyond the `BranchTree`'s leaves
@@ -202,7 +206,7 @@ per cell at
 
 ```
 { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
-  "pool":       { "ints": [...], "strings": [...] },
+  "pool":       { "ints": [...] },
   "branchTree": nested tree; each leaf carries firstHitInput: int | null }
 ```
 
@@ -232,7 +236,7 @@ the *presentation*. Either side can be rewritten without the other.
 |------------------|-------|
 | A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` (all the concrete generators live there; composites defer to their components, see `list`/`tree`) |
 | A new branchy construct | One case in `Parser.visit` (+ a `BranchTree` node only if its shape is genuinely new) |
-| A new feedback mode | A draw + guard in `Pbt.check`, and a flag on `Strategy` |
+| A new tactic | One `Tactic` case plus one proposal branch in `Pbt.check` |
 | A new strategy | One `Strategy` preset in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |
 | A new output format | A new writer alongside `Report` |
 

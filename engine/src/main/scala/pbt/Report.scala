@@ -11,7 +11,7 @@ import java.nio.file.{Files, Path}
   *
   * {{{
   *   { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
-  *     "pool":       { "ints": [...], "strings": [...] },
+  *     "pool":       { "ints": [...] },
   *     "branchTree": <nested tree; each leaf carries firstHitInput: int | null> }
   * }}}
   */
@@ -33,11 +33,10 @@ final case class Report[A](
   private val firstHits: Map[Int, Int] = feedback.firstHits
 
   private def json: String = {
-    val ints    = pool.ints.toSeq.sorted.mkString("[", ",", "]")
-    val strings = pool.strings.toSeq.sorted.map(quote).mkString("[", ",", "]")
+    val ints = pool.ints.toSeq.sorted.mkString("[", ",", "]")
     s"""{"method":${quote(method)},"sourceFile":${quote(sourceFile)},"strategy":${quote(strategy)},""" +
       s""""totalInputs":${feedback.iteration},"elapsedMillis":$elapsedMillis,""" +
-      s""""pool":{"ints":$ints,"strings":$strings},""" +
+      s""""pool":{"ints":$ints},""" +
       s""""branchTree":${tree.fold("null")(node)}}"""
   }
 
