@@ -19,6 +19,7 @@ final case class Report[A](
     Files.createDirectories(outDir)
     Files.writeString(outDir.resolve("coverage.json"), json)
     Files.writeString(outDir.resolve("feedback.jsonl"), feedbackJsonLines)
+    Files.writeString(outDir.resolve("trace.jsonl"), traceJsonLines)
   }
 
   private val firstHits: Map[Int, Int]                           = feedback.firstHits
@@ -29,11 +30,11 @@ final case class Report[A](
     s"""{"method":${quote(method)},"sourceFile":${quote(sourceFile)},"strategy":${quote(strategy)},""" +
       s""""totalInputs":${feedback.iteration},"elapsedMillis":$elapsedMillis,""" +
       s""""pool":{"ints":$ints},""" +
-      s""""branchTree":{"kind":"sequence","children":[${statements.map(statement).mkString(",")}]}}"""
+      s""""statements":[${statements.map(statement).mkString(",")}]}"""
   }
 
   private def statement(s: Coverage.StatementTarget): String =
-    s"""{"kind":"statement","id":${s.id},"rawIds":[${s.ids.toSeq.sorted.mkString(",")}],"line":${s.line},"text":${quote(
+    s"""{"id":${s.id},"rawIds":[${s.ids.toSeq.sorted.mkString(",")}],"line":${s.line},"text":${quote(
         s.text
       )},"firstHitInput":${firstHits.get(s.id).fold("null")(_.toString)}}"""
 
@@ -48,6 +49,35 @@ final case class Report[A](
           )}],"coveredTotal":${event.coveredTotal},"targetTotal":${statements.size},"corpusSize":${event.corpusSize}}"""
       }
       .mkString("", "\n", if (feedback.events.isEmpty) "" else "\n")
+
+  private def traceJsonLines: String =
+    feedback.traces
+      .map { trace =>
+        s"""{"iteration":${trace.iteration},"source":${quote(trace.source)},"availableSources":[${trace.availableSources
+            .map(quote)
+            .mkString(
+              ","
+            )}],"input":${quote(trace.input)},"feedbackBefore":${snapshot(trace.feedbackBefore)},"coveredNow":${ids(
+            trace.coveredNow
+          )},"newStatements":[${statementRefs(
+            trace.newStatements
+          ).mkString(",")}],"feedbackAfter":${snapshot(trace.feedbackAfter)}}"""
+      }
+      .mkString("", "\n", if (feedback.traces.isEmpty) "" else "\n")
+
+  private def snapshot(s: Feedback.Snapshot): String =
+    s"""{"coveredStatements":${ids(
+        s.coveredStatements
+      )},"coveredTotal":${s.coveredTotal},"corpusSize":${s.corpusSize},"lastCorpusInput":${s.lastCorpusInput
+        .fold("null")(quote)}}"""
+
+  private def statementRefs(statementIds: Set[Int]): Seq[String] =
+    statementIds.toSeq.sorted.flatMap(statementsById.get).map { s =>
+      s"""{"id":${s.id},"line":${s.line},"text":${quote(s.text)}}"""
+    }
+
+  private def ids(values: Set[Int]): String =
+    values.toSeq.sorted.mkString("[", ",", "]")
 
   private def quote(s: String): String =
     "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\""

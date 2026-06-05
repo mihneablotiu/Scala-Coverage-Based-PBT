@@ -36,7 +36,7 @@ POOL = f"""digraph pool {{
   label=<<b>pool</b>  +  random>;
   {_rand()}
   pool [label=<<b>pool</b><br/><font point-size="10" color="{TEAL_A}">every literal mined<br/>from the method</font>>, fillcolor="{TEAL}"];
-  cov  [label=<any branch<br/>still uncovered?>, fillcolor="{TEAL}"];
+  cov  [label=<any statement<br/>still uncovered?>, fillcolor="{TEAL}"];
   {_common()}
   rand -> pick [label="typed value"]; pool -> pick [label="typed value"];
   pick -> run; run -> cov [label="coverage", style=dashed];

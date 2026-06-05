@@ -51,7 +51,7 @@
 <g id="node3" class="node">
 <title>cov</title>
 <path fill="#c9e8dd" stroke="black" stroke-width="0" d="M220.92,-163.33C220.92,-163.33 115.17,-163.33 115.17,-163.33 109.17,-163.33 103.17,-157.33 103.17,-151.33 103.17,-151.33 103.17,-125.29 103.17,-125.29 103.17,-119.29 109.17,-113.29 115.17,-113.29 115.17,-113.29 220.92,-113.29 220.92,-113.29 226.92,-113.29 232.92,-119.29 232.92,-125.29 232.92,-125.29 232.92,-151.33 232.92,-151.33 232.92,-157.33 226.92,-163.33 220.92,-163.33"/>
-<text xml:space="preserve" text-anchor="start" x="134.67" y="-141.31" font-family="Helvetica,sans-Serif" font-size="13.00">any branch</text>
+<text xml:space="preserve" text-anchor="start" x="126.05" y="-141.31" font-family="Helvetica,sans-Serif" font-size="13.00">any statement</text>
 <text xml:space="preserve" text-anchor="start" x="121.17" y="-127.81" font-family="Helvetica,sans-Serif" font-size="13.00">still uncovered?</text>
 </g>
 <!-- cov&#45;&gt;pool -->

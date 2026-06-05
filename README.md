@@ -18,11 +18,11 @@ val pbt = new Pbt(Paths.get("sut"))
 pbt.check[Int](source, "magicInt", Strategy.pool) { n => MagicLiterals.magicInt(n); true }
 ```
 
-`random` is *literally* `Prop.forAll(arbitrary)` — stock ScalaCheck. Every other
-strategy runs the same loop plus a set of **coverage-guided tactics**, each
-reading the live coverage:
+`random` is ScalaCheck arbitrary generation in the same no-shrink measurement
+loop as every other strategy. Guided strategies add **coverage-guided tactics**,
+each reading the live coverage:
 
-- **pool** — inject the literals still-uncovered branches need;
+- **pool** — inject mined literals while method-local statements remain uncovered;
 - **mutation** — perturb a corpus of coverage-increasing seeds.
 
 A `Strategy` is a name plus a list of independent tactics. `random` has no
@@ -46,7 +46,8 @@ Requires `sbt`, `python3` (`matplotlib`), and `graphviz`
 (`brew install graphviz` on macOS).
 
 Reports land under
-`engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`.
+`engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`,
+with `coverage.json`, compact `feedback.jsonl`, and full `trace.jsonl`.
 
 ## Documentation
 

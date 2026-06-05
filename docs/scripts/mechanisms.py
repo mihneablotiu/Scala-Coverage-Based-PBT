@@ -1,8 +1,8 @@
-"""Complementarity of the feedback channels — which *kind* of hard branch each one can reach.
+"""Complementarity of the feedback channels — which *kind* of hard target each one can reach.
 
-The headline finding: random/pool/mutation each crack a different kind of branch, so the composite
+The headline finding: random/pool/mutation each crack a different kind of target, so the composite
 (`pool-mutation`) covers the most. Cells are ticked from the benchmark results (e.g. the rising-run /
-deep-tree arms are reached only by mutation, `accessLevel` only by the pool).
+deep-tree arms are reached only by mutation, exact literals only by the pool).
 
 Run: ``python3 docs/scripts/mechanisms.py``.
 """
@@ -19,7 +19,7 @@ from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
 from shapes import COLOR_SOFT, COLOR_STROKE, COLOR_TEXT, save  # noqa: E402
 
-# Columns are the feedback channels (coloured to match the charts); rows are kinds of hard branch.
+# Columns are the feedback channels (coloured to match the charts); rows are kinds of hard target.
 CHANNELS = [("random", "#2E5C8A"), ("pool", "#1F8A70"), ("mutation", "#E67E22")]
 ROWS = [
     ("easy arm   early-exit, sign", [1, 1, 1]),
@@ -67,7 +67,7 @@ for i, (label, marks) in enumerate(ROWS):
 
 ax.text(
     W / 2, 0.45,
-    "Each tactic cracks a different kind of branch → coverage-guided combines them.\n"
+    "Each tactic cracks a different kind of target → coverage-guided combines them.\n"
     "Validity gates (parsing, checksums) are reached by none — the open frontier.",
     ha="center", va="center", fontsize=10, style="italic", color=COLOR_SOFT,
 )

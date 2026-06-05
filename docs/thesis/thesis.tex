@@ -289,26 +289,30 @@ replaces per-input oracles with general properties.
 \section{Property-Based Testing}
 \label{sec:pbt}
 
-Property-based testing was popularised by QuickCheck~\cite{claessen2000}. Instead of writing individual
-input/output pairs, the developer states a \emph{property} — a predicate that should hold for all inputs —
-and a \emph{generator} produces many inputs at which the property is checked. If any input falsifies the
-property, it is reported as a counterexample. A canonical property is that reversing a list twice yields
-the original list, $\forall xs.\ \mathit{reverse}(\mathit{reverse}(xs)) = xs$, checked on hundreds of
-randomly generated lists.
+At its most general level, property-based testing is a way to organise testing around general behavioural
+claims rather than around individual input-output examples. A \emph{property} states something that should
+hold for a family of executions; a \emph{test oracle} decides whether one concrete execution satisfies that
+claim; and a \emph{test-data generation} procedure chooses the concrete inputs on which the property is
+evaluated. Fink and Bishop describe this view explicitly: property-based testing asks what is to be
+established, what data should be used, when enough testing has been performed, and how success or failure is
+decided~\cite{fink1997}.
 
-Two components matter for this work. First, the \emph{generator}: a description of how to sample values of a
-type. ScalaCheck exposes generators through the \texttt{Gen[A]} type and a type class \texttt{Arbitrary[A]}
-that supplies a default generator for a type. Generators are biased toward small and edge values (empty
-collections, $0$, $\pm 1$, extreme integers) because such values frequently expose faults. Second,
-\emph{shrinking}: when a counterexample is found, the framework searches for a smaller one that still fails,
-to ease debugging. Shrinking is irrelevant to coverage measurement, and we deliberately disable it
-(Section~\ref{sec:loop}) so that every generated input is counted exactly once.
+This perspective separates three concerns that are often mixed together in ordinary tests. The first is the
+\emph{specification concern}: which semantic property of the program matters? The property can be as simple
+as an algebraic law, or as domain-specific as an authentication rule. The second is the \emph{oracle
+concern}: once an input has been executed, how is the result judged? The oracle may be a Boolean predicate,
+a runtime monitor, or a comparison against a reference implementation. The third is the \emph{adequacy
+concern}: after many executions have passed, why should the tester believe that the relevant behaviour has
+been exercised sufficiently?
 
-A property may carry a \emph{precondition} of the form $P(x) \Rightarrow Q(x)$. When $P$ is sparse — for
-instance ``$xs$ is sorted'' — most random inputs fail $P$ and are discarded, so the body $Q$ is rarely
-exercised. This precondition problem motivates much of the related work but is orthogonal to our setting,
-in which we measure branch coverage of total functions rather than the discard rate of a sparse
-precondition.
+Coverage enters through this last concern. A positive test result only says that no checked execution
+violated the property; it does not say that the executions explored the interesting parts of the program.
+For this reason, property-based testing can be combined with structural information about the program.
+Fink and Bishop's framework, for example, relates properties to source-code slices and uses a coverage
+metric over the relevant computations to decide whether the test set is complete enough for the property
+under study~\cite{fink1997}. The present thesis follows the same broad idea, but in a lightweight,
+property-based-testing setting: the property remains the user-facing test oracle, while coverage is used as
+a feedback signal for input generation and as the empirical quantity being measured.
 
 \section{Code Coverage}
 \label{sec:coverage}
@@ -320,12 +324,14 @@ hierarchy of increasing strictness:
   \item \textbf{Branch (decision) coverage}: each edge of every decision taken at least once — e.g.\ both the \texttt{then} and the \texttt{else} of an \texttt{if}.
   \item \textbf{Path coverage}: every distinct path through the control-flow graph, generally infeasible because the number of paths is exponential.
 \end{itemize}
-This thesis uses \textbf{branch coverage}, the level at which the difference between strategies is most
-visible: random generation typically reaches the ``easy'' side of each decision quickly but may never
-reach the ``hard'' side. Coverage is collected by \emph{instrumentation}: the SUT is compiled with extra
-bookkeeping code so that, at runtime, the set of executed program points can be read back. We use
-\texttt{scoverage}, the standard statement-coverage instrumenter for Scala, and lift its statement-level
-measurements to branch coverage by source-span containment (Section~\ref{sec:cov-impl}).
+
+Coverage is collected by \emph{instrumentation}: the program under test is compiled or transformed with
+extra bookkeeping code so that, at runtime, the set of executed program points can be read back. This thesis
+uses method-local \textbf{statement coverage}. Statement coverage is simpler than branch coverage, but it is
+directly supported by the Scala coverage infrastructure used in the implementation and therefore gives a
+clear, auditable unit of measurement. The important point for the framework is not that statement coverage
+is the strongest possible adequacy criterion; it is that the criterion is observable after each generated
+input and can be fed back into the next generation step.
 
 \section{Search-Based Testing and Branch Distance}
 \label{sec:sbt}
@@ -336,8 +342,8 @@ function, the \emph{branch distance}, that measures how far an input is from sat
 minimise it. Korel~\cite{korel1990} introduced branch distances for the relational operators; for example,
 the distance to satisfy $a = b$ is $|a-b|$, and the distance to satisfy $a < b$ is $0$ if it already holds
 and $a-b+1$ otherwise. Tools such as EvoSuite~\cite{fraser2011} combine such distances with evolutionary
-search to generate unit tests for the JVM. Our gradient tactic adapts this idea to a property-based setting,
-deriving the distance automatically from the source and hill-climbing it (Section~\ref{sec:gradient}).
+search to generate unit tests for object-oriented programs. Branch distance is relevant background because
+it shows a different way of turning program structure into input-generation guidance.
 
 \section{Mutation-Based, Coverage-Guided Fuzzing}
 \label{sec:cgf}
@@ -347,9 +353,9 @@ corpus of inputs that expanded coverage and repeatedly \emph{mutates} them, reta
 reaches something new. The bet is \emph{locality} — that inputs near an interesting input are themselves
 likely to be interesting — so a retained seed becomes a springboard that the search ratchets forward. AFL
 mutates at the level of raw bytes; type-aware variants instead mutate structured values. A related idea is
-the AFL \emph{dictionary}: a list of useful constants (magic numbers, tokens) spliced into inputs. Our
-mutation tactic adapts coverage-guided mutation to value-level Scala data, and our pool tactic adapts the
-dictionary idea by mining constants from the program text.
+the AFL \emph{dictionary}: a list of useful constants, tokens, or magic values spliced into inputs to help
+cross literal guards. These two ideas — mutating coverage-growing inputs and injecting useful constants —
+are the main testing mechanisms adapted later in this thesis.
 
 % ====================================================================
 \chapter{Related Work}
@@ -903,6 +909,7 @@ testing) and by extending the study to larger, real-world systems and to other l
 \begin{thebibliography}{99}
 
 \bibitem{nist2002} National Institute of Standards and Technology, \emph{The Economic Impacts of Inadequate Infrastructure for Software Testing}, RTI Project 7007.011, 2002.
+\bibitem{fink1997} G. Fink and M. Bishop, \emph{Property-Based Testing: A New Approach to Testing for Assurance}, ACM SIGSOFT Software Engineering Notes, 1997.
 \bibitem{claessen2000} K. Claessen and J. Hughes, \emph{QuickCheck: A Lightweight Tool for Random Testing of Haskell Programs}, ICFP, 2000.
 \bibitem{garousi} V. Garousi and M. V. M\"antyl\"a, \emph{When and What to Automate in Software Testing? A Multi-Vocal Literature Review}, Information and Software Technology, 2016.
 \bibitem{hamlet} R. Hamlet, \emph{Random Testing}, Encyclopedia of Software Engineering, Wiley, 1994.

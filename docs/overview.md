@@ -167,7 +167,8 @@ engine/reports/statistics/
         └── <strategy>/  e.g. random, pool, mutation, pool-mutation
             └── seed=01/
                 ├── coverage.json    — raw statement measurement
-                └── feedback.jsonl   — coverage-growing feedback events
+                ├── feedback.jsonl   — coverage-growing feedback events
+                └── trace.jsonl      — every generated input and feedback state
 ```
 
 The Makefile also snapshots scoverage's own HTML report after every

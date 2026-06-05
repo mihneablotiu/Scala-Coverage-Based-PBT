@@ -37,10 +37,10 @@ in scope; the supported instances (`Int`, `List`, `Option`,
 `benchmark.data.Tree`, and tuples) live together in
 [`app.Generators`](../engine/src/main/scala/app/Generators.scala).
 
-`random` is *literally* `Prop.forAll(arbitrary)` — stock ScalaCheck.
-Every other strategy runs the identical loop and only adds
-coverage-guided tactics, so the baseline is the real tool, not an
-approximation.
+`random` is ScalaCheck's arbitrary generator in the same no-shrink
+measurement loop as every other strategy. Guided strategies only add
+coverage-guided tactic proposals, so the baseline differs by guidance,
+not by the observed SUT or reporting pipeline.
 
 ---
 
@@ -88,8 +88,8 @@ random source with the guided sources.
 
 The driver is ScalaCheck's own (`Test.check` over a
 `Prop.forAllNoShrink` whose generator is `Gen.delay(...)` re-read each
-draw) — not a hand-rolled fold, which is what lets `random` *be* plain
-ScalaCheck. Per input:
+draw). Shrinking is deliberately disabled because the experiment counts
+the coverage effect of each generated input. Per input:
 
 1. **draw** — a random draw, plus pooled/mutated draws the strategy enables;
 2. **run** the property (guarded, so a thrown exception still counts);
@@ -193,15 +193,15 @@ writes one report per method. The Makefile sweeps `STRATEGIES × SEEDS`.
 
 ## 9. Output
 
-`Pbt.check` returns a `Report`; the harness writes `coverage.json` and
-`feedback.jsonl`
+`Pbt.check` returns a `Report`; the harness writes `coverage.json`,
+`feedback.jsonl`, and `trace.jsonl`
 per cell at
 `engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`:
 
 ```
 { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
   "pool":       { "ints": [...] },
-  "branchTree": statement graph; each statement carries firstHitInput: int | null }
+  "statements": [ each statement carries firstHitInput: int | null ] }
 ```
 
 The growth curve is **not** stored: each statement's `firstHitInput` already
@@ -210,7 +210,10 @@ downstream — the file stays O(statements), not O(inputs).
 
 `feedback.jsonl` contains only coverage-growing inputs: the iteration,
 input value, newly covered statements, current covered total, and corpus
-size. The Makefile also snapshots scoverage's own HTML report after each
+size. `trace.jsonl` contains every generated input with the selected source
+(`random`, `pool`, or `mutation`), the available sources at that step,
+feedback before generation, fired statements after execution, and feedback
+after recording. The Makefile also snapshots scoverage's own HTML report after each
 `(strategy, seed)` run under `engine/reports/statistics/_scoverage/`.
 
 The engine emits only this raw measurement; all charts and statistics

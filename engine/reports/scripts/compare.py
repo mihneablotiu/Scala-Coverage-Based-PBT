@@ -69,8 +69,7 @@ GRID = "#E5E8EC"
 TEXT = "#2C3E50"
 BG = "#FFFFFF"
 
-# DOT tree colours: green = covered / red = not reached, in the same key.
-NODE_COV, NODE_MIS = "#A9DFBF", "#E6B0AA"
+# DOT statement colours: green = covered / red = not reached, in the same key.
 LEAF_COV, LEAF_MIS = "#27AE60", "#C0392B"
 COV_TXT, MIS_TXT = "#196F3D", "#922B21"
 
@@ -94,7 +93,7 @@ class Cell:
     total_inputs: int
     elapsed_millis: int
     growth_curve: list
-    branch_tree: Optional[dict]
+    statements: list
     path: Path
 
     @property
@@ -153,11 +152,11 @@ def ordered_strategies(strategies) -> list:
 _SEED_DIR_RE = re.compile(r"^seed=(\d+)$")
 
 
-def reconstruct_growth_curve(tree: Optional[dict], total_inputs: int) -> list:
+def reconstruct_growth_curve(statements: list, total_inputs: int) -> list:
     """Cumulative covered-statement count after each input, rebuilt from per-statement ``firstHitInput``."""
     if total_inputs <= 0:
         return []
-    hits = [leaf["firstHitInput"] for leaf in leaves(tree) if leaf["firstHitInput"] is not None]
+    hits = [s["firstHitInput"] for s in statements if s["firstHitInput"] is not None]
     curve = [0] * total_inputs
     for h in hits:
         if h < total_inputs:
@@ -178,7 +177,7 @@ def load_cells() -> list:
         if not m:
             continue
         data = json.loads(jp.read_text())
-        tree = data["branchTree"]
+        statements = data.get("statements", legacy_statements(data.get("branchTree")))
         cells.append(
             Cell(
                 bench=jp.parts[-5],
@@ -187,40 +186,29 @@ def load_cells() -> list:
                 seed=int(m.group(1)),
                 total_inputs=data["totalInputs"],
                 elapsed_millis=data.get("elapsedMillis", 0),
-                growth_curve=reconstruct_growth_curve(tree, data["totalInputs"]),
-                branch_tree=tree,
+                growth_curve=reconstruct_growth_curve(statements, data["totalInputs"]),
+                statements=statements,
                 path=jp.parent,
             )
         )
     return cells
 
 
-def leaves(tree: Optional[dict]) -> list:
+def legacy_statements(tree: Optional[dict]) -> list:
     if tree is None:
         return []
     if tree["kind"] in ("leaf", "statement"):
         return [tree]
     if tree["kind"] == "branch":
-        return [leaf for arm in tree["arms"] for leaf in leaves(arm["body"])]
+        return [leaf for arm in tree["arms"] for leaf in legacy_statements(arm["body"])]
     if tree["kind"] == "sequence":
-        return [leaf for child in tree["children"] for leaf in leaves(child)]
+        return [leaf for child in tree["children"] for leaf in legacy_statements(child)]
     return []
 
 
-def is_reached(tree: dict) -> bool:
-    if tree["kind"] in ("leaf", "statement"):
-        return tree["firstHitInput"] is not None
-    if tree["kind"] == "branch":
-        return any(is_reached(arm["body"]) for arm in tree["arms"])
-    if tree["kind"] == "sequence":
-        return any(is_reached(child) for child in tree["children"])
-    return False
-
-
 def stats(cell: Cell) -> Stats:
-    ls = leaves(cell.branch_tree)
-    total = len(ls)
-    covered = sum(1 for leaf in ls if leaf["firstHitInput"] is not None)
+    total = len(cell.statements)
+    covered = sum(1 for s in cell.statements if s["firstHitInput"] is not None)
     saturation = None
     if cell.growth_curve:
         final = cell.growth_curve[-1]
@@ -265,51 +253,24 @@ def render_dot(cell: Cell) -> str:
         attr = f' [label="{html_escape(label)}"]' if label else ""
         return f"  {parent} -> {child}{attr};"
 
-    def walk(tree: dict, parent: str, label: str) -> str:
-        if tree["kind"] in ("leaf", "statement"):
-            nid = fresh()
-            covered = tree["firstHitInput"] is not None
-            fill = LEAF_COV if covered else LEAF_MIS
-            txt = COV_TXT if covered else MIS_TXT
-            status = "covered" if covered else "not reached"
-            prefix = f'line {tree.get("line", "?")}'
-            lbl = (
-                f'<font point-size="10"><b>{prefix}</b></font><br/>'
-                f'<font face="Courier" point-size="12"><b>{html_escape(tree["text"])}</b></font>'
-                f'<br/><font point-size="10"><font color="{txt}"><b>{status}</b></font></font>'
-            )
-            nodes.append(
-                f'  {nid} [shape=box, style="rounded,filled", fillcolor="{fill}", '
-                f'penwidth=1.5, label=<{lbl}>];'
-            )
-            edges.append(edge(parent, nid, label))
-            return nid
-        elif tree["kind"] == "branch":
-            nid = fresh()
-            reached = is_reached(tree)
-            fill = NODE_COV if reached else NODE_MIS
-            txt = COV_TXT if reached else MIS_TXT
-            status = "reached" if reached else "not reached"
-            lbl = (
-                f'<font point-size="11"><b>{tree["branchKind"]}</b></font>'
-                f'<br/><font face="Courier" point-size="11"><b>{html_escape(tree["label"])}</b></font>'
-                f'<br/><font point-size="10"><font color="{txt}"><b>{status}</b></font></font>'
-            )
-            nodes.append(
-                f'  {nid} [shape=box, style="rounded,filled", fillcolor="{fill}", '
-                f'penwidth=1, label=<{lbl}>];'
-            )
-            edges.append(edge(parent, nid, label))
-            for arm in tree["arms"]:
-                walk(arm["body"], nid, arm["label"])
-            return nid
-        elif tree["kind"] == "sequence":
-            current = parent
-            for child in tree["children"]:
-                current = walk(child, current, label)
-                label = ""
-            return current
-        return parent
+    def statement_node(statement: dict, parent: str, label: str) -> str:
+        nid = fresh()
+        covered = statement["firstHitInput"] is not None
+        fill = LEAF_COV if covered else LEAF_MIS
+        txt = COV_TXT if covered else MIS_TXT
+        status = "covered" if covered else "not reached"
+        prefix = f'line {statement.get("line", "?")}'
+        lbl = (
+            f'<font point-size="10"><b>{prefix}</b></font><br/>'
+            f'<font face="Courier" point-size="12"><b>{html_escape(statement["text"])}</b></font>'
+            f'<br/><font point-size="10"><font color="{txt}"><b>{status}</b></font></font>'
+        )
+        nodes.append(
+            f'  {nid} [shape=box, style="rounded,filled", fillcolor="{fill}", '
+            f'penwidth=1.5, label=<{lbl}>];'
+        )
+        edges.append(edge(parent, nid, label))
+        return nid
 
     s = stats(cell)
     title = (
@@ -321,8 +282,9 @@ def render_dot(cell: Cell) -> str:
         f'  root [shape=box, style="rounded,filled", fillcolor="white", '
         f'penwidth=2, label=<{title}>];'
     )
-    if cell.branch_tree is not None:
-        walk(cell.branch_tree, "root", "")
+    current = "root"
+    for statement in cell.statements:
+        current = statement_node(statement, current, "")
 
     return (
         f'digraph "{cell.method}" {{\n'
@@ -603,7 +565,7 @@ def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
         sc = next((c for c in method_cells if c.strategy == strategy), None)
         if rc is None or sc is None:
             continue
-        for rl, sl in zip(leaves(rc.branch_tree), leaves(sc.branch_tree)):
+        for rl, sl in zip(rc.statements, sc.statements):
             if rl["firstHitInput"] is None:
                 pairs.append(sl["firstHitInput"] is not None)
     return pairs
@@ -832,7 +794,7 @@ def _suite_coverage_at(cells: list, budget: int) -> Optional[float]:
     """Σ covered-statements-after-`budget`-inputs / Σ total-statements over a seed's cells."""
     cov = tot = 0
     for c in cells:
-        total = len(leaves(c.branch_tree))
+        total = len(c.statements)
         if total == 0 or not c.growth_curve:
             continue
         cov += c.growth_curve[min(budget, len(c.growth_curve)) - 1]
@@ -995,11 +957,11 @@ def main() -> None:
         rand_ips = ips_by_strategy.get(RANDOM)
         print()
         print(f"Throughput (median inputs/sec across K={SEED_COUNT} seeds × methods):")
-        print(f"  {'strategy':<40}{'inputs/sec':>12}{'vs random':>11}")
+        print(f"  {'strategy':<40}{'inputs/sec':>12}{'vs random':>16}")
         for strat in ordered_strategies(ips_by_strategy.keys()):
             ips = ips_by_strategy[strat]
-            rel = f"{rand_ips / ips:.2f}× slower" if rand_ips and ips > 0 and strat != RANDOM else "—"
-            print(f"  {strat:<40}{ips:>12,.0f}{rel:>11}")
+            rel = f"{ips / rand_ips:.2f}× random" if rand_ips and ips > 0 and strat != RANDOM else "—"
+            print(f"  {strat:<40}{ips:>12,.0f}{rel:>16}")
 
     # Efficiency: suite-wide coverage reached at a few input budgets (median across seeds).
     print()

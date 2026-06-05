@@ -26,13 +26,18 @@ final class Pbt(sutRoot: Path) {
 
     var feedback = Feedback.empty[A]
 
-    def nextInput: Gen[A] = {
-      val biased = strategy.tactics.flatMap(propose(g, _, feedback, targetIds, pool))
-      if (biased.isEmpty) g.arbitrary else Gen.frequency((1 -> g.arbitrary) :: biased.map(4 -> _): _*)
+    def nextInput: Gen[Tactic.Candidate[A]] = {
+      val context   = Tactic.Context(g, feedback, targetIds, pool)
+      val proposals = strategy.tactics.flatMap(tactic => tactic.propose(context).map(tactic.name -> _))
+      val random    = g.arbitrary.map(input => Tactic.Candidate("random", input))
+      val sources   = "random" :: proposals.map(_._1)
+      val weighted  = (1 -> random) :: proposals.map { case (_, gen) => 4 -> gen }
+      val mixed     = Gen.frequency(weighted: _*)
+      mixed.map(candidate => candidate.copy(availableSources = sources))
     }
 
     val prop = Prop.forAllNoShrink(Gen.delay(nextInput)) { input =>
-      try property(input)
+      try property(input.input)
       catch { case _: Throwable => () }
       feedback = feedback.record(input, coverage.firedTargetIds(sourceFile, targets).intersect(targetIds))
       true
@@ -44,18 +49,4 @@ final class Pbt(sutRoot: Path) {
 
     Report(method, sourceFile.getFileName.toString, strategy.name, targets, pool.getOrElse(ConstantPool.empty), feedback, elapsedMillis)
   }
-
-  private def propose[A](
-      g: Generatable[A],
-      tactic: Tactic,
-      feedback: Feedback[A],
-      targetIds: Set[Int],
-      pool: Option[ConstantPool]
-  ): Option[Gen[A]] =
-    tactic match {
-      case Tactic.Pool =>
-        pool.filter(p => !p.isEmpty && targetIds.exists(id => !feedback.covered(id))).flatMap(g.pooled)
-      case Tactic.Mutation =>
-        feedback.corpus.lastOption.map(g.mutate)
-    }
 }
