@@ -9,7 +9,7 @@ object Generators {
   implicit val int: Generatable[Int] = new Generatable[Int] {
     def arbitrary: Gen[Int]                          = Arbitrary.arbInt.arbitrary
     def mutate(seed: Int): Gen[Int]                  = Gen.oneOf(seed + 1, seed - 1, -seed, 0, 1, -1, Int.MaxValue, Int.MinValue)
-    def pooled(pool: ConstantPool): Option[Gen[Int]] = Option.when(pool.ints.nonEmpty)(ConstantPool.inject(pool.ints, arbitrary))
+    def pooled(pool: ConstantPool): Option[Gen[Int]] = Option.when(pool.ints.nonEmpty)(Gen.oneOf(pool.ints))
   }
 
   implicit def list[A](implicit A: Generatable[A], ordering: Ordering[A]): Generatable[List[A]] = new Generatable[List[A]] {

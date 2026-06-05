@@ -84,7 +84,7 @@
 <g id="node8" class="node">
 <title>mix</title>
 <path fill="#2c3e50" stroke="black" d="M422,-302C422,-302 370,-302 370,-302 364,-302 358,-296 358,-290 358,-290 358,-278 358,-278 358,-272 364,-266 370,-266 370,-266 422,-266 422,-266 428,-266 434,-272 434,-278 434,-278 434,-290 434,-290 434,-296 428,-302 422,-302"/>
-<text xml:space="preserve" text-anchor="start" x="386.62" y="-284.55" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00" fill="white">mix</text>
+<text xml:space="preserve" text-anchor="start" x="374.62" y="-284.55" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00" fill="white">strategy</text>
 <text xml:space="preserve" text-anchor="start" x="366" y="-275.45" font-family="Helvetica,sans-Serif" font-size="9.00" fill="white">Gen.frequency</text>
 </g>
 <!-- s_rand&#45;&gt;mix -->

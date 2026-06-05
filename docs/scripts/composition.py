@@ -1,6 +1,7 @@
-"""Diagram: how the tactics combine. Every strategy runs the *same* loop — read Feedback, let each
-active tactic propose a biased draw, mix them with a plain random draw. A strategy is just *which*
-tactics are switched on, so the four strategies are the four subsets of {Pool, Mutation}.
+"""Diagram: how strategies combine random, pooled, and mutated generation.
+
+Every strategy reads the same context and decides which generator to use next.
+The four strategies are the four combinations of pool and mutation guidance.
 
 Run: ``python3 docs/scripts/composition.py``  (Graphviz `dot` must be installed).
 """
@@ -59,24 +60,24 @@ digraph composition {{
   edge [fontname="Helvetica", fontsize=9, color="#34495E", penwidth=1.5, arrowsize=0.8];
 
   subgraph cluster_flow {{
-    label=<<b>One uniform loop &mdash; read Feedback, each active tactic proposes, mix with random</b>>;
+    label=<<b>One uniform loop &mdash; read context, strategy chooses the next generator</b>>;
     fontsize=12; labeljust="l"; style="rounded,filled"; fillcolor="#F6F8FA"; color="#9AA5B1";
 
     fb   [label=<<b>Feedback</b><br/><font point-size="9">covered statements &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
-    pool [label=<<b>Pool</b><br/><font point-size="9">inject literals while<br/>statements are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="{POOL}", fontcolor="white"];
+    pool [label=<<b>Pool</b><br/><font point-size="9">draw literals while<br/>statements are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="{POOL}", fontcolor="white"];
     mut  [label=<<b>Mutation</b><br/><font point-size="9">perturb a<br/>corpus seed</font>>, shape=box, style="rounded,filled", fillcolor="{MUT}", fontcolor="white"];
     rand [label=<<b>random</b><br/><font point-size="9">always present</font>>, shape=box, style="rounded,filled", fillcolor="{RAND}", fontcolor="white"];
-    mix  [label=<<b>mix</b> &middot; <font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
+    mix  [label=<<b>strategy</b> &middot; <font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
     nxt  [label="next input", shape=box, style="rounded,filled", fillcolor="#ECEFF2"];
 
     {{ rank=same; pool; mut; rand; }}
     fb -> pool [label="reads", style=dashed]; fb -> mut [style=dashed];
-    pool -> mix [label="propose"]; mut -> mix; rand -> mix;
+    pool -> mix [label="available"]; mut -> mix; rand -> mix;
     mix -> nxt [penwidth=2.2];
   }}
 
   subgraph cluster_subsets {{
-    label=<<b>A strategy = which tactics are on &rArr; the 4 strategies are the 4 subsets</b>>;
+    label=<<b>A strategy = random plus selected guidance sources</b>>;
     fontsize=12; labeljust="l"; style="rounded,filled"; fillcolor="#F5FBF8"; color="#7FB8A4";
     tbl [shape=plaintext, label={TABLE}];
   }}

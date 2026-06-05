@@ -95,14 +95,15 @@ actually helps.
 ## 7. What this prototype does today
 
 1. We point the framework at our catalogue of small methods.
-2. For each method and each strategy, we ask an input generator for
-   10000 inputs (integers, lists, options, tuples, or little trees, as
-   the method needs).
+2. For each method and each strategy, we ask an input generator for the
+   configured budget (`make full` uses 100000 inputs per seed; `make smoke`
+   uses 200).
 3. For each input we run the method.
 4. As the method runs, scoverage records which method-local statements
    executed.
-5. We collect all 10000 observations into a single picture of how
-   well the method's branches were exercised over the session.
+5. We collect those observations into a single picture of how
+   well the method's statements and branch-marked statements were
+   exercised over the session.
 6. We write the result to disk (see §9).
 
 **Random** samples uniformly and ignores past observations — it is
@@ -158,7 +159,7 @@ category.
 ## 9. What comes out the other end
 
 The engine writes one file per (method, strategy) pair — a small
-JSON with everything observed during the session:
+JSON with the first-hit data used for time-to-coverage:
 
 ```
 engine/reports/statistics/
@@ -166,29 +167,28 @@ engine/reports/statistics/
     └── <method name>/   e.g. sign
         └── <strategy>/  e.g. random, pool, mutation, pool-mutation
             └── seed=01/
-                ├── coverage.json    — raw statement measurement
-                ├── feedback.jsonl   — coverage-growing feedback events
-                └── trace.jsonl      — every generated input and feedback state
+                └── coverage.json    — first-hit data for time-to-coverage
 ```
 
 The Makefile also snapshots scoverage's own HTML report after every
 `(strategy, seed)` run under `engine/reports/statistics/_scoverage/`.
 
-`make analyze` then runs the Python script
+The Makefile then runs the Python script
 ([`engine/reports/scripts/compare.py`](../engine/reports/scripts/compare.py))
 which reads those JSONs and writes:
 
-- next to each `coverage.json`: a `coverage.svg` — the method-local
-  scoverage statements coloured by whether the strategy ever hit them;
-- under `engine/reports/statistics/_summary/`: a horizontal bar
-  chart per bench whose bars carry, beside each strategy's
-  coverage %, the input that reached it and (for non-random
-  strategies) the speed comparison against random; plus
-  per-bench and suite-wide aggregate bars;
-- and a small table (`significance.csv`) reporting, for each
+- under `engine/reports/statistics/_summary/`: statement and branch
+  coverage bars, blind-spot charts, and time-to-coverage curves;
+- per-seed CSVs for both metrics, using scoverage XML final counts;
+- and significance tables reporting, for each
   strategy, *how reliably* it beats random across the repeated
   runs — an effect size and a standard significance test — so
   "better" is a measured claim, not an impression.
+
+Per-method source views come from the copied scoverage HTML reports, not
+from custom DOT/SVG graphs.
+Final coverage percentages come from scoverage's copied XML reports; the JSON
+first-hit data is kept for time-to-coverage and feedback debugging.
 
 The split is intentional: the engine produces the *measurement*,
 the scripts produce the *presentation*. Either side can be

@@ -1,15 +1,12 @@
 package pbt
 
-import pbt.analysis.SourceSpan
 import scoverage.serialize.Serializer
 
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters._
 import scala.util.Using
 
-/** Reads which source offsets scoverage has fired so far. scoverage writes the coverage definition once and appends a fired statement id to a
-  * measurement file each time one runs; we just read those files whole on every call (they are tiny). Stale measurements are wiped on construction so
-  * a run starts clean.
+/** Reads scoverage's statement definitions and the statement ids fired so far. Stale measurements are wiped on construction so a run starts clean.
   */
 final class Coverage(sutRoot: Path) {
 
@@ -25,36 +22,20 @@ final class Coverage(sutRoot: Path) {
     Serializer.deserialize(coverageFile, sutRoot.toFile).statements.toList.groupBy(s => fileName(s.source))
   }
 
-  def methodStatements(sourceFile: Path, span: SourceSpan): List[Coverage.StatementTarget] = {
-    val source     = Files.readString(sourceFile)
-    val rawTargets = statements
-      .getOrElse(sourceFile.getFileName.toString, Nil)
-      .filter(s => span.contains(s.start))
-      .sortBy(_.start)
+  def methodStatements(sourceFile: Path, method: String): List[Coverage.StatementTarget] = {
+    methodStatementData(sourceFile, method)
+      .sortBy(s => (s.start, s.id))
       .map { s =>
-        val end  = s.end.max(s.start + 1).min(source.length)
-        val text = source.slice(s.start, end).replaceAll("\\s+", " ").trim.take(100)
-        Coverage.RawStatementTarget(s.id, s.start, end, lineOf(source, s.start), text)
+        Coverage.StatementTarget(s.id, s.branch)
       }
-
-    rawTargets
-      .groupBy(t => (t.start, t.end, t.line, t.text))
-      .values
-      .map { group =>
-        val ids  = group.map(_.id).toSet
-        val head = group.minBy(_.id)
-        Coverage.StatementTarget(ids.min, ids, head.start, head.end, head.line, head.text)
-      }
-      .toList
-      .sortBy(t => (t.start, t.id))
   }
 
   def firedTargetIds(sourceFile: Path, targets: List[Coverage.StatementTarget]): Set[Int] = {
     val fired = firedStatementIds(sourceFile)
-    targets.filter(t => t.ids.exists(fired)).map(_.id).toSet
+    targets.map(_.id).filter(fired).toSet
   }
 
-  def firedStatementIds(sourceFile: Path): Set[Int] = {
+  private def firedStatementIds(sourceFile: Path): Set[Int] = {
     val fired          = measurementFiles.flatMap(Files.readAllLines(_).asScala).flatMap(_.trim.takeWhile(!_.isWhitespace).toIntOption).toSet
     val fileStatements = statements.getOrElse(sourceFile.getFileName.toString, Nil).map(_.id).toSet
     fired.intersect(fileStatements)
@@ -64,11 +45,14 @@ final class Coverage(sutRoot: Path) {
     if (!Files.isDirectory(dataDir)) Nil
     else Using.resource(Files.list(dataDir))(_.iterator().asScala.filter(_.getFileName.toString.startsWith("scoverage.measurements.")).toList)
 
-  private def fileName(source: String): String         = source.replace('\\', '/').split('/').last
-  private def lineOf(source: String, offset: Int): Int = source.take(offset).count(_ == '\n') + 1
+  private def methodStatementData(sourceFile: Path, method: String): List[scoverage.domain.Statement] =
+    statements
+      .getOrElse(sourceFile.getFileName.toString, Nil)
+      .filter(s => s.location.method == method && !s.ignored)
+
+  private def fileName(source: String): String = source.replace('\\', '/').split('/').last
 }
 
 object Coverage {
-  private final case class RawStatementTarget(id: Int, start: Int, end: Int, line: Int, text: String)
-  final case class StatementTarget(id: Int, ids: Set[Int], start: Int, end: Int, line: Int, text: String)
+  final case class StatementTarget(id: Int, branch: Boolean)
 }

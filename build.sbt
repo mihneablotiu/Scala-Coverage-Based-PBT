@@ -5,7 +5,7 @@ ThisBuild / scalafmtConfig := file(".scala-config/.scalafmt.conf")
 // Catch dead code automatically: stale code rots quietly otherwise, and once an unused
 // type / private helper / dead import slips past review it's never noticed. The compiler
 // flags are warnings, not errors, so a transient scratch-file unused import during
-// development doesn't block compile — but `make build` surfaces them on the way in.
+// development doesn't block compile, but the Makefile workflows surface them on the way in.
 // `-Wunused:imports/privates/locals` flag references the compiler can prove unused;
 // `-Wdead-code` flags unreachable statements.
 ThisBuild / scalacOptions ++= Seq(

@@ -59,7 +59,7 @@
 <title>cov&#45;&gt;pool</title>
 <path fill="none" stroke="#3a9c83" stroke-width="1.7" stroke-dasharray="5,2" d="M147.2,-113.55C134.46,-99.02 117.93,-80.18 103.71,-63.97"/>
 <polygon fill="#3a9c83" stroke="#3a9c83" stroke-width="1.7" points="106.06,-62.14 98.22,-57.71 101.59,-66.06 106.06,-62.14"/>
-<text xml:space="preserve" text-anchor="middle" x="158.86" y="-80.31" font-family="Helvetica,sans-Serif" font-size="10.50" fill="#2f7a68">keep injecting</text>
+<text xml:space="preserve" text-anchor="middle" x="158.11" y="-80.31" font-family="Helvetica,sans-Serif" font-size="10.50" fill="#2f7a68">keep drawing</text>
 </g>
 <!-- run -->
 <g id="node5" class="node">

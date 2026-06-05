@@ -22,32 +22,33 @@ pbt.check[Int](source, "magicInt", Strategy.pool) { n => MagicLiterals.magicInt(
 loop as every other strategy. Guided strategies add **coverage-guided tactics**,
 each reading the live coverage:
 
-- **pool** — inject mined literals while method-local statements remain uncovered;
+- **pool** — draw from mined literals while method-local statements remain uncovered;
 - **mutation** — perturb a corpus of coverage-increasing seeds.
 
-A `Strategy` is a name plus a list of independent tactics. `random` has no
-tactics and therefore draws exactly like ScalaCheck. `pool` injects mined
-literals, `mutation` perturbs coverage-growing seeds, and `pool-mutation`
-composes both. The benchmark catalogue separates these cases into
+A `Strategy` chooses the next generator from the current context. `random`
+therefore draws exactly like ScalaCheck. `pool` draws from mined literals,
+`mutation` perturbs coverage-growing seeds, and `pool-mutation` composes both.
+The benchmark catalogue separates these cases into
 `Calibration`, `MagicLiterals`, `MutationTargets`, `MixedTargets`, and
 `NumericSearch`.
 
 ## Quick start
 
 ```bash
-make all       # fmt + clean + diagrams + build + run + analyze
-make build     # compile every subproject
-make run       # run every (strategy, seed) pair in its own forked JVM
-make analyze   # render charts/trees + effect-size/significance stats from the JSON outputs
-make help      # show every target
+make full      # clean + format + run 30 seeds × 100000 inputs + analyze
+make smoke     # same pipeline with 1 seed × 200 inputs
 ```
 
-Requires `sbt`, `python3` (`matplotlib`), and `graphviz`
-(`brew install graphviz` on macOS).
+Requires `sbt`, Graphviz `dot`, and `python3` with `matplotlib`.
 
 Reports land under
 `engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`,
-with `coverage.json`, compact `feedback.jsonl`, and full `trace.jsonl`.
+with `coverage.json` for first-hit timing.
+Both Makefile commands snapshot scoverage's own HTML report for each
+`(strategy, seed)` under `engine/reports/statistics/_scoverage/`.
+They also write statement and branch aggregate charts from copied scoverage XML under
+`engine/reports/statistics/_summary/`; per-method source views come from the
+scoverage HTML snapshots, not from custom DOT/SVG graphs.
 
 ## Documentation
 

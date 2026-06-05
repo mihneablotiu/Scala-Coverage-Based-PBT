@@ -45,6 +45,8 @@ object Main {
     bench[List[Int]]("MagicLiterals", "whitelist")(MagicLiterals.whitelist)
     bench[Tree[Int]]("MagicLiterals", "treeMarker")(MagicLiterals.treeMarker)
 
+    bench[List[Int]]("MutationTargets", "sortedLedger")(MutationTargets.sortedLedger)
+    bench[Tree[Int]]("MutationTargets", "treeDepth")(MutationTargets.treeDepth)
     bench[List[Int]]("MutationTargets", "priceTrend")(MutationTargets.priceTrend)
     bench[List[Int]]("MutationTargets", "inventoryProfile")(MutationTargets.inventoryProfile)
     bench[(List[Int], List[Int])]("MutationTargets", "mergeJoinShape") { case (left, right) => MutationTargets.mergeJoinShape(left, right) }

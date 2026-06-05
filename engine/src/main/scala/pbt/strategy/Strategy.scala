@@ -1,52 +1,74 @@
 package pbt.strategy
 
 import org.scalacheck.Gen
+import pbt.Coverage
 import pbt.gen.{ConstantPool, Generatable}
 
-final case class Strategy(name: String, tactics: List[Tactic])
+final case class TacticContext[A](
+    generatable: Generatable[A],
+    feedback: Feedback[A],
+    targets: List[Coverage.StatementTarget],
+    pool: ConstantPool
+) {
+  def uncoveredStatements: List[Coverage.StatementTarget] =
+    targets.filterNot(target => feedback.coveredAt.contains(target.id))
+
+  def uncoveredBranches: List[Coverage.StatementTarget] =
+    uncoveredStatements.filter(_.branch)
+
+  def hasUncoveredStatements: Boolean = uncoveredStatements.nonEmpty
+
+  def hasUncoveredBranches: Boolean = uncoveredBranches.nonEmpty
+}
+
+sealed trait Strategy {
+  def name: String
+  def next[A](context: TacticContext[A]): Gen[A]
+}
 
 object Strategy {
-  val random: Strategy       = Strategy("random", Nil)
-  val pool: Strategy         = Strategy("pool", List(Tactic.Pool))
-  val mutation: Strategy     = Strategy("mutation", List(Tactic.Mutation))
-  val poolMutation: Strategy = Strategy("pool-mutation", List(Tactic.Pool, Tactic.Mutation))
+  val random: Strategy = new Strategy {
+    val name: String = "random"
+
+    def next[A](context: TacticContext[A]): Gen[A] =
+      context.generatable.arbitrary
+  }
+
+  val pool: Strategy = new Strategy {
+    val name: String = "pool"
+
+    def next[A](context: TacticContext[A]): Gen[A] =
+      guided(context, pooled(context))
+  }
+
+  val mutation: Strategy = new Strategy {
+    val name: String = "mutation"
+
+    def next[A](context: TacticContext[A]): Gen[A] =
+      guided(context, mutated(context))
+  }
+
+  val poolMutation: Strategy = new Strategy {
+    val name: String = "pool-mutation"
+
+    def next[A](context: TacticContext[A]): Gen[A] =
+      guided(context, pooled(context), mutated(context))
+  }
 
   val all: List[Strategy]                    = List(random, pool, mutation, poolMutation)
   val names: List[String]                    = all.map(_.name)
   def byName(name: String): Option[Strategy] = all.find(_.name == name)
-}
 
-sealed trait Tactic {
-  def name: String
-  def propose[A](context: Tactic.Context[A]): Option[Gen[Tactic.Candidate[A]]]
-}
+  private def guided[A](context: TacticContext[A], generators: Option[Gen[A]]*): Gen[A] =
+    generators.flatten.toList match {
+      case Nil        => context.generatable.arbitrary
+      case gen :: Nil => Gen.frequency(1 -> context.generatable.arbitrary, 2 -> gen)
+      case many       => Gen.frequency(((1 -> context.generatable.arbitrary) :: many.map(gen => 1 -> gen)): _*)
+    }
 
-object Tactic {
-  final case class Candidate[A](source: String, input: A, availableSources: List[String] = Nil)
+  private def pooled[A](context: TacticContext[A]): Option[Gen[A]] =
+    Option.when(!context.pool.isEmpty && context.hasUncoveredStatements)(context.pool).flatMap(context.generatable.pooled)
 
-  final case class Context[A](
-      generatable: Generatable[A],
-      feedback: Feedback[A],
-      targetIds: Set[Int],
-      pool: Option[ConstantPool]
-  ) {
-    def hasUncoveredTargets: Boolean = targetIds.exists(id => !feedback.covered(id))
-  }
-
-  case object Pool extends Tactic {
-    val name: String = "pool"
-
-    def propose[A](context: Context[A]): Option[Gen[Candidate[A]]] =
-      context.pool
-        .filter(p => !p.isEmpty && context.hasUncoveredTargets)
-        .flatMap(context.generatable.pooled)
-        .map(_.map(input => Candidate(name, input)))
-  }
-
-  case object Mutation extends Tactic {
-    val name: String = "mutation"
-
-    def propose[A](context: Context[A]): Option[Gen[Candidate[A]]] =
-      context.feedback.corpus.lastOption.map(seed => context.generatable.mutate(seed).map(input => Candidate(name, input)))
-  }
+  private def mutated[A](context: TacticContext[A]): Option[Gen[A]] =
+    context.feedback.corpus.lastOption.map(context.generatable.mutate)
 }

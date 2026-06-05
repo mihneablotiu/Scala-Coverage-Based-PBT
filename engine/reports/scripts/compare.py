@@ -1,38 +1,27 @@
 #!/usr/bin/env python3
 """Render coverage artefacts from engine output.
 
-Reads every ``engine/reports/statistics/<bench>/<method>/<strategy>/seed=<NN>/coverage.json``
-written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) and produces:
-
-  per cell (next to the json, one graph per seed)
-    coverage.dot   — method-local scoverage statements coloured by coverage
-    coverage.svg   — `dot -Tsvg` rendering of the above
+Reads the Scala engine's first-hit JSON logs plus copied scoverage XML reports
+for every strategy/seed and produces:
 
   cross-strategy (under engine/reports/statistics/_summary/)
-    by_bench/<bench>.svg — horizontal grouped bars per (method, strategy);
-                           bar height is the median coverage % across seeds
-                           and labels carry the median %, the [min–max]
-                           range, and (for non-random strategies) the
-                           median paired-speedup factor versus random
-    suite.svg            — horizontal bars per (bench, strategy), median +
-                           [min–max] across seeds
-    overall.svg          — horizontal bars per strategy, same aggregation
-    blindspot.svg        — per-bench + suite-wide percentage of random's
-                           blind spot (the statements random failed to reach)
+    by_bench/<metric>/<bench>.svg — horizontal grouped bars per (method, strategy)
+    <metric>_suite.svg            — horizontal bars per (bench, strategy)
+    <metric>_overall.svg          — horizontal bars per strategy
+    <metric>_blindspot.svg        — per-bench + suite-wide percentage of random's
+                           blind spot (the targets random failed to reach)
                            that each non-random strategy covered. Median +
                            [min–max] across the K per-seed fills. Isolates
-                           "statements only coverage feedback can find" from
+                           "targets only coverage feedback can find" from
                            "easy guards everyone hits", which the raw
                            coverage % conflates.
-    per_seed.csv         — one row per (bench, method, strategy, seed) with
-                           covered/total/pct/saturation_input. Lets you do
-                           ad-hoc analysis without re-loading the JSONs.
-    significance.csv     — per bench + suite-wide, each non-random strategy
+    <metric>_per_seed.csv         — one row per (bench, method, strategy, seed)
+    <metric>_significance.csv     — per bench + suite-wide, each non-random strategy
                            vs random: Vargha–Delaney Â₁₂ effect size (+
                            magnitude) and Mann–Whitney U p-value over the K
                            per-seed coverage %s (Arcuri–Briand 2014).
 
-Run: ``python3 engine/reports/scripts/compare.py``  (or ``make analyze``)
+Run: ``python3 engine/reports/scripts/compare.py``  (normally via ``make full`` or ``make smoke``)
 """
 from __future__ import annotations
 
@@ -40,13 +29,13 @@ import csv
 import json
 import re
 import statistics
-import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import NormalDist
 from typing import Optional
+from xml.etree import ElementTree as ET
 
 import matplotlib.pyplot as plt
 
@@ -69,10 +58,6 @@ GRID = "#E5E8EC"
 TEXT = "#2C3E50"
 BG = "#FFFFFF"
 
-# DOT statement colours: green = covered / red = not reached, in the same key.
-LEAF_COV, LEAF_MIS = "#27AE60", "#C0392B"
-COV_TXT, MIS_TXT = "#196F3D", "#922B21"
-
 RANDOM = "random"
 
 # Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
@@ -85,6 +70,14 @@ SEED_COUNT = 0
 
 
 @dataclass(frozen=True)
+class CoverageCounts:
+    statement_covered: int
+    statement_total: int
+    branch_covered: int
+    branch_total: int
+
+
+@dataclass(frozen=True)
 class Cell:
     bench: str
     method: str
@@ -92,13 +85,40 @@ class Cell:
     seed: int
     total_inputs: int
     elapsed_millis: int
-    growth_curve: list
+    statement_curve: list
+    branch_curve: list
     statements: list
+    xml_targets: list
+    xml_counts: CoverageCounts
     path: Path
 
     @property
     def inputs_per_sec(self) -> Optional[float]:
         return None if self.elapsed_millis <= 0 else 1000.0 * self.total_inputs / self.elapsed_millis
+
+
+METRIC = "statement"
+
+
+def metric_label() -> str:
+    return "branch" if METRIC == "branch" else "statement"
+
+
+def metric_targets(statements: list) -> list:
+    return metric_targets_for(METRIC, statements)
+
+
+def metric_xml_targets(targets: list) -> list:
+    return [t for t in targets if t["branch"]] if METRIC == "branch" else targets
+
+
+def metric_curve(cell: Cell) -> list:
+    return cell.branch_curve if METRIC == "branch" else cell.statement_curve
+
+
+def metric_counts(cell: Cell) -> tuple[int, int]:
+    c = cell.xml_counts
+    return (c.branch_covered, c.branch_total) if METRIC == "branch" else (c.statement_covered, c.statement_total)
 
 
 @dataclass(frozen=True)
@@ -153,7 +173,7 @@ _SEED_DIR_RE = re.compile(r"^seed=(\d+)$")
 
 
 def reconstruct_growth_curve(statements: list, total_inputs: int) -> list:
-    """Cumulative covered-statement count after each input, rebuilt from per-statement ``firstHitInput``."""
+    """Cumulative covered-target count after each input, rebuilt from per-target ``firstHitInput``."""
     if total_inputs <= 0:
         return []
     hits = [s["firstHitInput"] for s in statements if s["firstHitInput"] is not None]
@@ -170,6 +190,7 @@ def reconstruct_growth_curve(statements: list, total_inputs: int) -> list:
 
 def load_cells() -> list:
     cells = []
+    xml_cache: dict = {}
     for jp in sorted(STATS_ROOT.glob("*/*/*/*/coverage.json")):
         if "_summary" in jp.parts:
             continue
@@ -177,43 +198,83 @@ def load_cells() -> list:
         if not m:
             continue
         data = json.loads(jp.read_text())
-        statements = data.get("statements", legacy_statements(data.get("branchTree")))
+        statements = data["statements"]
+        strategy = jp.parts[-3]
+        seed = int(m.group(1))
+        source_file = data.get("sourceFile", f"{jp.parts[-5]}.scala")
+        xml_targets = xml_method_targets(xml_cache, strategy, seed, source_file, data["method"])
         cells.append(
             Cell(
                 bench=jp.parts[-5],
                 method=jp.parts[-4],
-                strategy=jp.parts[-3],
-                seed=int(m.group(1)),
+                strategy=strategy,
+                seed=seed,
                 total_inputs=data["totalInputs"],
                 elapsed_millis=data.get("elapsedMillis", 0),
-                growth_curve=reconstruct_growth_curve(statements, data["totalInputs"]),
+                statement_curve=reconstruct_growth_curve(statements, data["totalInputs"]),
+                branch_curve=reconstruct_growth_curve(metric_targets_for("branch", statements), data["totalInputs"]),
                 statements=statements,
+                xml_targets=xml_targets,
+                xml_counts=counts_from_xml_targets(xml_targets),
                 path=jp.parent,
             )
         )
     return cells
 
 
-def legacy_statements(tree: Optional[dict]) -> list:
-    if tree is None:
-        return []
-    if tree["kind"] in ("leaf", "statement"):
-        return [tree]
-    if tree["kind"] == "branch":
-        return [leaf for arm in tree["arms"] for leaf in legacy_statements(arm["body"])]
-    if tree["kind"] == "sequence":
-        return [leaf for child in tree["children"] for leaf in legacy_statements(child)]
-    return []
+def xml_method_targets(cache: dict, strategy: str, seed: int, source_file: str, method: str) -> list:
+    key = (strategy, seed)
+    if key not in cache:
+        seed_dir = f"seed={seed:02d}"
+        xml_path = STATS_ROOT / "_scoverage" / strategy / seed_dir / "scoverage.xml"
+        cache[key] = parse_scoverage_xml(xml_path)
+    return cache[key].get((source_file, method), [])
+
+
+def counts_from_xml_targets(targets: list) -> CoverageCounts:
+    return CoverageCounts(
+        statement_covered=sum(1 for t in targets if t["covered"]),
+        statement_total=len(targets),
+        branch_covered=sum(1 for t in targets if t["branch"] and t["covered"]),
+        branch_total=sum(1 for t in targets if t["branch"]),
+    )
+
+
+def parse_scoverage_xml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    by_method: dict = {}
+    root = ET.parse(path).getroot()
+    for stmt in root.findall(".//statement"):
+        if stmt.get("ignored") == "true":
+            continue
+        source_file = Path(stmt.get("source", "")).name
+        method = stmt.get("method", "")
+        key = (source_file, method)
+        by_method.setdefault(key, []).append({
+            "start": int(stmt.get("start", "0")),
+            "end": int(stmt.get("end", "0")),
+            "line": int(stmt.get("line", "0")),
+            "branch": stmt.get("branch") == "true",
+            "covered": int(stmt.get("invocation-count", "0")) > 0,
+        })
+    for key, targets in by_method.items():
+        by_method[key] = sorted(targets, key=lambda t: (t["start"], t["end"], t["line"], t["branch"]))
+    return by_method
+
+
+def metric_targets_for(metric: str, statements: list) -> list:
+    return [s for s in statements if s.get("branch", False)] if metric == "branch" else statements
 
 
 def stats(cell: Cell) -> Stats:
-    total = len(cell.statements)
-    covered = sum(1 for s in cell.statements if s["firstHitInput"] is not None)
+    covered, total = metric_counts(cell)
     saturation = None
-    if cell.growth_curve:
-        final = cell.growth_curve[-1]
+    curve = metric_curve(cell)
+    if curve:
+        final = curve[-1]
         if final > 0:
-            saturation = cell.growth_curve.index(final)
+            saturation = curve.index(final)
     return Stats(covered=covered, total=total, saturation=saturation)
 
 
@@ -227,82 +288,6 @@ def style_axes(ax) -> None:
     ax.tick_params(colors=TEXT, labelsize=9)
     ax.xaxis.label.set_color(TEXT)
     ax.yaxis.label.set_color(TEXT)
-
-
-# ── Per-cell DOT + SVG ───────────────────────────────────────────────────
-
-
-def html_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
-def render_dot(cell: Cell) -> str:
-    nodes, edges = [], []
-    counter = [0]
-
-    def fresh() -> str:
-        counter[0] += 1
-        return f"n{counter[0]}"
-
-    def edge(parent: str, child: str, label: str) -> str:
-        attr = f' [label="{html_escape(label)}"]' if label else ""
-        return f"  {parent} -> {child}{attr};"
-
-    def statement_node(statement: dict, parent: str, label: str) -> str:
-        nid = fresh()
-        covered = statement["firstHitInput"] is not None
-        fill = LEAF_COV if covered else LEAF_MIS
-        txt = COV_TXT if covered else MIS_TXT
-        status = "covered" if covered else "not reached"
-        prefix = f'line {statement.get("line", "?")}'
-        lbl = (
-            f'<font point-size="10"><b>{prefix}</b></font><br/>'
-            f'<font face="Courier" point-size="12"><b>{html_escape(statement["text"])}</b></font>'
-            f'<br/><font point-size="10"><font color="{txt}"><b>{status}</b></font></font>'
-        )
-        nodes.append(
-            f'  {nid} [shape=box, style="rounded,filled", fillcolor="{fill}", '
-            f'penwidth=1.5, label=<{lbl}>];'
-        )
-        edges.append(edge(parent, nid, label))
-        return nid
-
-    s = stats(cell)
-    title = (
-        f'<font point-size="14"><b>{html_escape(cell.method)}</b></font>'
-        f'<br/><font point-size="11">statements: <b>{s.pct:.0f}%</b> '
-        f'({s.covered}/{s.total}) — {cell.strategy}</font>'
-    )
-    nodes.append(
-        f'  root [shape=box, style="rounded,filled", fillcolor="white", '
-        f'penwidth=2, label=<{title}>];'
-    )
-    current = "root"
-    for statement in cell.statements:
-        current = statement_node(statement, current, "")
-
-    return (
-        f'digraph "{cell.method}" {{\n'
-        f"  rankdir=TB;\n"
-        f'  bgcolor="white";\n'
-        f'  node [fontname="Helvetica", fontsize=11, color="{BORDER}"];\n'
-        f'  edge [color="{BORDER}", arrowsize=0.7, fontname="Helvetica", fontsize=9];\n\n'
-        + "\n".join(nodes) + "\n\n"
-        + "\n".join(edges) + "\n"
-        "}\n"
-    )
-
-
-def write_cell_dot_svg(cell: Cell) -> None:
-    dot_path = cell.path / "coverage.dot"
-    svg_path = cell.path / "coverage.svg"
-    dot_path.write_text(render_dot(cell))
-    subprocess.run(["dot", "-Tsvg", str(dot_path), "-o", str(svg_path)], check=True)
 
 
 # ── Horizontal bar helper ───────────────────────────────────────────────
@@ -394,7 +379,7 @@ def paired_speedup(cells: list, random_cells: list) -> Optional[float]:
         if rs.covered == 0 or cs.covered < rs.covered:
             continue
         try:
-            matched_at = c.growth_curve.index(rs.covered)
+            matched_at = metric_curve(c).index(rs.covered)
         except ValueError:
             continue
         rand_sat = rs.saturation or 0
@@ -444,7 +429,7 @@ def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
         methods,
         pcts_by_strategy,
         strategies,
-        title=f"{bench} — coverage per method per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
+        title=f"{bench} — {metric_label()} coverage per method per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         label_fontsize=8,
@@ -492,7 +477,7 @@ def write_suite_bars(cells_by_bench: dict, out_path: Path) -> None:
         benches,
         pcts_by_strategy,
         strategies,
-        title=f"Per-bench aggregate coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
+        title=f"Per-bench aggregate {metric_label()} coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -532,7 +517,7 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
     ax.set_xlim(0, 130)
     ax.set_xlabel("coverage (%)")
     ax.set_title(
-        f"Suite-wide aggregate coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
+        f"Suite-wide aggregate {metric_label()} coverage per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
         color=TEXT, fontsize=12, pad=10,
     )
     ax.grid(True, axis="x", alpha=0.6, color=GRID, linewidth=0.6)
@@ -544,16 +529,11 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
 
 
 # ── Blind-spot fill (random-relative metric) ────────────────────────────
-#
-# Raw coverage % conflates two effects: easy statements that any strategy hits
-# early, and hard statements that random may never reach. The blind-spot fill
-# metric separates them: it counts only statements random missed, then asks how many of those each non-random strategy
-# covered. Useful as the headline number for "is coverage feedback worth it?"
 
 
 def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
-    """For each statement where ``random`` missed in any method of ``cells_by_method``,
-    return ``True`` if ``strategy`` covered that statement, ``False`` otherwise.
+    """For each selected target where ``random`` missed in any method of ``cells_by_method``,
+    return ``True`` if ``strategy`` covered that target, ``False`` otherwise.
 
     Both cells share the same method statement list, so targets in document order
     line up one-to-one — paired by ``zip``. Cells must share a single ``seed``;
@@ -565,9 +545,9 @@ def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
         sc = next((c for c in method_cells if c.strategy == strategy), None)
         if rc is None or sc is None:
             continue
-        for rl, sl in zip(rc.statements, sc.statements):
-            if rl["firstHitInput"] is None:
-                pairs.append(sl["firstHitInput"] is not None)
+        for rl, sl in zip(metric_xml_targets(rc.xml_targets), metric_xml_targets(sc.xml_targets)):
+            if not rl["covered"]:
+                pairs.append(sl["covered"])
     return pairs
 
 
@@ -627,7 +607,7 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
         categories,
         pcts_by_strategy,
         non_random,
-        title=f"Blind-spot fill — % of statements random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
+        title=f"Blind-spot fill — % of {metric_label()} targets random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -637,16 +617,6 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
 
 
 # ── Entry point ─────────────────────────────────────────────────────────
-
-
-def ensure_dot_available() -> None:
-    try:
-        subprocess.run(["dot", "-V"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        sys.exit(
-            "graphviz 'dot' not found — install with 'brew install graphviz' "
-            "(or your package manager's equivalent)"
-        )
 
 
 def write_per_seed_csv(cells: list, out_path: Path) -> None:
@@ -782,51 +752,55 @@ def write_significance(cells_by_bench: dict, out_path: Path) -> list:
 
 
 # ── Coverage vs input budget (efficiency curve) ──────────────────────────
-#
-# Final coverage % hides *how fast* a strategy gets there. This curve plots
-# suite-wide coverage against the number of inputs spent per method (log x),
-# so "guidance reaches the same coverage in fewer inputs" becomes visible.
 
-_BUDGETS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+_BUDGET_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
+
+
+def input_budgets(cells: list) -> list:
+    max_inputs = max((c.total_inputs for c in cells), default=0)
+    if max_inputs <= 0:
+        return []
+    budgets = [b for b in _BUDGET_STEPS if b <= max_inputs]
+    return budgets if budgets and budgets[-1] == max_inputs else budgets + [max_inputs]
 
 
 def _suite_coverage_at(cells: list, budget: int) -> Optional[float]:
-    """Σ covered-statements-after-`budget`-inputs / Σ total-statements over a seed's cells."""
     cov = tot = 0
     for c in cells:
-        total = len(c.statements)
-        if total == 0 or not c.growth_curve:
+        total = len(metric_targets(c.statements))
+        curve = metric_curve(c)
+        if total == 0 or not curve:
             continue
-        cov += c.growth_curve[min(budget, len(c.growth_curve)) - 1]
+        cov += curve[min(budget, len(curve)) - 1]
         tot += total
     return (100.0 * cov / tot) if tot else None
 
 
-def time_to_coverage(cells: list) -> dict:
-    """{strategy: [median suite-coverage % at each budget in _BUDGETS]}, median across seeds."""
+def time_to_coverage(cells: list, budgets: list) -> dict:
+    """{strategy: [median suite-coverage % at each budget]}, median across seeds."""
     by_strat_seed: dict = {}
     for c in cells:
         by_strat_seed.setdefault(c.strategy, {}).setdefault(c.seed, []).append(c)
     curves: dict = {}
     for strat, seeds in by_strat_seed.items():
         curve = []
-        for b in _BUDGETS:
+        for b in budgets:
             vals = [v for sc in seeds.values() for v in [_suite_coverage_at(sc, b)] if v is not None]
             curve.append(statistics.median(vals) if vals else 0.0)
         curves[strat] = curve
     return curves
 
 
-def write_time_to_coverage(curves: dict, out_path: Path) -> None:
+def write_time_to_coverage(curves: dict, budgets: list, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10.0, 6.0), facecolor=BG)
     for strat in ordered_strategies(curves.keys()):
-        ax.plot(_BUDGETS, curves[strat], marker="o", markersize=3, linewidth=1.8, color=color_for(strat), label=strat)
+        ax.plot(budgets, curves[strat], marker="o", markersize=3, linewidth=1.8, color=color_for(strat), label=strat)
     ax.set_xscale("log")
-    ax.set_xlim(1, 10000)
+    ax.set_xlim(1, budgets[-1] if budgets else 1)
     ax.set_ylim(0, 100)
     ax.set_xlabel("inputs per method (log scale)")
-    ax.set_ylabel("suite coverage (%)")
-    ax.set_title(f"Coverage vs input budget (suite-wide median across K={SEED_COUNT} seeds)", color=TEXT, fontsize=12, pad=10)
+    ax.set_ylabel(f"suite {metric_label()} coverage (%)")
+    ax.set_title(f"{metric_label().title()} coverage vs input budget (suite-wide median across K={SEED_COUNT} seeds)", color=TEXT, fontsize=12, pad=10)
     ax.legend(loc="lower right", framealpha=0.95, edgecolor=BORDER)
     ax.grid(True, which="both", axis="both", alpha=0.5, color=GRID, linewidth=0.6)
     style_axes(ax)
@@ -841,7 +815,7 @@ def write_time_to_coverage(curves: dict, out_path: Path) -> None:
 # "Do all those tactics make us slow?" Every strategy runs the same methods,
 # and the dominant per-input cost — reading the scoverage measurement file —
 # is shared, so the per-strategy throughput delta isolates the tactics' own
-# overhead (pool injection, mutation). Reported as the
+# overhead (pooled generation, mutation). Reported as the
 # median inputs/sec across all (method, seed) cells, plus the slowdown vs
 # random. (Each forked JVM runs the methods in the same order, so JIT-warmup
 # bias is consistent across strategies and the comparison stays fair.)
@@ -884,73 +858,78 @@ def write_throughput_bars(ips_by_strategy: dict, out_path: Path) -> None:
 
 def main() -> None:
     if not STATS_ROOT.exists():
-        sys.exit(f"No data at {STATS_ROOT}. Run `make run` first.")
+        sys.exit(f"No data at {STATS_ROOT}. Run `make smoke` or `make full` first.")
     cells = load_cells()
     if not cells:
         sys.exit(
             f"No <bench>/<method>/<strategy>/seed=<NN>/coverage.json files under {STATS_ROOT}. "
-            "Run `make run` first."
+            "Run `make smoke` or `make full` first."
         )
 
-    ensure_dot_available()
     global SEED_COUNT
     SEED_COUNT = len({c.seed for c in cells})
     print(f"loaded {len(cells)} cells across {SEED_COUNT} seeds")
-
-    for cell in cells:
-        write_cell_dot_svg(cell)
-    print(f"  wrote per-cell coverage.dot/svg for {len(cells)} cells")
 
     by_bench: dict = {}
     for c in cells:
         by_bench.setdefault(c.bench, []).append(c)
 
-    for bench, cs in by_bench.items():
-        cells_by_method: dict = {}
-        for c in cs:
-            cells_by_method.setdefault(c.method, []).append(c)
-        out = SUMMARY_DIR / "by_bench" / f"{bench}.svg"
-        write_bench_bars(bench, cells_by_method, out)
-    print(f"  wrote {len(by_bench)} per-bench bar charts")
+    global METRIC
+    for metric in ("statement", "branch"):
+        METRIC = metric
+        for bench, cs in by_bench.items():
+            cells_by_method: dict = {}
+            for c in cs:
+                cells_by_method.setdefault(c.method, []).append(c)
+            out = SUMMARY_DIR / "by_bench" / metric / f"{bench}.svg"
+            write_bench_bars(bench, cells_by_method, out)
 
-    write_suite_bars(by_bench, SUMMARY_DIR / "suite.svg")
-    write_overall_bars(cells, SUMMARY_DIR / "overall.svg")
-    write_blindspot_bars(by_bench, SUMMARY_DIR / "blindspot.svg")
-    write_per_seed_csv(cells, SUMMARY_DIR / "per_seed.csv")
-    suite_sig = write_significance(by_bench, SUMMARY_DIR / "significance.csv")
-    curves = time_to_coverage(cells)
-    write_time_to_coverage(curves, SUMMARY_DIR / "time_to_coverage.svg")
+        write_suite_bars(by_bench, SUMMARY_DIR / f"{metric}_suite.svg")
+        write_overall_bars(cells, SUMMARY_DIR / f"{metric}_overall.svg")
+        write_blindspot_bars(by_bench, SUMMARY_DIR / f"{metric}_blindspot.svg")
+        write_per_seed_csv(cells, SUMMARY_DIR / f"{metric}_per_seed.csv")
+        suite_sig = write_significance(by_bench, SUMMARY_DIR / f"{metric}_significance.csv")
+        budgets = input_budgets(cells)
+        curves = time_to_coverage(cells, budgets)
+        write_time_to_coverage(curves, budgets, SUMMARY_DIR / f"{metric}_time_to_coverage.svg")
+        print(f"  wrote {metric} coverage charts/tables in {SUMMARY_DIR}")
+
+        print()
+        print(f"{metric_label().title()} coverage vs input budget (suite-wide median %):")
+        checkpoints = [b for b in [10, 100, 1000, 10000, 100000] if b in budgets]
+        if budgets and budgets[-1] not in checkpoints:
+            checkpoints.append(budgets[-1])
+        cols = {b: budgets.index(b) for b in checkpoints}
+        print(f"  {'strategy':<24}" + "".join(f"{('@' + str(b)):>10}" for b in checkpoints))
+        for strat in ordered_strategies(curves.keys()):
+            print(f"  {strat:<24}" + "".join(f"{curves[strat][cols[b]]:>9.1f}%" for b in checkpoints))
+
+        suite_cells = list(cells)
+        non_random = [s for s in ordered_strategies({c.strategy for c in cells}) if s != RANDOM]
+        if non_random:
+            print()
+            print(f"{metric_label().title()} blind-spot fill (suite-wide, median across seeds):")
+            for strat in non_random:
+                fills = _per_seed_blindspot_fills(suite_cells, strat)
+                if fills:
+                    spread = SeedSpread.of(fills)
+                    print(
+                        f"  {strat:<18s} median {spread.median:.1f}% "
+                        f"[range {spread.lo:.1f}%–{spread.hi:.1f}%, IQR {spread.q1:.1f}%–{spread.q3:.1f}%, "
+                        f"n={len(fills)} seeds]"
+                    )
+                else:
+                    print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
+
+        if suite_sig:
+            print()
+            print(f"Effect size + significance vs random ({metric_label()}, suite-wide, K={SEED_COUNT} seeds):")
+            print(f"  {'strategy':<38}{'med%':>6}{'rand%':>7}{'Â12':>7}  {'magnitude':<11}{'p':>10}  sig")
+            for _, s, _n, mp, rp, a12, mag, p in suite_sig:
+                print(f"  {s:<38}{mp:>5.1f}%{rp:>6.1f}%{a12:>7.3f}  {mag:<11}{p:>10.3g}  {'*' if p < 0.05 else ''}")
+
     ips_by_strategy = throughput(cells)
     write_throughput_bars(ips_by_strategy, SUMMARY_DIR / "throughput.svg")
-    print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, throughput.svg, per_seed.csv, significance.csv in {SUMMARY_DIR}")
-
-    # Suite-wide blind-spot summary: of the statements random never reached, how many did
-    # each non-random strategy cover? Honest companion to the raw-coverage bars above.
-    # Aggregated across the K seed-runs as median + [min–max] range.
-    suite_cells = list(cells)
-    non_random = [s for s in ordered_strategies({c.strategy for c in cells}) if s != RANDOM]
-    if non_random:
-        print()
-        print("Blind-spot fill (suite-wide, median across seeds):")
-        for strat in non_random:
-            fills = _per_seed_blindspot_fills(suite_cells, strat)
-            if fills:
-                spread = SeedSpread.of(fills)
-                print(
-                    f"  {strat:<18s} median {spread.median:.1f}% "
-                    f"[range {spread.lo:.1f}%–{spread.hi:.1f}%, IQR {spread.q1:.1f}%–{spread.q3:.1f}%, "
-                    f"n={len(fills)} seeds]"
-                )
-            else:
-                print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
-
-    # Effect size + significance vs random (suite-wide), the Arcuri–Briand pair.
-    if suite_sig:
-        print()
-        print(f"Effect size + significance vs random (suite-wide, K={SEED_COUNT} seeds):")
-        print(f"  {'strategy':<38}{'med%':>6}{'rand%':>7}{'Â12':>7}  {'magnitude':<11}{'p':>10}  sig")
-        for _, s, _n, mp, rp, a12, mag, p in suite_sig:
-            print(f"  {s:<38}{mp:>5.1f}%{rp:>6.1f}%{a12:>7.3f}  {mag:<11}{p:>10.3g}  {'*' if p < 0.05 else ''}")
 
     # Throughput: do the tactics slow us down? Median inputs/sec per strategy, with slowdown vs random.
     if ips_by_strategy:
@@ -962,16 +941,6 @@ def main() -> None:
             ips = ips_by_strategy[strat]
             rel = f"{ips / rand_ips:.2f}× random" if rand_ips and ips > 0 and strat != RANDOM else "—"
             print(f"  {strat:<40}{ips:>12,.0f}{rel:>16}")
-
-    # Efficiency: suite-wide coverage reached at a few input budgets (median across seeds).
-    print()
-    print("Coverage vs input budget (suite-wide median %):")
-    checkpoints = [10, 100, 1000, 10000]
-    cols = {b: _BUDGETS.index(b) for b in checkpoints}
-    print(f"  {'strategy':<24}" + "".join(f"{('@' + str(b)):>10}" for b in checkpoints))
-    for strat in ordered_strategies(curves.keys()):
-        print(f"  {strat:<24}" + "".join(f"{curves[strat][cols[b]]:>9.1f}%" for b in checkpoints))
-
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,50 @@ import benchmark.data.Tree
 
 object MutationTargets {
 
+  def sortedLedger(values: List[Int]): String =
+    if (values.length < 10) "too-short"
+    else {
+      var sorted       = true
+      var hasNegative  = false
+      var hasDuplicate = false
+      var rest         = values
+      while (rest.nonEmpty) {
+        if (rest.head < 0) hasNegative = true
+        if (rest.tail.nonEmpty) {
+          if (rest.head > rest.tail.head) sorted = false
+          if (rest.head == rest.tail.head) hasDuplicate = true
+        }
+        rest = rest.tail
+      }
+
+      if (!sorted) "unsorted"
+      else if (hasNegative) "negative"
+      else if (hasDuplicate) "duplicate"
+      else "clean"
+    }
+
+  def treeDepth(t: Tree[Int]): String = {
+    var size     = 0
+    var maxDepth = 0
+    var stack    = List((t, 0))
+    while (stack.nonEmpty) {
+      val (current, depth) = stack.head
+      stack = stack.tail
+      current match {
+        case Tree.Leaf          => maxDepth = maxDepth
+        case Tree.Node(l, _, r) =>
+          size += 1
+          maxDepth = math.max(maxDepth, depth + 1)
+          stack = (l, depth + 1) :: (r, depth + 1) :: stack
+      }
+    }
+
+    if (size == 0) "empty"
+    else if (maxDepth <= 2) "shallow"
+    else if (maxDepth >= 5) "deep"
+    else "middle"
+  }
+
   def priceTrend(prices: List[Int]): String =
     if (prices.length < 2) "too-short"
     else {

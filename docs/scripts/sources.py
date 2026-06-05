@@ -42,7 +42,7 @@ digraph sources {
     s_pool [label=<<b>pool</b><br/><font point-size="9">literals while statements are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="#1F8A70", fontcolor="white"];
     s_mut  [label=<<b>mutation</b><br/><font point-size="9">perturb a corpus seed</font>>, shape=box, style="rounded,filled", fillcolor="#E67E22", fontcolor="white"];
 
-    mix [label=<<b>mix</b><br/><font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
+    mix [label=<<b>strategy</b><br/><font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
     sut [label=<SUT + property<br/><font point-size="9">scoverage-instrumented</font>>, shape=box, style=filled, fillcolor="#ECEFF2", color="#2C3E50", penwidth=2];
     cov [label=<coverage<br/><font point-size="9">fired statements</font>>, shape=box, style=filled, fillcolor="#E8F0EB"];
     fb  [label=<<b>Feedback</b><br/><font point-size="9">covered statements &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
