@@ -4,8 +4,8 @@
 Reads every ``engine/reports/statistics/<bench>/<method>/<strategy>/seed=<NN>/coverage.json``
 written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) and produces:
 
-  per cell (next to the json, one tree per seed)
-    coverage.dot   — branch tree, leaves coloured by coverage
+  per cell (next to the json, one graph per seed)
+    coverage.dot   — method-local scoverage statements coloured by coverage
     coverage.svg   — `dot -Tsvg` rendering of the above
 
   cross-strategy (under engine/reports/statistics/_summary/)
@@ -18,10 +18,10 @@ written by the Scala engine across the K-seed sweep (`SEEDS` in the Makefile) an
                            [min–max] across seeds
     overall.svg          — horizontal bars per strategy, same aggregation
     blindspot.svg        — per-bench + suite-wide percentage of random's
-                           blind spot (the leaves random failed to reach)
+                           blind spot (the statements random failed to reach)
                            that each non-random strategy covered. Median +
                            [min–max] across the K per-seed fills. Isolates
-                           "branches only coverage feedback can find" from
+                           "statements only coverage feedback can find" from
                            "easy guards everyone hits", which the raw
                            coverage % conflates.
     per_seed.csv         — one row per (bench, method, strategy, seed) with
@@ -154,8 +154,7 @@ _SEED_DIR_RE = re.compile(r"^seed=(\d+)$")
 
 
 def reconstruct_growth_curve(tree: Optional[dict], total_inputs: int) -> list:
-    """Cumulative covered-leaf count after each input, rebuilt from the per-leaf ``firstHitInput`` the
-    engine stores (so the JSON stays O(leaves), not O(inputs)). ``curve[i]`` = leaves first hit by input i."""
+    """Cumulative covered-statement count after each input, rebuilt from per-statement ``firstHitInput``."""
     if total_inputs <= 0:
         return []
     hits = [leaf["firstHitInput"] for leaf in leaves(tree) if leaf["firstHitInput"] is not None]
@@ -199,7 +198,7 @@ def load_cells() -> list:
 def leaves(tree: Optional[dict]) -> list:
     if tree is None:
         return []
-    if tree["kind"] == "leaf":
+    if tree["kind"] in ("leaf", "statement"):
         return [tree]
     if tree["kind"] == "branch":
         return [leaf for arm in tree["arms"] for leaf in leaves(arm["body"])]
@@ -209,7 +208,7 @@ def leaves(tree: Optional[dict]) -> list:
 
 
 def is_reached(tree: dict) -> bool:
-    if tree["kind"] == "leaf":
+    if tree["kind"] in ("leaf", "statement"):
         return tree["firstHitInput"] is not None
     if tree["kind"] == "branch":
         return any(is_reached(arm["body"]) for arm in tree["arms"])
@@ -266,22 +265,25 @@ def render_dot(cell: Cell) -> str:
         attr = f' [label="{html_escape(label)}"]' if label else ""
         return f"  {parent} -> {child}{attr};"
 
-    def walk(tree: dict, parent: str, label: str) -> None:
-        if tree["kind"] == "leaf":
+    def walk(tree: dict, parent: str, label: str) -> str:
+        if tree["kind"] in ("leaf", "statement"):
             nid = fresh()
             covered = tree["firstHitInput"] is not None
             fill = LEAF_COV if covered else LEAF_MIS
             txt = COV_TXT if covered else MIS_TXT
             status = "covered" if covered else "not reached"
+            prefix = f'line {tree.get("line", "?")}'
             lbl = (
+                f'<font point-size="10"><b>{prefix}</b></font><br/>'
                 f'<font face="Courier" point-size="12"><b>{html_escape(tree["text"])}</b></font>'
                 f'<br/><font point-size="10"><font color="{txt}"><b>{status}</b></font></font>'
             )
             nodes.append(
-                f'  {nid} [shape=diamond, style="filled", fillcolor="{fill}", '
+                f'  {nid} [shape=box, style="rounded,filled", fillcolor="{fill}", '
                 f'penwidth=1.5, label=<{lbl}>];'
             )
             edges.append(edge(parent, nid, label))
+            return nid
         elif tree["kind"] == "branch":
             nid = fresh()
             reached = is_reached(tree)
@@ -300,14 +302,19 @@ def render_dot(cell: Cell) -> str:
             edges.append(edge(parent, nid, label))
             for arm in tree["arms"]:
                 walk(arm["body"], nid, arm["label"])
+            return nid
         elif tree["kind"] == "sequence":
+            current = parent
             for child in tree["children"]:
-                walk(child, parent, label)
+                current = walk(child, current, label)
+                label = ""
+            return current
+        return parent
 
     s = stats(cell)
     title = (
         f'<font point-size="14"><b>{html_escape(cell.method)}</b></font>'
-        f'<br/><font point-size="11">branches: <b>{s.pct:.0f}%</b> '
+        f'<br/><font point-size="11">statements: <b>{s.pct:.0f}%</b> '
         f'({s.covered}/{s.total}) — {cell.strategy}</font>'
     )
     nodes.append(
@@ -576,18 +583,17 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
 
 # ── Blind-spot fill (random-relative metric) ────────────────────────────
 #
-# Raw coverage % conflates two effects: easy "trivial" early-exit arms that
-# any strategy hits in the first dozen inputs, and hard branches that random
-# may never reach. The blind-spot fill metric separates them: it counts only
-# leaves random missed, then asks how many of those each non-random strategy
+# Raw coverage % conflates two effects: easy statements that any strategy hits
+# early, and hard statements that random may never reach. The blind-spot fill
+# metric separates them: it counts only statements random missed, then asks how many of those each non-random strategy
 # covered. Useful as the headline number for "is coverage feedback worth it?"
 
 
 def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
-    """For each leaf where ``random`` missed in any method of ``cells_by_method``,
-    return ``True`` if ``strategy`` covered that leaf, ``False`` otherwise.
+    """For each statement where ``random`` missed in any method of ``cells_by_method``,
+    return ``True`` if ``strategy`` covered that statement, ``False`` otherwise.
 
-    Both cells share the same parsed branch tree, so leaves in document order
+    Both cells share the same method statement list, so targets in document order
     line up one-to-one — paired by ``zip``. Cells must share a single ``seed``;
     blind-spot fill is computed per seed and then aggregated across seeds.
     """
@@ -659,7 +665,7 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
         categories,
         pcts_by_strategy,
         non_random,
-        title=f"Blind-spot fill — % of leaves random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
+        title=f"Blind-spot fill — % of statements random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -823,8 +829,7 @@ _BUDGETS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
 
 
 def _suite_coverage_at(cells: list, budget: int) -> Optional[float]:
-    """Σ covered-leaves-after-`budget`-inputs / Σ total-leaves over a seed's cells. `growth_curve[i]`
-    is the cumulative covered-leaf count after input i+1, so budget t reads index min(t, len) - 1."""
+    """Σ covered-statements-after-`budget`-inputs / Σ total-statements over a seed's cells."""
     cov = tot = 0
     for c in cells:
         total = len(leaves(c.branch_tree))
@@ -957,7 +962,7 @@ def main() -> None:
     write_throughput_bars(ips_by_strategy, SUMMARY_DIR / "throughput.svg")
     print(f"  wrote suite.svg, overall.svg, blindspot.svg, time_to_coverage.svg, throughput.svg, per_seed.csv, significance.csv in {SUMMARY_DIR}")
 
-    # Suite-wide blind-spot summary: of the leaves random never reached, how many did
+    # Suite-wide blind-spot summary: of the statements random never reached, how many did
     # each non-random strategy cover? Honest companion to the raw-coverage bars above.
     # Aggregated across the K seed-runs as median + [min–max] range.
     suite_cells = list(cells)

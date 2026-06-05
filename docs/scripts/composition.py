@@ -62,8 +62,8 @@ digraph composition {{
     label=<<b>One uniform loop &mdash; read Feedback, each active tactic proposes, mix with random</b>>;
     fontsize=12; labeljust="l"; style="rounded,filled"; fillcolor="#F6F8FA"; color="#9AA5B1";
 
-    fb   [label=<<b>Feedback</b><br/><font point-size="9">covered leaves &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
-    pool [label=<<b>Pool</b><br/><font point-size="9">inject literals of<br/>uncovered leaves</font>>, shape=box, style="rounded,filled", fillcolor="{POOL}", fontcolor="white"];
+    fb   [label=<<b>Feedback</b><br/><font point-size="9">covered statements &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
+    pool [label=<<b>Pool</b><br/><font point-size="9">inject literals while<br/>statements are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="{POOL}", fontcolor="white"];
     mut  [label=<<b>Mutation</b><br/><font point-size="9">perturb a<br/>corpus seed</font>>, shape=box, style="rounded,filled", fillcolor="{MUT}", fontcolor="white"];
     rand [label=<<b>random</b><br/><font point-size="9">always present</font>>, shape=box, style="rounded,filled", fillcolor="{RAND}", fontcolor="white"];
     mix  [label=<<b>mix</b> &middot; <font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];

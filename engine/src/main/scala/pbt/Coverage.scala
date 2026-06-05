@@ -1,5 +1,6 @@
 package pbt
 
+import pbt.analysis.SourceSpan
 import scoverage.serialize.Serializer
 
 import java.nio.file.{Files, Path}
@@ -24,15 +25,33 @@ final class Coverage(sutRoot: Path) {
     Serializer.deserialize(coverageFile, sutRoot.toFile).statements.toList.groupBy(s => fileName(s.source))
   }
 
-  /** The source offsets of every statement fired so far in `sourceFile`. */
-  def firedOffsets(sourceFile: Path): Set[Int] = {
-    val fired = measurementFiles.flatMap(Files.readAllLines(_).asScala).flatMap(_.trim.takeWhile(!_.isWhitespace).toIntOption).toSet
-    statements.getOrElse(sourceFile.getFileName.toString, Nil).filter(s => fired(s.id)).map(_.start).toSet
+  def methodStatements(sourceFile: Path, span: SourceSpan): List[Coverage.StatementTarget] = {
+    val source = Files.readString(sourceFile)
+    statements
+      .getOrElse(sourceFile.getFileName.toString, Nil)
+      .filter(s => span.contains(s.start))
+      .sortBy(_.start)
+      .map { s =>
+        val end  = s.end.max(s.start + 1).min(source.length)
+        val text = source.slice(s.start, end).replaceAll("\\s+", " ").trim.take(100)
+        Coverage.StatementTarget(s.id, s.start, end, lineOf(source, s.start), text)
+      }
+  }
+
+  def firedStatementIds(sourceFile: Path): Set[Int] = {
+    val fired          = measurementFiles.flatMap(Files.readAllLines(_).asScala).flatMap(_.trim.takeWhile(!_.isWhitespace).toIntOption).toSet
+    val fileStatements = statements.getOrElse(sourceFile.getFileName.toString, Nil).map(_.id).toSet
+    fired.intersect(fileStatements)
   }
 
   private def measurementFiles: List[Path] =
     if (!Files.isDirectory(dataDir)) Nil
     else Using.resource(Files.list(dataDir))(_.iterator().asScala.filter(_.getFileName.toString.startsWith("scoverage.measurements.")).toList)
 
-  private def fileName(source: String): String = source.replace('\\', '/').split('/').last
+  private def fileName(source: String): String         = source.replace('\\', '/').split('/').last
+  private def lineOf(source: String, offset: Int): Int = source.take(offset).count(_ == '\n') + 1
+}
+
+object Coverage {
+  final case class StatementTarget(id: Int, start: Int, end: Int, line: Int, text: String)
 }

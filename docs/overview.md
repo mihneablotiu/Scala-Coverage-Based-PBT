@@ -99,7 +99,7 @@ actually helps.
    10000 inputs (integers, lists, options, tuples, or little trees, as
    the method needs).
 3. For each input we run the method.
-4. As the method runs, an extra layer records which lines were
+4. As the method runs, scoverage records which method-local statements
    executed.
 5. We collect all 10000 observations into a single picture of how
    well the method's branches were exercised over the session.
@@ -173,9 +173,8 @@ engine/reports/statistics/
 ([`engine/reports/scripts/compare.py`](../engine/reports/scripts/compare.py))
 which reads those JSONs and writes:
 
-- next to each `coverage.json`: a `coverage.svg` — the method's
-  branch tree, leaves coloured by whether the strategy ever hit
-  them;
+- next to each `coverage.json`: a `coverage.svg` — the method-local
+  scoverage statements coloured by whether the strategy ever hit them;
 - under `engine/reports/statistics/_summary/`: a horizontal bar
   chart per bench whose bars carry, beside each strategy's
   coverage %, the input that reached it and (for non-random

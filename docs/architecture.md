@@ -58,8 +58,8 @@ and the live coverage says they can still help — a **pooled** draw and a
 **mutated** draw mixed in (random keeps a fixed minority share, so it
 stays a healthy escape hatch and seeds the corpus):
 
-- **pool** — inject the literals that still-uncovered branches need
-  (`Generatable.pooled`), while some leaf is still uncovered.
+- **pool** — inject mined literals (`Generatable.pooled`) while some
+  method-local scoverage statement is still uncovered.
 - **mutation** — perturb a corpus seed, an input that grew coverage
   (`Generatable.mutate`).
 
@@ -93,14 +93,14 @@ ScalaCheck. Per input:
 
 1. **draw** — a random draw, plus pooled/mutated draws the strategy enables;
 2. **run** the property (guarded, so a thrown exception still counts);
-3. **read** the offsets scoverage fired in the method's file;
-4. **mark** the leaves those offsets land inside as covered;
+3. **read** the scoverage statement ids fired in the method's file;
+4. **mark** the method-local statement ids as covered;
 5. **record** into [`Feedback`](../engine/src/main/scala/pbt/strategy/Feedback.scala).
 
 `Feedback` is the single running signal:
-`covered` (cumulative covered leaves — pooling stops once nothing is
+`covered` (cumulative covered statements — pooling stops once nothing is
 left to cover), `corpus` (inputs that each grew coverage — mutation
-perturbs these), and `history` (per-input deltas — gives each leaf its
+perturbs these), and `history` (per-input deltas — gives each statement its
 first-hit input index). `Gen.delay` re-reads it every draw, so the
 guided draws see it grow; `random` ignores it.
 
@@ -114,7 +114,7 @@ each subpackage is one thing you would extend:
 ```
 pbt/            engine + core types     Pbt · Coverage · Report
 pbt/gen/        the generator interface Generatable · ConstantPool
-pbt/analysis/   add a construct         Analysis (BranchTree + Parser)
+pbt/analysis/   source understanding    Analysis (method span + literals)
 pbt/strategy/   feedback state + presets Feedback · Strategy · Tactic
 app/            harness + all the       Main · Generators
                 concrete generators
@@ -126,26 +126,18 @@ answer.
 
 ---
 
-## 6. Coverage — leaf-only branch coverage
+## 6. Coverage — method-local statement coverage
 
-[`Parser`](../engine/src/main/scala/pbt/analysis/Analysis.scala) walks a
-method into a [`BranchTree`](../engine/src/main/scala/pbt/analysis/Analysis.scala):
-decision points become `Branch`es (one `Arm` per outcome), arm
-terminals become `Leaf`s. **A leaf is the unit of coverage** — one
-distinct path through the body — so the metric is *leaf-only branch
-coverage*, not scoverage's raw statement coverage (which would also
-count intermediate decision statements). A non-branchy method reports
-`0/0` and stays out of the comparison.
+[`Parser`](../engine/src/main/scala/pbt/analysis/Analysis.scala) uses
+ScalaMeta to find the method body span and mine integer literals.
+[`Coverage`](../engine/src/main/scala/pbt/Coverage.scala) then filters
+scoverage's instrumented statements to that method span. **A method-local
+scoverage statement is the unit of coverage.**
 
-Two rules keep the graph honest:
-
-- A leaf stores its **source span**. [`Coverage`](../engine/src/main/scala/pbt/Coverage.scala)
-  marks it covered when a fired scoverage offset lands **inside that
-  span** — matching by *file + span containment*, never by scoverage's
-  method attribution (unreliable around nested `def`s). Spans are
-  method-local, so methods sharing a file scope correctly on their own.
-- **Nested `def`/`object`/`class` are opaque** — separate scopes the
-  walker doesn't expand; only the call shows, as a leaf.
+The graph shows those statement targets in source order, coloured by
+whether their scoverage id fired. This is simpler and more defensible
+than a custom branch metric: scoverage is the coverage source of truth;
+ScalaMeta supplies source understanding.
 
 `Coverage` reads scoverage's append-only measurement files whole on
 every call — they are tiny, so the simple re-read beats tracking
@@ -165,8 +157,8 @@ a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
 (the AFL *dictionary* idea — splice useful constants from the program into
 inputs — adapted to value-level draws; over-approximating is cheap, an
 unused literal is just a wasted draw). Each draw it injects one of those
-literals — but only while some leaf is still uncovered; once every leaf
-is hit there is nothing a literal can unlock, so it stands down. That
+literals — but only while some method-local statement is still uncovered;
+once every statement is hit there is nothing a literal can unlock, so it stands down. That
 is what makes literal injection coverage-driven.
 
 The **mutation** tactic perturbs the corpus of coverage-growing inputs
@@ -176,9 +168,8 @@ coverage frontier — so each retained seed is the springboard that
 ratchets into nearby structured inputs (sort a list, grow a tree), with a
 slice of draws on older seeds for diversity.
 
-Neither needs anything from the parser beyond the `BranchTree`'s leaves
-(for the pool to know when to retire) and the mined literals — the
-guard *text* is kept only for the report's labels.
+The parser provides the method span and literals; scoverage provides the
+covered statement ids that drive both tactics.
 
 ---
 
@@ -207,17 +198,17 @@ per cell at
 ```
 { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
   "pool":       { "ints": [...] },
-  "branchTree": nested tree; each leaf carries firstHitInput: int | null }
+  "branchTree": statement graph; each statement carries firstHitInput: int | null }
 ```
 
-The growth curve is **not** stored: each leaf's `firstHitInput` already
+The growth curve is **not** stored: each statement's `firstHitInput` already
 encodes when coverage grew, so the cumulative curve is reconstructed
-downstream — the file stays O(leaves), not O(inputs).
+downstream — the file stays O(statements), not O(inputs).
 
 The engine emits only this raw measurement; all charts and statistics
 are produced downstream by `make analyze`
 ([`engine/reports/scripts/compare.py`](../engine/reports/scripts/compare.py)):
-per-cell `coverage.svg` (the tree, leaves coloured by coverage), and
+per-cell `coverage.svg` (method-local statements coloured by coverage), and
 under `_summary/`: per-bench / suite / overall coverage bars,
 `blindspot.svg` (% of random's blind spot each strategy recovers),
 `time_to_coverage.svg` (coverage vs input budget, from the
@@ -235,7 +226,7 @@ the *presentation*. Either side can be rewritten without the other.
 | You want to add… | Touch |
 |------------------|-------|
 | A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` (all the concrete generators live there; composites defer to their components, see `list`/`tree`) |
-| A new branchy construct | One case in `Parser.visit` (+ a `BranchTree` node only if its shape is genuinely new) |
+| A new coverage target shape | Usually nothing: scoverage statements are filtered by method span |
 | A new tactic | One `Tactic` case plus one proposal branch in `Pbt.check` |
 | A new strategy | One `Strategy` preset in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |
 | A new output format | A new writer alongside `Report` |

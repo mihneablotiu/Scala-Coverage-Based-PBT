@@ -45,7 +45,7 @@ digraph sources {
     mix [label=<<b>mix</b><br/><font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
     sut [label=<SUT + property<br/><font point-size="9">scoverage-instrumented</font>>, shape=box, style=filled, fillcolor="#ECEFF2", color="#2C3E50", penwidth=2];
     cov [label=<coverage<br/><font point-size="9">fired branches</font>>, shape=box, style=filled, fillcolor="#E8F0EB"];
-    fb  [label=<<b>Feedback</b><br/><font point-size="9">covered leaves &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
+    fb  [label=<<b>Feedback</b><br/><font point-size="9">covered statements &middot; corpus</font>>, shape=box, style="rounded,filled", fillcolor="#FCF3CF"];
     out [label="counterexample", shape=box, style="rounded,filled", fillcolor="#FADBD8"];
 
     { rank=same; s_rand; s_pool; s_mut; }

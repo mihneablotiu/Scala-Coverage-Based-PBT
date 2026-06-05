@@ -53,5 +53,5 @@ Reports land under
 - [`docs/overview.md`](docs/overview.md) — non-technical introduction
   (why we do this, what the prototype does, what comes out).
 - [`docs/architecture.md`](docs/architecture.md) — technical companion:
-  the tactic model, the per-input loop, how the branch tree maps to
-  coverage, the directory layout, and extension points.
+  the tactic model, the per-input loop, method-local statement coverage,
+  the directory layout, and extension points.
