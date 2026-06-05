@@ -132,7 +132,9 @@ answer.
 ScalaMeta to find the method body span and mine integer literals.
 [`Coverage`](../engine/src/main/scala/pbt/Coverage.scala) then filters
 scoverage's instrumented statements to that method span. **A method-local
-scoverage statement is the unit of coverage.**
+scoverage-backed source statement is the unit of coverage.** If
+scoverage emits several ids for the same source span, the engine collapses
+them into one logical statement target and keeps the raw ids for audit.
 
 The graph shows those statement targets in source order, coloured by
 whether their scoverage id fired. This is simpler and more defensible
@@ -191,7 +193,8 @@ writes one report per method. The Makefile sweeps `STRATEGIES × SEEDS`.
 
 ## 9. Output
 
-`Pbt.check` returns a `Report`; the harness writes one `coverage.json`
+`Pbt.check` returns a `Report`; the harness writes `coverage.json` and
+`feedback.jsonl`
 per cell at
 `engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`:
 
@@ -204,6 +207,11 @@ per cell at
 The growth curve is **not** stored: each statement's `firstHitInput` already
 encodes when coverage grew, so the cumulative curve is reconstructed
 downstream — the file stays O(statements), not O(inputs).
+
+`feedback.jsonl` contains only coverage-growing inputs: the iteration,
+input value, newly covered statements, current covered total, and corpus
+size. The Makefile also snapshots scoverage's own HTML report after each
+`(strategy, seed)` run under `engine/reports/statistics/_scoverage/`.
 
 The engine emits only this raw measurement; all charts and statistics
 are produced downstream by `make analyze`

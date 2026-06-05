@@ -166,8 +166,12 @@ engine/reports/statistics/
     └── <method name>/   e.g. sign
         └── <strategy>/  e.g. random, pool, mutation, pool-mutation
             └── seed=01/
-                └── coverage.json   — raw measurement
+                ├── coverage.json    — raw statement measurement
+                └── feedback.jsonl   — coverage-growing feedback events
 ```
+
+The Makefile also snapshots scoverage's own HTML report after every
+`(strategy, seed)` run under `engine/reports/statistics/_scoverage/`.
 
 `make analyze` then runs the Python script
 ([`engine/reports/scripts/compare.py`](../engine/reports/scripts/compare.py))

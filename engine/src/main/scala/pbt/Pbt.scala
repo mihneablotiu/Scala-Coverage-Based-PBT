@@ -34,7 +34,7 @@ final class Pbt(sutRoot: Path) {
     val prop = Prop.forAllNoShrink(Gen.delay(nextInput)) { input =>
       try property(input)
       catch { case _: Throwable => () }
-      feedback = feedback.record(input, coverage.firedStatementIds(sourceFile).intersect(targetIds))
+      feedback = feedback.record(input, coverage.firedTargetIds(sourceFile, targets).intersect(targetIds))
       true
     }
 

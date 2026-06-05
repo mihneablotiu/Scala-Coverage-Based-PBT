@@ -4,6 +4,8 @@
 
 REPORTS_DIR    := engine/reports/statistics
 SCOV_DATA_DIR  := sut/target/scala-2.13/scoverage-data
+SCOV_HTML_DIR  := sut/target/scala-2.13/scoverage-report
+SCOV_SNAP_DIR  := $(REPORTS_DIR)/_scoverage
 SBT            ?= sbt
 PY             ?= python3
 INPUTS         ?= 10000
@@ -20,6 +22,7 @@ help: ## Show this help.
 	@echo "  make build           Compile all subprojects"
 	@echo "  make run             Run each (strategy, seed) pair in its own forked JVM"
 	@echo "                       Optional: make run SEEDS=\"1 2\" INPUTS=1000"
+	@echo "                       Saves scoverage HTML under $(SCOV_SNAP_DIR)/<strategy>/seed=<NN>/"
 	@echo "  make analyze         Build charts/tables from $(REPORTS_DIR)/*/*/*/seed=*/coverage.json"
 	@echo "  make diagrams        Regenerate architecture diagrams under docs/images/"
 	@echo "  make clean-reports   Remove $(REPORTS_DIR) and stale scoverage measurements"
@@ -38,8 +41,13 @@ run: clean-reports ## Run each (strategy, seed) pair in its own forked JVM (app.
 	$(SBT) -no-colors -batch "sut/clean; sut/compile"
 	@for s in $(STRATEGIES); do \
 	  for k in $(SEEDS); do \
+	    seed_dir=$$(printf "seed=%02d" $$k); \
 	    echo "── $$s seed=$$k ──"; \
 	    $(SBT) -no-colors -batch "engine/runMain app.Main $$s $$k $(INPUTS)" || exit 1; \
+	    $(SBT) -no-colors -batch "sut/coverageReport" || exit 1; \
+	    rm -rf "$(SCOV_SNAP_DIR)/$$s/$$seed_dir"; \
+	    mkdir -p "$(SCOV_SNAP_DIR)/$$s/$$seed_dir"; \
+	    cp -R "$(SCOV_HTML_DIR)/." "$(SCOV_SNAP_DIR)/$$s/$$seed_dir/"; \
 	  done; \
 	done
 

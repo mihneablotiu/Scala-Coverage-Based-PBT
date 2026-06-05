@@ -26,16 +26,32 @@ final class Coverage(sutRoot: Path) {
   }
 
   def methodStatements(sourceFile: Path, span: SourceSpan): List[Coverage.StatementTarget] = {
-    val source = Files.readString(sourceFile)
-    statements
+    val source     = Files.readString(sourceFile)
+    val rawTargets = statements
       .getOrElse(sourceFile.getFileName.toString, Nil)
       .filter(s => span.contains(s.start))
       .sortBy(_.start)
       .map { s =>
         val end  = s.end.max(s.start + 1).min(source.length)
         val text = source.slice(s.start, end).replaceAll("\\s+", " ").trim.take(100)
-        Coverage.StatementTarget(s.id, s.start, end, lineOf(source, s.start), text)
+        Coverage.RawStatementTarget(s.id, s.start, end, lineOf(source, s.start), text)
       }
+
+    rawTargets
+      .groupBy(t => (t.start, t.end, t.line, t.text))
+      .values
+      .map { group =>
+        val ids  = group.map(_.id).toSet
+        val head = group.minBy(_.id)
+        Coverage.StatementTarget(ids.min, ids, head.start, head.end, head.line, head.text)
+      }
+      .toList
+      .sortBy(t => (t.start, t.id))
+  }
+
+  def firedTargetIds(sourceFile: Path, targets: List[Coverage.StatementTarget]): Set[Int] = {
+    val fired = firedStatementIds(sourceFile)
+    targets.filter(t => t.ids.exists(fired)).map(_.id).toSet
   }
 
   def firedStatementIds(sourceFile: Path): Set[Int] = {
@@ -53,5 +69,6 @@ final class Coverage(sutRoot: Path) {
 }
 
 object Coverage {
-  final case class StatementTarget(id: Int, start: Int, end: Int, line: Int, text: String)
+  private final case class RawStatementTarget(id: Int, start: Int, end: Int, line: Int, text: String)
+  final case class StatementTarget(id: Int, ids: Set[Int], start: Int, end: Int, line: Int, text: String)
 }
