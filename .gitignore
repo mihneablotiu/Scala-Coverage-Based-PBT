@@ -33,3 +33,6 @@ project/.bloop/
 # Logs and JVM crash dumps
 *.log
 hs_err_pid*.log
+
+# Local thesis drafts
+docs/thesis/
