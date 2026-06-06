@@ -30,7 +30,7 @@ therefore draws exactly like ScalaCheck. `pool` draws from mined literals,
 `mutation` perturbs coverage-growing seeds, and `pool-mutation` composes both.
 The benchmark catalogue separates these cases into
 `Calibration`, `MagicLiterals`, `MutationTargets`, `MixedTargets`,
-`NumericSearch`, and `RealWorld`: 42 methods spanning shallow calibration cases, exact
+`NumericSearch`, and `RealWorld`: 44 methods spanning shallow calibration cases, exact
 literal gates, structured list/tree targets, mixed tactic targets, and
 computed numeric relations, plus practical string/numeric algorithms.
 
@@ -41,16 +41,17 @@ make full      # clean + format + run 30 seeds × 100000 inputs + analyze
 make smoke     # same pipeline with 1 seed × 200 inputs
 ```
 
-Requires `sbt`, Graphviz `dot`, and `python3` with `matplotlib`.
+Requires `sbt` and `python3` with `matplotlib`.
 
-Reports land under
-`engine/reports/statistics/<category>/<method>/<strategy>/seed=<NN>/`,
-with `coverage.json` for first-hit timing.
-Both Makefile commands snapshot scoverage's own HTML report for each
-`(strategy, seed)` under `engine/reports/statistics/_scoverage/`.
-They also write statement and branch aggregate charts from copied scoverage XML under
-`engine/reports/statistics/_summary/`; per-method source views come from the
-scoverage HTML snapshots, not from custom DOT/SVG graphs.
+The retained report output is intentionally small:
+
+- scoverage HTML snapshots for each `(strategy, seed)` under
+  `engine/reports/statistics/_scoverage/`;
+- statement/branch summary SVGs and throughput under
+  `engine/reports/statistics/_summary/`.
+
+Intermediate `coverage.json` files are used to build the summaries and then
+discarded by the Makefile pipeline.
 
 ## Documentation
 

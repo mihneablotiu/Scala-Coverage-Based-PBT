@@ -5,7 +5,6 @@ Reads the Scala engine's first-hit JSON logs plus copied scoverage XML reports
 for every strategy/seed and produces:
 
   cross-strategy (under engine/reports/statistics/_summary/)
-    by_bench/<metric>/<bench>.svg — horizontal grouped bars per (method, strategy)
     <metric>_suite.svg            — horizontal bars per (bench, strategy)
     <metric>_overall.svg          — horizontal bars per strategy
     <metric>_blindspot.svg        — per-bench + suite-wide percentage of random's
@@ -15,25 +14,18 @@ for every strategy/seed and produces:
                            "targets only coverage feedback can find" from
                            "easy guards everyone hits", which the raw
                            coverage % conflates.
-    <metric>_per_seed.csv         — one row per (bench, method, strategy, seed)
-    <metric>_significance.csv     — per bench + suite-wide, each non-random strategy
-                           vs random: Vargha–Delaney Â₁₂ effect size (+
-                           magnitude) and Mann–Whitney U p-value over the K
-                           per-seed coverage %s (Arcuri–Briand 2014).
 
 Run: ``python3 engine/reports/scripts/compare.py``  (normally via ``make full`` or ``make smoke``)
 """
 from __future__ import annotations
 
-import csv
 import json
 import re
+import shutil
 import statistics
 import sys
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import NormalDist
 from typing import Optional
 from xml.etree import ElementTree as ET
 
@@ -60,7 +52,7 @@ BG = "#FFFFFF"
 
 RANDOM = "random"
 
-# Canonical strategy order, simplest → most complex. Mirrors `Strategy.names` and `STRATEGIES`.
+# Canonical strategy order, simplest to most complex. Mirrors `Strategy.names`.
 STRATEGY_ORDER = ["random", "pool", "mutation", "pool-mutation"]
 
 # Number of seed-runs found; set in main(), used in chart titles.
@@ -90,7 +82,6 @@ class Cell:
     statements: list
     xml_targets: list
     xml_counts: CoverageCounts
-    path: Path
 
     @property
     def inputs_per_sec(self) -> Optional[float]:
@@ -216,7 +207,6 @@ def load_cells() -> list:
                 statements=statements,
                 xml_targets=xml_targets,
                 xml_counts=counts_from_xml_targets(xml_targets),
-                path=jp.parent,
             )
         )
     return cells
@@ -352,91 +342,6 @@ def _horizontal_grouped_bars(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, facecolor=fig.get_facecolor())
     plt.close(fig)
-
-
-# ── Per-bench grouped bars ──────────────────────────────────────────────
-#
-# Each bar's height is the median peak coverage % across the K seed-runs;
-# labels carry the median % and the [min–max] full-range tail from the K
-# runs. Non-random bars also show the median paired-speedup factor versus
-# random — paired meaning "for each seed, how many fewer inputs did this
-# strategy need to reach random's peak coverage on that same seed",
-# aggregated by median across the K pairings.
-
-
-def paired_speedup(cells: list, random_cells: list) -> Optional[float]:
-    """Median paired speedup across seeds. Pairs cells and random_cells by ``seed``; for each pair
-    where the strategy reached random's peak coverage, computes ``random_saturation / matched_at``.
-    Returns the median of those ratios, or ``None`` if no seed yielded a defined ratio."""
-    rand_by_seed = {c.seed: c for c in random_cells}
-    speedups: list = []
-    for c in cells:
-        rc = rand_by_seed.get(c.seed)
-        if rc is None:
-            continue
-        rs = stats(rc)
-        cs = stats(c)
-        if rs.covered == 0 or cs.covered < rs.covered:
-            continue
-        try:
-            matched_at = metric_curve(c).index(rs.covered)
-        except ValueError:
-            continue
-        rand_sat = rs.saturation or 0
-        if matched_at <= 0 or rand_sat <= 0:
-            continue
-        speedups.append(rand_sat / matched_at)
-    return statistics.median(speedups) if speedups else None
-
-
-def bench_bar_label(cells: list, random_cells: list) -> str:
-    """Median + [min–max] coverage label for K seed-runs of one (method, strategy) cell;
-    appends the paired median speedup when applicable."""
-    if not cells:
-        return ""
-    pcts = [stats(c).pct for c in cells]
-    spread = SeedSpread.of(pcts)
-    if spread.median == 0.0 and spread.hi == 0.0:
-        return ""
-    base = f"{spread.median:.0f}% [{spread.lo:.0f}–{spread.hi:.0f}]"
-    strategy = cells[0].strategy
-    if strategy == RANDOM or not random_cells:
-        return base
-    speedup = paired_speedup(cells, random_cells)
-    if speedup is None:
-        return f"{base}, < random"
-    return f"{base}, {speedup:.1f}× vs random"
-
-
-def write_bench_bars(bench: str, cells_by_method: dict, out_path: Path) -> None:
-    methods = sorted(cells_by_method.keys())
-    all_strats = {c.strategy for cs in cells_by_method.values() for c in cs}
-    strategies = ordered_strategies(all_strats)
-    pcts_by_strategy: dict = {}
-    labels_by_strategy: dict = {}
-    for strategy in strategies:
-        pcts, labels = [], []
-        for m in methods:
-            method_cells = cells_by_method[m]
-            random_cells = [c for c in method_cells if c.strategy == RANDOM]
-            cells = [c for c in method_cells if c.strategy == strategy]
-            spread = SeedSpread.of([stats(c).pct for c in cells])
-            pcts.append(spread.median)
-            labels.append(bench_bar_label(cells, random_cells))
-        pcts_by_strategy[strategy] = pcts
-        labels_by_strategy[strategy] = labels
-    _horizontal_grouped_bars(
-        methods,
-        pcts_by_strategy,
-        strategies,
-        title=f"{bench} — {metric_label()} coverage per method per strategy (median, [min–max] across K={SEED_COUNT} seeds)",
-        out_path=out_path,
-        labels_by_strategy=labels_by_strategy,
-        label_fontsize=8,
-        row_height_in=0.42,
-        fig_width_in=14.0,
-        label_pad_pct=90.0,
-    )
 
 
 # ── Suite bars (per bench × strategy) ───────────────────────────────────
@@ -616,141 +521,6 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
     )
 
 
-# ── Entry point ─────────────────────────────────────────────────────────
-
-
-def write_per_seed_csv(cells: list, out_path: Path) -> None:
-    """One row per (bench, method, strategy, seed). Strategy ordering follows the canonical
-    simplest→complex order so the CSV reads in the same direction as every chart."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    rank = {s: i for i, s in enumerate(STRATEGY_ORDER)}
-    with out_path.open("w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["bench", "method", "strategy", "seed", "covered", "total", "pct", "saturation_input", "elapsed_millis", "inputs_per_sec"])
-        for c in sorted(cells, key=lambda x: (x.bench, x.method, rank.get(x.strategy, len(STRATEGY_ORDER)), x.strategy, x.seed)):
-            s = stats(c)
-            w.writerow([
-                c.bench,
-                c.method,
-                c.strategy,
-                c.seed,
-                s.covered,
-                s.total,
-                f"{s.pct:.2f}",
-                "" if s.saturation is None else s.saturation,
-                c.elapsed_millis,
-                "" if c.inputs_per_sec is None else f"{c.inputs_per_sec:.0f}",
-            ])
-
-
-# ── Effect size + significance vs random ─────────────────────────────────
-#
-# "Median is higher" is not a claim. For a randomized algorithm the SBST
-# community (Arcuri & Briand, "A Practical Guide for Using Statistical Tests
-# to Assess Randomized Algorithms in SE", 2014) reports two things: the
-# Vargha–Delaney Â₁₂ effect size — P(a run of the strategy beats a run of
-# random) — and the Mann–Whitney U test for whether the difference is
-# significant. Both are computed over the K per-seed coverage percentages
-# (per bench and suite-wide), stdlib-only so there is no scipy dependency.
-
-
-def _avg_ranks(values: list) -> list:
-    """1-based ranks; tied values share their mean rank (needed for Mann–Whitney with ties)."""
-    order = sorted(range(len(values)), key=lambda i: values[i])
-    ranks = [0.0] * len(values)
-    i = 0
-    while i < len(order):
-        j = i
-        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        avg = (i + j) / 2 + 1  # mean of the 1-based ranks i+1 … j+1
-        for k in range(i, j + 1):
-            ranks[order[k]] = avg
-        i = j + 1
-    return ranks
-
-
-def vargha_delaney_a12(x: list, y: list) -> float:
-    """P(X > Y) + ½·P(X = Y). 0.5 = no effect; > 0.5 means x tends to exceed y."""
-    if not x or not y:
-        return float("nan")
-    gt = eq = 0
-    for a in x:
-        for b in y:
-            if a > b:
-                gt += 1
-            elif a == b:
-                eq += 1
-    return (gt + 0.5 * eq) / (len(x) * len(y))
-
-
-def a12_magnitude(a12: float) -> str:
-    """Vargha–Delaney's thresholds on |Â₁₂ − 0.5|: negligible/small/medium/large."""
-    if a12 != a12:  # nan
-        return "n/a"
-    d = abs(a12 - 0.5)
-    return "negligible" if d < 0.06 else "small" if d < 0.14 else "medium" if d < 0.21 else "large"
-
-
-def mann_whitney_p(x: list, y: list) -> float:
-    """Two-sided Mann–Whitney U p-value via the normal approximation with tie and continuity
-    correction — adequate for K ≈ 30 per group. Identical distributions return 1.0."""
-    n1, n2 = len(x), len(y)
-    if n1 == 0 or n2 == 0:
-        return float("nan")
-    allv = x + y
-    if len(set(allv)) == 1:
-        return 1.0
-    ranks = _avg_ranks(allv)
-    u1 = sum(ranks[:n1]) - n1 * (n1 + 1) / 2
-    mu = n1 * n2 / 2
-    n = n1 + n2
-    ties = sum(t**3 - t for t in Counter(allv).values())
-    sigma2 = (n1 * n2 / 12) * ((n + 1) - ties / (n * (n - 1)))
-    if sigma2 <= 0:
-        return 1.0
-    z = (abs(u1 - mu) - 0.5) / (sigma2**0.5)  # continuity correction toward the mean
-    return min(1.0, 2 * NormalDist().cdf(-z))
-
-
-def write_significance(cells_by_bench: dict, out_path: Path) -> list:
-    """One row per (scope, non-random strategy): Â₁₂ + magnitude + Mann–Whitney p for the
-    strategy's per-seed coverage % against random's, over the K seeds. Scopes are each bench
-    and the whole suite. Returns the suite-wide rows for the stdout summary."""
-    benches = sorted(cells_by_bench.keys())
-    all_strats = {c.strategy for cs in cells_by_bench.values() for c in cs}
-    non_random = [s for s in ordered_strategies(all_strats) if s != RANDOM]
-    suite_cells = [c for cs in cells_by_bench.values() for c in cs]
-
-    def scope_rows(scope: str, cells: list) -> list:
-        rpc = _per_seed_bench_pcts([c for c in cells if c.strategy == RANDOM])
-        out = []
-        for s in non_random:
-            spc = _per_seed_bench_pcts([c for c in cells if c.strategy == s])
-            a12 = vargha_delaney_a12(spc, rpc)
-            out.append((
-                scope, s, len(spc),
-                statistics.median(spc) if spc else 0.0,
-                statistics.median(rpc) if rpc else 0.0,
-                a12, a12_magnitude(a12), mann_whitney_p(spc, rpc),
-            ))
-        return out
-
-    rows = [r for b in benches for r in scope_rows(b, cells_by_bench[b])]
-    suite_rows = scope_rows("— Suite —", suite_cells)
-    rows += suite_rows
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["scope", "strategy", "n_seeds", "median_pct", "random_median_pct",
-                    "a12", "a12_magnitude", "mann_whitney_p", "significant_p<0.05"])
-        for scope, s, n, mp, rp, a12, mag, p in rows:
-            w.writerow([scope, s, n, f"{mp:.2f}", f"{rp:.2f}", f"{a12:.3f}", mag,
-                        f"{p:.4g}", "yes" if p < 0.05 else "no"])
-    return suite_rows
-
-
 # ── Coverage vs input budget (efficiency curve) ──────────────────────────
 
 _BUDGET_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
@@ -870,6 +640,9 @@ def main() -> None:
     SEED_COUNT = len({c.seed for c in cells})
     print(f"loaded {len(cells)} cells across {SEED_COUNT} seeds")
 
+    if SUMMARY_DIR.exists():
+        shutil.rmtree(SUMMARY_DIR)
+
     by_bench: dict = {}
     for c in cells:
         by_bench.setdefault(c.bench, []).append(c)
@@ -877,22 +650,13 @@ def main() -> None:
     global METRIC
     for metric in ("statement", "branch"):
         METRIC = metric
-        for bench, cs in by_bench.items():
-            cells_by_method: dict = {}
-            for c in cs:
-                cells_by_method.setdefault(c.method, []).append(c)
-            out = SUMMARY_DIR / "by_bench" / metric / f"{bench}.svg"
-            write_bench_bars(bench, cells_by_method, out)
-
         write_suite_bars(by_bench, SUMMARY_DIR / f"{metric}_suite.svg")
         write_overall_bars(cells, SUMMARY_DIR / f"{metric}_overall.svg")
         write_blindspot_bars(by_bench, SUMMARY_DIR / f"{metric}_blindspot.svg")
-        write_per_seed_csv(cells, SUMMARY_DIR / f"{metric}_per_seed.csv")
-        suite_sig = write_significance(by_bench, SUMMARY_DIR / f"{metric}_significance.csv")
         budgets = input_budgets(cells)
         curves = time_to_coverage(cells, budgets)
         write_time_to_coverage(curves, budgets, SUMMARY_DIR / f"{metric}_time_to_coverage.svg")
-        print(f"  wrote {metric} coverage charts/tables in {SUMMARY_DIR}")
+        print(f"  wrote {metric} summary SVGs in {SUMMARY_DIR}")
 
         print()
         print(f"{metric_label().title()} coverage vs input budget (suite-wide median %):")
@@ -921,17 +685,9 @@ def main() -> None:
                 else:
                     print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
 
-        if suite_sig:
-            print()
-            print(f"Effect size + significance vs random ({metric_label()}, suite-wide, K={SEED_COUNT} seeds):")
-            print(f"  {'strategy':<38}{'med%':>6}{'rand%':>7}{'Â12':>7}  {'magnitude':<11}{'p':>10}  sig")
-            for _, s, _n, mp, rp, a12, mag, p in suite_sig:
-                print(f"  {s:<38}{mp:>5.1f}%{rp:>6.1f}%{a12:>7.3f}  {mag:<11}{p:>10.3g}  {'*' if p < 0.05 else ''}")
-
     ips_by_strategy = throughput(cells)
     write_throughput_bars(ips_by_strategy, SUMMARY_DIR / "throughput.svg")
 
-    # Throughput: do the tactics slow us down? Median inputs/sec per strategy, with slowdown vs random.
     if ips_by_strategy:
         rand_ips = ips_by_strategy.get(RANDOM)
         print()

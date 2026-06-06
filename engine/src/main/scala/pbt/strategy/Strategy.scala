@@ -10,13 +10,8 @@ final case class TacticContext[A](
     targets: List[Coverage.StatementTarget],
     pool: ConstantPool
 ) {
-  def uncoveredStatements: List[Coverage.StatementTarget] =
-    targets.filterNot(target => feedback.coveredAt.contains(target.id))
-
-  def uncoveredBranches: List[Coverage.StatementTarget] =
-    uncoveredStatements.filter(_.branch)
-
-  def hasUncoveredBranches: Boolean = uncoveredBranches.nonEmpty
+  def hasUncoveredBranches: Boolean =
+    targets.exists(target => target.branch && !feedback.coveredAt.contains(target.id))
 }
 
 sealed trait Strategy {

@@ -160,8 +160,8 @@ category.
 
 ## 9. What comes out the other end
 
-The engine writes one file per (method, strategy) pair — a small
-JSON with the first-hit data used for time-to-coverage:
+During a run, the engine writes temporary JSON files with the first-hit data
+used for time-to-coverage:
 
 ```
 engine/reports/statistics/
@@ -179,18 +179,17 @@ The Makefile then runs the Python script
 ([`engine/reports/scripts/compare.py`](../engine/reports/scripts/compare.py))
 which reads those JSONs and writes:
 
-- under `engine/reports/statistics/_summary/`: statement and branch
-  coverage bars, blind-spot charts, and time-to-coverage curves;
-- per-seed CSVs for both metrics, using scoverage XML final counts;
-- and significance tables reporting, for each
-  strategy, *how reliably* it beats random across the repeated
-  runs — an effect size and a standard significance test — so
-  "better" is a measured claim, not an impression.
+- under `engine/reports/statistics/_summary/`: statement and branch overall,
+  suite, blind-spot, and time-to-coverage SVG summaries;
+- throughput charts showing the median generated inputs per second for each strategy.
+
+After the summaries are built, the Makefile removes the temporary per-method
+JSON directories and keeps only `_summary/` and `_scoverage/`.
 
 Per-method source views come from the copied scoverage HTML reports, not
 from custom DOT/SVG graphs.
 Final coverage percentages come from scoverage's copied XML reports; the JSON
-first-hit data is kept for time-to-coverage and feedback debugging.
+first-hit data is used only while building the time-to-coverage summaries.
 
 The split is intentional: the engine produces the *measurement*,
 the scripts produce the *presentation*. Either side can be

@@ -46,6 +46,14 @@ object MutationTargets {
       else "flat-edge"
     }
 
+  // Classifies a triplet by component order and equality.
+  def tripletOrder(a: Int, b: Int, c: Int): String =
+    if (a > b) "first-drop"
+    else if (b > c) "second-drop"
+    else if (a == b && b == c) "flat"
+    else if (a < b && b < c) "strictly-ascending"
+    else "nondecreasing"
+
   // Classifies appointment times by order, duplicates, and gaps.
   def appointmentSchedule(minutes: List[Int]): String =
     if (minutes.length < 4) "too-few"
@@ -120,7 +128,7 @@ object MutationTargets {
       val (current, depth) = stack.head
       stack = stack.tail
       current match {
-        case Tree.Leaf          => maxDepth = maxDepth
+        case Tree.Leaf          => ()
         case Tree.Node(l, _, r) =>
           size += 1
           maxDepth = math.max(maxDepth, depth + 1)

@@ -15,7 +15,6 @@ define run_experiment
 	@find $(SCOV_DATA_DIR) -name 'scoverage.measurements.*' -delete 2>/dev/null || true
 	$(SBT) -no-colors -batch clean
 	$(SBT) -no-colors -batch scalafmtAll
-	@$(PY) docs/scripts/generate.py
 	$(SBT) -no-colors -batch "sut/clean; sut/compile"
 	@for s in $(STRATEGIES); do \
 	  for k in $(1); do \
@@ -29,6 +28,7 @@ define run_experiment
 	  done; \
 	done
 	$(PY) engine/reports/scripts/compare.py
+	@find $(REPORTS_DIR) -mindepth 1 -maxdepth 1 ! -name '_summary' ! -name '_scoverage' -exec rm -rf {} +
 endef
 
 full:

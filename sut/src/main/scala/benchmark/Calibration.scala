@@ -47,7 +47,7 @@ object Calibration {
       val (current, depth) = stack.head
       stack = stack.tail
       current match {
-        case Tree.Leaf          => size += 0
+        case Tree.Leaf          => ()
         case Tree.Node(l, _, r) =>
           size += 1
           maxDepth = math.max(maxDepth, depth + 1)

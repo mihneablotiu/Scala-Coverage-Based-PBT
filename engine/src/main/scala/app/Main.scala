@@ -52,6 +52,7 @@ object Main {
 
     bench[List[Int]]("MutationTargets", "sortedLedger")(MutationTargets.sortedLedger)
     bench[List[Int]]("MutationTargets", "uniqueEndpoints")(MutationTargets.uniqueEndpoints)
+    bench[(Int, Int, Int)]("MutationTargets", "tripletOrder") { case (a, b, c) => MutationTargets.tripletOrder(a, b, c) }
     bench[List[Int]]("MutationTargets", "appointmentSchedule")(MutationTargets.appointmentSchedule)
     bench[(List[Int], List[Int])]("MutationTargets", "mergeWindow") { case (left, right) => MutationTargets.mergeWindow(left, right) }
     bench[(List[Int], Int)]("MutationTargets", "binarySearchRoute") { case (xs, target) => MutationTargets.binarySearchRoute(xs, target) }
@@ -62,6 +63,7 @@ object Main {
       MixedTargets.reconciliation(left, right, code)
     }
     bench[(List[Int], Int)]("MixedTargets", "cacheProbe") { case (keys, hotKey) => MixedTargets.cacheProbe(keys, hotKey) }
+    bench[(List[Int], Int)]("MixedTargets", "simpleApproval") { case (values, code) => MixedTargets.simpleApproval(values, code) }
     bench[(List[Int], Int, Int)]("MixedTargets", "ticketBatch") { case (values, code, limit) =>
       MixedTargets.ticketBatch(values, code, limit)
     }

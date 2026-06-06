@@ -66,7 +66,7 @@ object MagicLiterals {
       val current = stack.head
       stack = stack.tail
       current match {
-        case Tree.Leaf          => found = found
+        case Tree.Leaf          => ()
         case Tree.Node(l, v, r) =>
           found = v == 65535
           stack = l :: r :: stack
