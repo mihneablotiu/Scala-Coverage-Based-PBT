@@ -77,19 +77,20 @@ object Generators {
   implicit def list[A](implicit A: Generatable[A], ordering: Ordering[A]): Generatable[List[A]] = new Generatable[List[A]] {
     def arbitrary: Gen[List[A]]             = Gen.listOf(A.arbitrary)
     def mutate(seed: List[A]): Gen[List[A]] = seed match {
-      case Nil => A.arbitrary.map(List(_)) // grow an empty list with one generated element
-      case xs  =>
+      case Nil    => Gen.oneOf(A.arbitrary.map(List(_)), arbitrary) // create a non-empty list from the empty case
+      case h :: t =>
         Gen.oneOf(
-          Gen.zip(index(xs), A.arbitrary).map { case (i, a) => xs.updated(i, a) }, // replace one element with a fresh value
-          index(xs).flatMap(i => A.mutate(xs(i)).map(a => xs.updated(i, a))), // mutate one existing element in place
-          index(xs).map(i => xs.patch(i, Nil, 1)),                            // delete one element
-          index(xs).map(i => xs.patch(i, List(xs(i), xs(i)), 1)),             // duplicate one element
-          A.arbitrary.map(_ :: xs),                                           // prepend one fresh element
-          A.arbitrary.map(xs :+ _),                                           // append one fresh element
-          Gen.const(xs.reverse),                                              // reverse the list order
-          Gen.const(xs.sorted),                                               // sort ascending
-          Gen.const(xs.sorted(ordering.reverse)),                             // sort descending
-          Gen.const(xs.distinct)                                              // remove duplicate values
+          Gen.const(t),                                                             // remove the head
+          A.mutate(h).map(_ :: t),                                                  // mutate the head and keep the tail
+          Gen.const(List(h)),                                                       // remove the tail
+          mutate(t).map(h :: _),                                                    // mutate the tail and keep the head
+          A.arbitrary.map(_ :: seed),                                               // prepend one fresh element
+          A.arbitrary.map(seed :+ _),                                               // append one fresh element
+          index(seed).flatMap(i => A.mutate(seed(i)).map(a => seed.updated(i, a))), // mutate one element at its current index
+          Gen.const(seed.reverse),                                                  // reverse the list order
+          Gen.const(seed.sorted),                                                   // sort ascending
+          Gen.const(seed.sorted(ordering.reverse)),                                 // sort descending
+          Gen.const(seed.distinct)                                                  // keep only the first occurrence of each value
         )
     }
     def pooled(pool: ConstantPool): Option[Gen[List[A]]] =
@@ -138,17 +139,39 @@ object Generators {
       }
 
     def mutate(seed: Tree[A]): Gen[Tree[A]] = seed match {
-      case Tree.Leaf          => A.arbitrary.map(v => Tree.Node(Tree.Leaf, v, Tree.Leaf)) // grow a leaf into a single node
-      case Tree.Node(l, v, r) =>
-        Gen.frequency(
-          3 -> mutate(l).map(Tree.Node(_, v, r)),             // mutate the left subtree
-          3 -> mutate(r).map(Tree.Node(l, v, _)),             // mutate the right subtree
-          2 -> A.mutate(v).map(w => Tree.Node(l, w, r)),      // mutate the node value
-          1 -> Gen.const(Tree.Node(r, v, l)),                 // swap left and right subtrees
-          1 -> Gen.const(Tree.Leaf),                          // prune this subtree
-          1 -> Gen.const(orderValues(seed, ordering)),        // reorder values ascending while preserving shape
-          1 -> Gen.const(orderValues(seed, ordering.reverse)) // reorder values descending while preserving shape
+      case Tree.Leaf =>
+        Gen.oneOf(
+          A.arbitrary.map(v => Tree.Node(Tree.Leaf, v, Tree.Leaf)), // create a single-node tree
+          arbitrary                                                 // create an arbitrary generated tree
         )
+      case Tree.Node(l, v, r) =>
+        Gen.oneOf(
+          Gen.const(Tree.Node(Tree.Leaf, v, r)),          // remove the left subtree
+          mutate(l).map(Tree.Node(_, v, r)),              // mutate the left subtree and keep the root/right side
+          Gen.const(Tree.Node(l, v, Tree.Leaf)),          // remove the right subtree
+          mutate(r).map(Tree.Node(l, v, _)),              // mutate the right subtree and keep the root/left side
+          arbitrary.map(Tree.Node(_, v, r)),              // attach a generated left subtree
+          arbitrary.map(Tree.Node(l, v, _)),              // attach a generated right subtree
+          A.mutate(v).map(w => Tree.Node(l, w, r)),       // mutate the root value
+          Gen.const(Tree.Node(r, v, l)),                  // swap left and right subtrees
+          Gen.const(orderValues(seed, ordering)),         // sort values ascending while preserving shape
+          Gen.const(orderValues(seed, ordering.reverse)), // sort values descending while preserving shape
+          Gen.const(distinctValues(seed))                 // prune duplicate-valued nodes
+        )
+    }
+
+    private def distinctValues(t: Tree[A]): Tree[A] = {
+      def loop(tree: Tree[A], seen: Set[A]): (Tree[A], Set[A]) = tree match {
+        case Tree.Leaf          => (Tree.Leaf, seen)
+        case Tree.Node(l, v, r) =>
+          val (left, afterLeft) = loop(l, seen)
+          if (afterLeft.contains(v)) (Tree.Leaf, afterLeft)
+          else {
+            val (right, afterRight) = loop(r, afterLeft + v)
+            (Tree.Node(left, v, right), afterRight)
+          }
+      }
+      loop(t, Set.empty)._1
     }
 
     private def orderValues(t: Tree[A], ord: Ordering[A]): Tree[A] = {

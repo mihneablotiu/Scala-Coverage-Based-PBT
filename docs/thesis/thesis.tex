@@ -613,7 +613,8 @@ occasionally. Because a mutant that breaks the frontier covers nothing new and i
 the search keeps springing off the best seed. Without this bias, uniform sampling over the corpus made
 mutation spin on shallow seeds and fail to climb the structured benchmarks; with it, mutation reaches them.
 The per-type mutators are value-level: integers take multi-scale $\pm 2^k$ steps plus edge values; lists
-mutate, drop, prepend, or sort values; trees grow a leaf into a node, recurse, reorder, or prune; and tuples
+mutate head/tail/element structure, prepend or append one value, reverse, sort, or deduplicate values; trees
+mutate or replace subtrees, mutate the root value, swap children, reorder, deduplicate, or prune; and tuples
 mutate exactly one component, holding the rest — the operator that lets the search freeze a hard-won coordinate
 and work on another.
 
