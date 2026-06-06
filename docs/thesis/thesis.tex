@@ -19,6 +19,7 @@
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{caption}
+\captionsetup[figure]{name=Figure}
 \usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
 
@@ -78,7 +79,7 @@ Scala framework in which a strategy is a composition of independent, coverage-gu
 single, honest baseline that is literally stock ScalaCheck. Two tactics are studied: a constant
 \emph{pool} mined from the source and a value-level \emph{mutation} engine over coverage-growing inputs.
 The four strategies are exactly the subsets of these two tactics, enabling a clean ablation. The framework
-is evaluated on a purpose-built benchmark of 27 methods across five categories, reporting both
+is evaluated on a purpose-built benchmark of 42 methods across six categories, reporting both
 method-local statement coverage and branch-marked statement coverage over repeated seeds. Each tactic owns a
 distinct niche: the pool is intended for exact-literal gates, while mutation is intended for structured
 inputs such as ordered lists and shaped trees.
@@ -91,9 +92,9 @@ trateaz\u{a} sistemul ca o cutie neagr\u{a} \c{s}i atinge rar ramurile p\u{a}zit
 numerice înguste sau intr\u{a}ri puternic structurate. Lucrarea studiaz\u{a} în ce m\u{a}sur\u{a} \c{s}i cu ce
 cost testarea ghidat\u{a} de acoperire dep\u{a}\c{s}e\c{s}te generarea aleatoare. Propunem un cadru în Scala în
 care o strategie este o compunere de tactici independente, ghidate de acoperire, peste o baz\u{a} onest\u{a}
-identic\u{a} cu ScalaCheck. Studiem dou\u{a} tactici: un \emph{pool} de constante întregi extrase din surs\u{a}
-\c{s}i o \emph{muta\c{t}ie} la nivel de valoare. Evaluarea folose\c{s}te un benchmark de 27 de metode peste
-cinci categorii \c{s}i raporteaz\u{a} atât acoperire de instruc\c{t}iuni, cât \c{s}i acoperire de instruc\c{t}iuni
+identic\u{a} cu ScalaCheck. Studiem dou\u{a} tactici: un \emph{pool} de constante extrase din surs\u{a}
+\c{s}i o \emph{muta\c{t}ie} la nivel de valoare. Evaluarea folose\c{s}te un benchmark de 42 de metode peste
+\c{s}ase categorii \c{s}i raporteaz\u{a} atât acoperire de instruc\c{t}iuni, cât \c{s}i acoperire de instruc\c{t}iuni
 marcate ca ramuri de scoverage. Fiecare tactic\u{a} are o ni\c{s}\u{a} distinct\u{a}.
 
 \tableofcontents
@@ -220,7 +221,7 @@ sources, which turns the comparison into a clean ablation study.
 \section{Obtained Results}
 \label{sec:results-intro}
 
-On a benchmark of 27 methods across five categories, evaluated over repeated seeds, the framework compares
+On a benchmark of 42 methods across six categories, evaluated over repeated seeds, the framework compares
 the random baseline with the pool, mutation, and composed pool-mutation strategies. The analysis reports
 both method-local statement coverage and branch-marked statement coverage, together with time-to-coverage
 curves, throughput, Vargha--Delaney effect sizes, and Mann--Whitney significance tests. Each tactic owns a
@@ -280,17 +281,32 @@ replaces per-input oracles with general properties.
 
 At its most general level, property-based testing is a way to organise testing around general behavioural
 claims rather than around individual input-output examples. A \emph{property} states something that should
-hold for a family of executions; a \emph{test oracle} decides whether one concrete execution satisfies that
-claim; and a \emph{test-data generation} procedure chooses the concrete inputs on which the property is
-evaluated. Fink and Bishop describe this view explicitly: property-based testing asks what is to be
+hold for a family of executions; a \emph{test-data generator} chooses concrete inputs; the system under test
+is executed on each input; and the property acts as the oracle that decides whether the observed behaviour is
+acceptable. Fink and Bishop describe this view explicitly: property-based testing asks what is to be
 established, what data should be used, when enough testing has been performed, and how success or failure is
-decided~\cite{fink1997}.
+decided~\cite{fink1997}. QuickCheck popularised the modern lightweight form of this idea: programmers write
+executable properties, the tool repeatedly generates random test data, and a failing case is reported as a
+counterexample~\cite{claessen2000}. ScalaCheck follows the same model for Scala and Java programs, with
+properties represented by \texttt{Prop}, test data represented by \texttt{Gen}, and default generators
+provided through \texttt{Arbitrary} instances~\cite{scalachecksite,scalacheckguide}.
 
-This perspective separates three concerns that are often mixed together in ordinary tests. The first is the
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{pics/background/PBT.png}
+\caption{The standard property-based testing loop. A property and generators define a large family of
+candidate executions. The engine repeatedly generates inputs, executes the system under test, checks the
+observed output against the property, and either continues until the budget is exhausted or reports the
+failing input.}
+\label{fig:pbt-general}
+\end{figure}
+
+This architecture separates three concerns that are often mixed together in ordinary tests. The first is the
 \emph{specification concern}: which semantic property of the program matters? The property can be as simple
-as an algebraic law, or as domain-specific as an authentication rule. The second is the \emph{oracle
-concern}: once an input has been executed, how is the result judged? The oracle may be a Boolean predicate,
-a runtime monitor, or a comparison against a reference implementation. The third is the \emph{adequacy
+as an algebraic law, or as domain-specific as an authentication rule. The second is the \emph{generation
+concern}: which distribution of inputs should be used? Claessen and Hughes emphasise that random testing is
+meaningful only relative to the distribution induced by the generator, and that custom generators are often
+needed when valid or interesting inputs are rare~\cite{claessen2000}. The third is the \emph{adequacy
 concern}: after many executions have passed, why should the tester believe that the relevant behaviour has
 been exercised sufficiently?
 
@@ -315,24 +331,28 @@ hierarchy of increasing strictness:
 \end{itemize}
 
 Coverage is collected by \emph{instrumentation}: the program under test is compiled or transformed with
-extra bookkeeping code so that, at runtime, the set of executed program points can be read back. This thesis
-uses method-local \textbf{statement coverage}. Statement coverage is simpler than branch coverage, but it is
-directly supported by the Scala coverage infrastructure used in the implementation and therefore gives a
-clear, auditable unit of measurement. The important point for the framework is not that statement coverage
-is the strongest possible adequacy criterion; it is that the criterion is observable after each generated
-input and can be fed back into the next generation step.
+extra bookkeeping code so that, at runtime, the set of executed program points can be read back. The Scala
+tooling used later in this thesis is scoverage, which explicitly reports statement coverage and branch
+coverage for Scala programs~\cite{scoverage}. Its sbt integration can generate HTML and XML reports, with the
+XML intended for programmatic use by tools~\cite{sbtscoverage}. The implementation therefore uses
+method-local \textbf{statement coverage} as the primary runtime target signal and separately reports the
+subset of targets that scoverage marks as branch statements. The important point for the framework is not
+that statement coverage is the strongest possible adequacy criterion; it is that the criterion is observable
+after each generated input and can be fed back into the next generation step.
 
 \section{Search-Based Testing and Branch Distance}
 \label{sec:sbt}
 
-Reaching a branch guarded by an exact numeric condition — say \texttt{x*x == 49} — is hopeless for uniform
+Reaching a branch guarded by an exact numeric condition — say \texttt{x*x == 49} — is difficult for uniform
 random sampling. Search-based software testing reframes the task as optimisation: define an objective
 function, the \emph{branch distance}, that measures how far an input is from satisfying a condition, and
 minimise it. Korel~\cite{korel1990} introduced branch distances for the relational operators; for example,
 the distance to satisfy $a = b$ is $|a-b|$, and the distance to satisfy $a < b$ is $0$ if it already holds
 and $a-b+1$ otherwise. Tools such as EvoSuite~\cite{fraser2011} combine such distances with evolutionary
 search to generate unit tests for object-oriented programs. Branch distance is relevant background because
-it shows a different way of turning program structure into input-generation guidance.
+it shows a different way of turning program structure into input-generation guidance. This thesis uses branch
+distance as background and as a useful point of comparison; it is not implemented as one of the prototype's
+tactics.
 
 \section{Mutation-Based, Coverage-Guided Fuzzing}
 \label{sec:cgf}
@@ -341,10 +361,11 @@ Coverage-guided fuzzing, exemplified by AFL~\cite{afl}, takes the opposite, undi
 corpus of inputs that expanded coverage and repeatedly \emph{mutates} them, retaining any mutant that
 reaches something new. The bet is \emph{locality} — that inputs near an interesting input are themselves
 likely to be interesting — so a retained seed becomes a springboard that the search ratchets forward. AFL
-mutates at the level of raw bytes; type-aware variants instead mutate structured values. A related idea is
-the AFL \emph{dictionary}: a list of useful constants, tokens, or magic values spliced into inputs to help
-cross literal guards. These two ideas — mutating coverage-growing inputs and injecting useful constants —
-are the main testing mechanisms adapted later in this thesis.
+mutates at the level of raw bytes; libFuzzer is another widely used coverage-guided fuzzing engine in this
+family~\cite{libfuzzer}. Type-aware variants instead mutate structured values. A related idea is the AFL
+\emph{dictionary}: a list of useful constants, tokens, or magic values spliced into inputs to help cross
+literal guards~\cite{afl}. These two ideas — mutating coverage-growing inputs and injecting useful constants
+— are the main testing mechanisms adapted later in this thesis.
 
 % ====================================================================
 \chapter{Related Work}
@@ -371,13 +392,16 @@ function quickCheck(P, gen, maxTests):
   return Passed
 \end{lstlisting}
 
-ScalaCheck is QuickCheck's Scala descendant and the host of our framework. Its loop
-(Pseudocode~\ref{lst:sc}) is the same skeleton, refined with the bookkeeping that the JVM tooling needs: a
-\emph{size} parameter that grows over the run so inputs become gradually larger, a count of \emph{discarded}
-inputs for properties with preconditions, and the same shrinking on failure. The essential point for this
-thesis is that both loops are \emph{black-box}: the next input depends only on the generator and a
-pseudo-random seed, never on anything observed about the program under test. This is the loop our random
-baseline reuses verbatim, and the loop our framework minimally extends (Pseudocode~\ref{lst:ours}).
+ScalaCheck is QuickCheck's Scala descendant and the host of our framework. Its user guide describes
+\texttt{Prop.forAll} as the usual way to create universally quantified properties, with implicit
+\texttt{Arbitrary} instances providing generators for common types and custom instances extending the
+mechanism~\cite{scalacheckguide}. Its loop (Pseudocode~\ref{lst:sc}) is the same skeleton, refined with the
+bookkeeping that the JVM tooling needs: a \emph{size} parameter that grows over the run so inputs become
+gradually larger, a count of \emph{discarded} inputs for properties with preconditions, and the same shrinking
+on failure. The essential point for this thesis is that both loops are \emph{black-box}: the next input
+depends only on the generator and a pseudo-random seed, never on anything observed about the program under
+test. This is the loop our random baseline reuses verbatim, and the loop our framework minimally extends
+(Pseudocode~\ref{lst:ours}).
 
 \begin{lstlisting}[caption={The ScalaCheck loop --- QuickCheck on the JVM, with sized generation and discard accounting. Still black-box: nothing about the SUT influences the next input.},label=lst:sc]
 function scalaCheck(P, gen, params):
@@ -397,57 +421,67 @@ function scalaCheck(P, gen, params):
 
 A recurring limitation of both is that hand-written, highly tuned generators are needed to reach demanding
 inputs, which requires substantial manual effort. FEAT~\cite{duregard2012} addresses enumeration of
-algebraic data types systematically rather than randomly. These approaches remain black-box with respect to
-the SUT.
+algebraic data types systematically rather than randomly, while Dureg\aa rd's broader work on automating
+black-box PBT studies reusable generator construction and test-quality questions~\cite{duregard2016}. These
+approaches remain black-box with respect to the SUT: they improve the input source, but do not use runtime
+coverage from the program under test to steer the next input.
 
 \section{Feedback-Directed and Search-Based Test Generation}
 
 Randoop~\cite{pacheco2007} pioneered \emph{feedback-directed} random testing for object-oriented programs:
-it builds method sequences incrementally, using the feedback of previous executions to avoid redundant or
-illegal sequences. EvoSuite~\cite{fraser2011} generates whole unit-test suites for Java by evolutionary
-search over branch-distance fitness. Targeted property-based testing by L\"oscher and Sagonas~\cite{loscher2017}
-adds a search component to PBT, guiding generation toward a user-supplied utility value. These works motivate
-numeric guidance, but the current prototype leaves branch-distance search outside the implemented tactic set.
+it builds method sequences incrementally, executes each sequence as it is created, and uses execution
+feedback to avoid extending redundant or illegal states. EvoSuite~\cite{fraser2011} generates whole
+unit-test suites for Java by evolutionary search over fitness functions such as branch distance. Targeted
+property-based testing by L\"oscher and Sagonas~\cite{loscher2017} adds a search component to PBT, allowing
+generation to be guided toward a user-supplied utility value. These works motivate numeric and
+optimisation-based guidance, but the current prototype leaves branch-distance search outside the implemented
+tactic set.
 
 \section{Coverage-Guided Fuzzing and Property Testing}
 
-AFL~\cite{afl} and libFuzzer brought coverage-guided mutation to the mainstream for byte-oriented programs.
-The work closest to ours is coverage-guided property-based testing (CGPT), implemented as FuzzChick by
-Lampropoulos et al.~\cite{lampropoulos2019}, which extends QuickChick (Coq's QuickCheck) with type-aware
-mutation of coverage-expanding seeds and a power schedule. Our mutation tactic is directly inspired by it.
-The differences are instructive and are revisited throughout the thesis: (i) FuzzChick targets sparse
-\emph{preconditions} via two seed queues, whereas we measure branch coverage of total functions and need no
-discard queue; (ii) FuzzChick is a single integrated loop, whereas we expose mutation as one tactic among
-three independent, composable ones; and (iii) we add two mechanisms FuzzChick does not have — source-literal
-pooling and a branch-distance gradient. Zest~\cite{padhye2019zest} and the JQF platform~\cite{padhye2019jqf}
-combine coverage feedback with \emph{validity} feedback to fuzz programs with structured inputs; we identify
-validity-guided generation as the natural next step for the branches our framework cannot reach
-(Section~\ref{sec:realworld}).
+AFL~\cite{afl} and libFuzzer~\cite{libfuzzer} brought coverage-guided mutation to the mainstream for
+byte-oriented programs. The work closest to ours is coverage-guided property-based testing (CGPT),
+implemented as FuzzChick by Lampropoulos et al.~\cite{lampropoulos2019}, which extends QuickChick (Coq's
+QuickCheck) with type-aware mutation of coverage-expanding seeds and a power schedule. Our mutation tactic
+is directly inspired by this idea: retain inputs that grow coverage, then use them as seeds for future
+mutations. The differences are instructive and are revisited throughout the thesis: (i) FuzzChick is
+motivated by sparse preconditions in Coq developments, whereas this prototype measures method-local coverage
+of Scala functions; (ii) FuzzChick presents one integrated coverage-guided loop, whereas we expose mutation
+as one tactic that can be ablated against literal pooling; and (iii) this prototype adds method-local
+source-literal pooling but deliberately does not implement numeric branch-distance search. Zest
+converts generator-based tests into deterministic parametric generators and searches the parameter space
+using coverage and input validity feedback~\cite{padhye2019zest}; JQF provides the Java platform on which
+Zest and other guidance algorithms are implemented~\cite{padhye2019jqf}. We identify validity-guided
+generation as the natural next step for the branches our framework cannot reach.
 
-\section{Constant Mining}
+\section{Static Source Information and Constants}
 
-The idea of harvesting constants from the program and injecting them is used by AFL's dictionary~\cite{afl}
-and, in the PBT setting, by DRAGEN2~\cite{mista2019}, which derives generators and mines literals from data
-declarations. Our pool tactic mines \emph{every} literal in the method body and injects it through the
-generator, type-matched, while remaining coverage-guided in that it stands down once all branches are
-covered.
+The idea of injecting useful constants is common in fuzzing: AFL dictionaries list tokens or magic values
+that are spliced into byte inputs to cross parser and literal gates~\cite{afl}. DRAGEN2 is related but not
+identical: Mista and Russo use static information from the codebase, including how programs branch on input
+ADT values and how ADT values are built through interfaces, to synthesize structurally richer generators for
+algebraic data types~\cite{mista2019}. Our pool tactic is simpler and more direct. It parses the method under
+test with ScalaMeta, whose tree API supports parsing source code and traversing syntax trees~\cite{scalameta},
+collects method-local literals of supported types, and injects those values through type-specific generators.
+Thus, constants are a small static hint, while scoverage remains the runtime source of truth for which
+branches are still uncovered.
 
 \begin{table}[t]
 \centering\small
-\caption{Positioning. Columns: literal mining, value-level mutation, branch-distance search, coverage feedback, honest random baseline, ablation of mechanisms.}
+\caption{Positioning. Columns: literal injection, value-level mutation, branch-distance search, coverage feedback, honest random baseline, ablation of mechanisms.}
 \label{tab:positioning}
 \begin{tabular}{lcccccc}
 \toprule
- & Pool & Mut. & Grad. & Cov. fb. & Honest base & Ablation \\
+ & Const. & Mut. & Branch dist. & Cov. fb. & Honest base & Ablation \\
 \midrule
-QuickCheck/ScalaCheck~\cite{claessen2000} & -- & -- & -- & -- & n/a & -- \\
+QuickCheck/ScalaCheck~\cite{claessen2000,scalachecksite} & -- & -- & -- & -- & n/a & -- \\
 Randoop~\cite{pacheco2007}                & -- & seq. & -- & \checkmark & -- & -- \\
 EvoSuite~\cite{fraser2011}                & -- & \checkmark & \checkmark & \checkmark & -- & -- \\
 Targeted PBT~\cite{loscher2017}           & -- & \checkmark & \checkmark & -- & -- & -- \\
 FuzzChick / CGPT~\cite{lampropoulos2019}  & -- & \checkmark & -- & \checkmark & \checkmark & -- \\
 Zest / JQF~\cite{padhye2019zest}          & -- & byte & -- & \checkmark & -- & -- \\
-DRAGEN2~\cite{mista2019}                  & \checkmark & -- & -- & -- & -- & -- \\
-\textbf{This thesis}                      & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+DRAGEN2~\cite{mista2019}                  & static hints & -- & -- & -- & -- & -- \\
+\textbf{This thesis}                      & \checkmark & \checkmark & -- & \checkmark & \checkmark & \checkmark \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -506,9 +540,18 @@ the study an ablation rather than a comparison of unrelated tools.
 The two tactics were chosen because they attack \emph{disjoint} kinds of hard targets.
 
 \paragraph{Pool — exact-value gates.} Some branches are guarded by equality against a literal that does not
-appear often in the input distribution, such as a rare integer or option payload. Random sampling is unlikely to
+appear often in the input distribution, such as a rare integer, boolean, string, or option payload. Random sampling is unlikely to
 produce the exact value. The pool mines such literals from the source and lets the strategy draw from them, so the branch becomes reachable
 (Figure~\ref{fig:pool}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{pics/background/PooledPBT.png}
+\caption{The pooled property-based testing loop. The standard property and generators remain in place, while
+method-local source literals are collected into a constant pool. The engine can draw pooled candidates while
+coverage feedback indicates that branch-marked targets remain uncovered.}
+\label{fig:pooled-pbt}
+\end{figure}
 
 \paragraph{Mutation — incrementally-built structure.} Finally, some branches require a whole structured
 input — a long sorted list, a deep tree — that random cannot assemble in one shot but that can be built up
@@ -555,23 +598,26 @@ mined from the method body, and how each tactic is realised.
 \label{sec:loop}
 
 Pseudocode~\ref{lst:ours} is realised directly on top of ScalaCheck, so that the random strategy is the
-unmodified host loop. The feedback-driven generator is built with a deferred generator that re-reads the
-current feedback on every draw; the selected strategy uses a weighted choice between plain random generation
-and whichever guided generators are available. The property is checked with shrinking disabled. In the
-benchmark harness its body always succeeds: it exercises the SUT only to provoke coverage, snapshots that
-coverage, and records it into the feedback. With the random strategy, the next generator is exactly the plain
-arbitrary generator — the honest baseline. Because \texttt{scoverage}'s recording back end is process-global, each (strategy, seed) pair is
-executed in its own forked JVM, and a Makefile sweeps the pairs.
+unmodified host loop. ScalaCheck's API exposes properties through \texttt{Prop} and generators through
+\texttt{Gen}; \texttt{Prop.forAllNoShrink} is used here because shrinking would blur the one-input-one-budget
+measurement model~\cite{scalacheckguide}. The feedback-driven generator is built with a deferred generator
+that re-reads the current feedback on every draw; the selected strategy uses a weighted choice between plain
+random generation and whichever guided generators are available. In the benchmark harness the property body
+always succeeds: it exercises the SUT only to provoke coverage, snapshots that coverage, and records it into
+the feedback. With the random strategy, the next generator is exactly the plain arbitrary generator — the
+honest baseline. Because \texttt{scoverage}'s recording back end is process-global, each (strategy, seed)
+pair is executed in its own forked JVM, and a Makefile sweeps the pairs.
 
 \section{Binding Runtime Coverage to the Source}
 \label{sec:cov-impl}
 
 This section describes the coverage signal used by the framework.
 
-\paragraph{Runtime view.} The benchmark module is compiled with \texttt{coverageEnabled}, so \texttt{scoverage}
-instruments every statement and, at runtime, appends the identifier of each fired statement to a measurement
-file. After each input the engine reads the small measurement files and maps the fired identifiers back to
-scoverage's statement metadata.
+\paragraph{Runtime view.} The benchmark module is compiled with \texttt{coverageEnabled}, following the
+sbt-scoverage workflow for enabling instrumentation and generating reports~\cite{sbtscoverage}. The
+\texttt{scoverage} compiler plugin instruments statements and records which statement identifiers fire at
+runtime~\cite{scoverage}. After each input the engine reads the small measurement files and maps the fired
+identifiers back to scoverage's statement metadata.
 
 \paragraph{Static view.} The statement metadata already contains the source file, method name, source span,
 line number, description, and branch flag. The engine filters these statements by file and method name and
@@ -586,16 +632,16 @@ foremost among it — already knows which instrumented statements fired. The fra
 source of truth, filters its statements to the method under test, and stores whether each target is
 branch-marked by scoverage. This gives the feedback loop a source-aware signal — not only ``how much was
 covered'', but which method-local targets remain uncovered. The pool mines method-local literals from the method
-body with ScalaMeta, while scoverage remains the coverage source of truth; mutation retains an
+body with ScalaMeta's syntax-tree parser and traversal API~\cite{scalameta}, while scoverage remains the coverage source of truth; mutation retains an
 input precisely when it lights up a previously-unreached target.
 
 \section{Numeric Targets Without a Dedicated Tactic}
 \label{sec:gradient}
 
 The current implementation deliberately does not include a numeric branch-distance tactic. NumericSearch is
-kept in the benchmark as a negative-control category: it contains computed or relational numeric gates where
-neither literal injection nor structural mutation should be expected to provide a strong advantage over
-random generation.
+therefore mixed by design: it contains one literal-friendly staged band that the pool should reach, plus
+computed or relational numeric gates where neither literal injection nor structural mutation should be
+expected to provide a strong advantage over random generation.
 
 \section{The Pool and Mutation Tactics}
 \label{sec:pool-mut}
@@ -624,7 +670,8 @@ and work on another.
 The benchmark is organised as a progression of categories, each isolating one tactic's niche
 (Section~\ref{sec:bench-design}). The experiment harness runs every method for one (strategy, seed) pair,
 writes a JSON report per cell, and snapshots scoverage's HTML source report. A Python script then renders the
-cross-strategy statement and branch charts and statistics from the JSON reports.
+cross-strategy statement and branch charts from the copied scoverage XML reports and first-hit statistics
+from the JSON reports.
 
 % ====================================================================
 \chapter{Evaluation}
@@ -634,13 +681,15 @@ cross-strategy statement and branch charts and statistics from the JSON reports.
 \label{sec:bench-design}
 
 A benchmark for this question must isolate \emph{kinds} of hard branches, so that an improvement can be
-attributed to a mechanism rather than to luck. We therefore designed 27 methods across five categories as a
+attributed to a mechanism rather than to luck. We therefore designed 42 methods across six categories as a
 deliberate progression (Table~\ref{tab:categories}). \emph{Calibration} methods are shallow and calibrate the
-floor. \emph{MagicLiterals} methods are gated by exact literals in scalars, options, lists, tuples, or
-trees — the pool's territory. \emph{MutationTargets} methods require ordered lists or shaped trees built up
+floor. \emph{MagicLiterals} methods are gated by exact literals in scalars, booleans, strings, options, lists, tuples,
+or trees — the pool's territory. \emph{MutationTargets} methods require ordered lists or shaped trees built up
 incrementally — mutation's territory. \emph{MixedTargets} methods contain arms suited to both tactics, so the
-composition should cover the most. \emph{NumericSearch} gates on computed or relational numeric targets that
-neither literal injection nor structural mutation is expected to solve reliably.
+composition should cover the most. \emph{NumericSearch} combines simple numeric gates, a literal-friendly
+band, and computed or relational numeric targets that remain hard without a dedicated distance tactic.
+\emph{RealWorld} contains compact parsing and validation algorithms that make useful thesis examples because
+their branches correspond to familiar problem statements.
 
 \begin{table}[t]
 \centering\small
@@ -651,10 +700,11 @@ neither literal injection nor structural mutation is expected to solve reliably.
 Category & Hard-branch kind & Intended owner \\
 \midrule
 Calibration     & shallow / edge values              & random (floor) \\
-MagicLiterals   & exact literals                     & pool \\
+MagicLiterals   & exact scalar/boolean/string literals & pool \\
 MutationTargets & ordered list / shaped tree         & mutation \\
 MixedTargets    & several arms, one per tactic        & composition \\
-NumericSearch   & computed / relational numeric      & none currently \\
+NumericSearch   & bands and computed numeric targets & pool / limitation \\
+RealWorld       & compact parsers and validators     & mixed practical cases \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -684,8 +734,8 @@ guided strategy against random. The final thesis should insert the generated val
 \label{sec:niches}
 
 The per-category charts test whether each tactic helps in its intended niche: pool on MagicLiterals,
-mutation on MutationTargets, the composition on MixedTargets, and no expected systematic winner on
-NumericSearch. This directly answers RQ4: the largest improvements should occur where the program's hard
+mutation on MutationTargets, the composition on MixedTargets, and mixed behaviour on NumericSearch, where
+literal-friendly bands coexist with computed numeric targets. This directly answers RQ4: the largest improvements should occur where the program's hard
 targets match a tactic's mechanism.
 
 The final thesis should fill this section from the generated
@@ -728,7 +778,7 @@ other languages is future work.
 
 This thesis set out to determine \emph{to what extent and at what cost} coverage-guided property-based testing
 improves over purely random generation. The current prototype answers this by comparing random, pool,
-mutation, and pool-mutation over a benchmark of 27 methods with repeated seeds, reporting both final coverage
+mutation, and pool-mutation over a benchmark of 42 methods with repeated seeds, reporting both final coverage
 and time-to-coverage. We also answer each auxiliary question. \textbf{RQ1}: random generation fails on
 exact-literal, computed-numeric, and structured-input branches, and these are exactly where guidance can help
 when a tactic matches the structure. \textbf{RQ2}: coverage can be collected cheaply by reading
@@ -768,8 +818,15 @@ testing) and by extending the study to larger, real-world systems and to other l
 \bibitem{korel1990} B. Korel, \emph{Automated Software Test Data Generation}, IEEE TSE, 1990.
 \bibitem{fraser2011} G. Fraser and A. Arcuri, \emph{EvoSuite: Automatic Test Suite Generation for Object-Oriented Software}, ESEC/FSE, 2011.
 \bibitem{duregard2012} J. Dureg\aa rd, P. Jansson, and M. Wang, \emph{FEAT: Functional Enumeration of Algebraic Types}, Haskell Symposium, 2012.
+\bibitem{duregard2016} J. Dureg\aa rd, \emph{Automating Black-Box Property Based Testing}, PhD thesis, Chalmers University of Technology, 2016.
 \bibitem{mista2019} A. Mista and A. Russo, \emph{Generating Random Structurally Rich Algebraic Data Type Values} (DRAGEN2), AST, 2019.
 \bibitem{afl} M. Zalewski, \emph{American Fuzzy Lop (AFL)}, \url{https://lcamtuf.coredump.cx/afl/}, 2014.
+\bibitem{libfuzzer} LLVM Project, \emph{libFuzzer -- a library for coverage-guided fuzz testing}, \url{https://llvm.org/docs/LibFuzzer.html}.
+\bibitem{scalachecksite} Typelevel, \emph{ScalaCheck: Property-based testing for Scala}, \url{https://scalacheck.org/}.
+\bibitem{scalacheckguide} Typelevel, \emph{ScalaCheck User Guide}, \url{https://github.com/typelevel/scalacheck/blob/main/doc/UserGuide.md}.
+\bibitem{scalameta} Scalameta, \emph{Tree Guide}, \url{https://scalameta.org/docs/trees/guide.html}.
+\bibitem{scoverage} scoverage, \emph{scalac-scoverage-plugin}, \url{https://github.com/scoverage/scalac-scoverage-plugin}.
+\bibitem{sbtscoverage} scoverage, \emph{sbt-scoverage}, \url{https://github.com/scoverage/sbt-scoverage/}.
 \bibitem{arcuri2014} A. Arcuri and L. Briand, \emph{A Hitchhiker's Guide to Statistical Tests for Assessing Randomized Algorithms in Software Engineering}, Software Testing, Verification and Reliability, 2014.
 
 \end{thebibliography}

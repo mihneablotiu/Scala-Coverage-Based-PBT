@@ -1,18 +1,17 @@
 package benchmark
 
-import benchmark.data.Tree
-
 object MixedTargets {
 
+  // Routes event streams by priority, event order, and error markers.
   def eventStream(events: List[Int], priority: Int): String =
     if (priority == 9001) "manual-review"
+    else if (events.length < 4) "too-short"
     else {
-      var ordered     = true
-      var reversed    = true
-      var serverError = false
-      var rest        = events
+      var ordered  = true
+      var reversed = true
+      var rest     = events
       while (rest.nonEmpty) {
-        if (rest.head == 500) serverError = true
+        if (rest.head == 500) return "server-error"
         if (rest.tail.nonEmpty) {
           if (rest.head > rest.tail.head) ordered = false
           if (rest.head < rest.tail.head) reversed = false
@@ -20,111 +19,92 @@ object MixedTargets {
         rest = rest.tail
       }
 
-      if (serverError) "server-error"
+      val score = priority.toLong * 3L + events.length.toLong
+      if (score < 1000000L) "low-priority"
+      else if (score > 1001000L) "high-priority"
       else if (ordered) "ordered-stream"
       else if (reversed) "reverse-stream"
       else "unordered"
     }
 
+  // Reconciles two batches by code, order, shared values, and distance.
   def reconciliation(left: List[Int], right: List[Int], code: Int): String =
     if (code == 271828) "literal"
+    else if (left.length < 3 || right.length < 3) "small-batch"
     else {
-      var leftSorted = true
-      var leftRest   = left
+      var leftRest = left
       while (leftRest.length >= 2) {
-        if (leftRest.head > leftRest.tail.head) leftSorted = false
+        if (leftRest.head > leftRest.tail.head) return "unsorted"
         leftRest = leftRest.tail
       }
 
-      var rightSorted = true
-      var rightRest   = right
+      var rightRest = right
       while (rightRest.length >= 2) {
-        if (rightRest.head > rightRest.tail.head) rightSorted = false
+        if (rightRest.head > rightRest.tail.head) return "unsorted"
         rightRest = rightRest.tail
       }
 
-      var matched = false
-      var outer   = left
-      while (outer.nonEmpty && !matched) {
+      var outer = left
+      while (outer.nonEmpty) {
         var inner = right
-        while (inner.nonEmpty && !matched) {
-          if (outer.head == inner.head) matched = true
+        while (inner.nonEmpty) {
+          if (outer.head == inner.head) return "matched"
           inner = inner.tail
         }
         outer = outer.tail
       }
 
-      if (!leftSorted || !rightSorted) "unsorted"
-      else if (matched) "matched"
+      val distance = right.head.toLong - left.last.toLong + code.toLong
+      if (distance < 1000000L) "close"
+      else if (distance > 1001000L) "far"
       else if (left.nonEmpty && right.nonEmpty && left.last < right.head) "left-before"
       else "right-before"
     }
 
+  // Probes cache keys by hot markers, key order, and probe range.
   def cacheProbe(keys: List[Int], hotKey: Int): String = {
     var knownHot = false
     var sorted   = true
-    var hit      = false
     var rest     = keys
     while (rest.nonEmpty) {
       if (rest.head == 424242) knownHot = true
-      if (rest.head == hotKey) hit = true
+      if (rest.head == hotKey) return "indexed-hit"
       if (rest.tail.nonEmpty && rest.head > rest.tail.head) sorted = false
       rest = rest.tail
     }
 
+    val score = hotKey.toLong * 2L + keys.length.toLong
     if (knownHot) "known-hot"
+    else if (score < 1000000L) "cold-range"
+    else if (score > 1000100L) "hot-range"
     else if (!sorted) "scan"
-    else if (hit) "indexed-hit"
     else if (keys.isEmpty) "empty"
     else "indexed-miss"
   }
 
-  def treeLookup(t: Tree[Int], key: Int): String = {
-    var found    = false
-    var maxDepth = 0
-    var stack    = List((t, 0))
-    while (stack.nonEmpty && !found) {
-      val (current, depth) = stack.head
-      stack = stack.tail
-      current match {
-        case Tree.Leaf          => maxDepth = maxDepth
-        case Tree.Node(l, v, r) =>
-          found = v == key
-          maxDepth = math.max(maxDepth, depth + 1)
-          stack = (l, depth + 1) :: (r, depth + 1) :: stack
+  // Classifies a ticket batch by code, sorted values, and score.
+  def ticketBatch(values: List[Int], code: Int, limit: Int): String =
+    if (code == 777777) "priority-code"
+    else if (values.length < 3) "small-batch"
+    else {
+      var sum  = 0L
+      var rest = values
+      while (rest.nonEmpty) {
+        sum += rest.head.toLong
+        if (rest.tail.nonEmpty && rest.head > rest.tail.head) return "unsorted"
+        rest = rest.tail
       }
+
+      val score = sum + limit.toLong * 2L
+      if (score < 1000000L) "low-score"
+      else if (score > 1001000L) "high-score"
+      else "accepted"
     }
 
-    var isSearchTree = true
-    var bounds       = List((t, Option.empty[Int], Option.empty[Int]))
-    while (bounds.nonEmpty && isSearchTree) {
-      val (current, min, max) = bounds.head
-      bounds = bounds.tail
-      current match {
-        case Tree.Leaf          => isSearchTree = isSearchTree
-        case Tree.Node(l, v, r) =>
-          val minOk = min match {
-            case Some(m) => m <= v
-            case None    => true
-          }
-          val maxOk = max match {
-            case Some(m) => v <= m
-            case None    => true
-          }
-          isSearchTree = minOk && maxOk
-          bounds = (l, min, Some(v)) :: (r, Some(v), max) :: bounds
-      }
-    }
-
-    if (key == 65535) "sentinel"
-    else if (isSearchTree && found) "tree-hit"
-    else if (isSearchTree) "tree-miss"
-    else if (maxDepth >= 5) "deep-fallback"
-    else "fallback"
-  }
-
+  // Classifies a value batch by bounds, order, overlap, and width.
   def batchWindow(values: List[Int], low: Int, high: Int): String =
     if (low == -1000000 || high == 1000000) "wide-open"
+    else if (values.length < 3) "small-batch"
     else {
       var sorted  = true
       var overlap = false
@@ -135,7 +115,10 @@ object MixedTargets {
         rest = rest.tail
       }
 
+      val width = high.toLong - low.toLong
       if (!sorted) "unsorted"
+      else if (width < 1000L) "narrow"
+      else if (width > 1000000L) "wide"
       else if (overlap) "overlap"
       else if (values.nonEmpty && values.last < low) "below"
       else "above"

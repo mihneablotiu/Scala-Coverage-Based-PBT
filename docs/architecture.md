@@ -13,9 +13,9 @@ it is built.
 | `sut`    | System under test — benchmark categories compiled with scoverage instrumentation. |
 | `engine` | The `pbt` framework and an `app` experiment harness with concrete generators. |
 
-The SUT catalogue has five categories: `Calibration`, `MagicLiterals`,
-`MutationTargets`, `MixedTargets`, and `NumericSearch`. Each category has
-at least five methods and isolates a different coverage story.
+The SUT catalogue has six categories: `Calibration`, `MagicLiterals`,
+`MutationTargets`, `MixedTargets`, `NumericSearch`, and `RealWorld`.
+Together they contain 42 methods and isolate different coverage stories.
 
 ---
 
@@ -33,7 +33,7 @@ its input type, and a **strategy**. `check` generates inputs,
 runs the property on each while measuring coverage, and returns a
 [`Report`](../engine/src/main/scala/pbt/Report.scala). The input type
 needs a [`Generatable`](../engine/src/main/scala/pbt/gen/Generatable.scala)
-in scope; the supported instances (`Int`, `List`, `Option`,
+in scope; the supported instances (`Boolean`, `Int`, `Double`, `String`, `List`, `Option`,
 `benchmark.data.Tree`, and tuples) live together in
 [`app.Generators`](../engine/src/main/scala/app/Generators.scala).
 
@@ -200,7 +200,7 @@ per cell at
 
 ```
 { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
-  "pool":       { "ints": [...], "doubles": [...], "strings": [...] },
+  "pool":       { "ints": [...], "doubles": [...], "strings": [...], "booleans": [...] },
   "statements": [ each target carries branch: bool and firstHitInput: int | null ] }
 ```
 

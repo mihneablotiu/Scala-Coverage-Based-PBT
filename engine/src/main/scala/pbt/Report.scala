@@ -31,10 +31,11 @@ final case class Report[A](
     s"""{"id":${s.id},"branch":${s.branch},"firstHitInput":${feedback.coveredAt.get(s.id).fold("null")(_.toString)}}"""
 
   private def poolJson(pool: ConstantPool): String = {
-    val ints    = pool.ints.toSeq.sorted.mkString("[", ",", "]")
-    val doubles = pool.doubles.toSeq.sorted.mkString("[", ",", "]")
-    val strings = pool.strings.toSeq.sorted.map(quote).mkString("[", ",", "]")
-    s"""{"ints":$ints,"doubles":$doubles,"strings":$strings}"""
+    val ints     = pool.ints.toSeq.sorted.mkString("[", ",", "]")
+    val doubles  = pool.doubles.toSeq.sorted.mkString("[", ",", "]")
+    val strings  = pool.strings.toSeq.sorted.map(quote).mkString("[", ",", "]")
+    val booleans = List(false, true).filter(pool.booleans).mkString("[", ",", "]")
+    s"""{"ints":$ints,"doubles":$doubles,"strings":$strings,"booleans":$booleans}"""
   }
 
   private def quote(s: String): String =

@@ -140,14 +140,16 @@ input is the thing under study.
 The catalogue is grouped not by input type but by the **kind of
 problem** random testing runs into:
 
-- **MagicLiterals** — exact scalar/list/tree literals; the pool
+- **MagicLiterals** — exact scalar/boolean/string/list/tree literals; the pool
   should win.
 - **MutationTargets** — realistic structured inputs; mutation should
   usually beat random.
 - **MixedTargets** — different hard arms belong to different tactics;
   the composite should cover the most.
-- **NumericSearch** — narrow computed numeric branches; none of the
-  current tactics should solve these reliably.
+- **NumericSearch** — simple numeric windows, literal-friendly bands,
+  and harder computed relations.
+- **RealWorld** — compact interview-style string and numeric algorithms
+  with practical parsing and validation branches.
 - **Calibration** — ordinary shallow branches; every strategy should
   behave like random and cover them easily.
 

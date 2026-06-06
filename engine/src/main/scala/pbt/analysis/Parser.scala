@@ -17,9 +17,10 @@ object Parser {
 
   private def mineLiterals(t: Tree): ConstantPool =
     t.collect { case l: Lit => l }.foldLeft(ConstantPool.empty) {
-      case (p, Lit.Int(value))    => p.copy(ints = p.ints + value)
-      case (p, Lit.Double(value)) => value.toDoubleOption.fold(p)(d => p.copy(doubles = p.doubles + d))
-      case (p, Lit.String(value)) => p.copy(strings = p.strings + value)
-      case (p, _)                 => p
+      case (p, Lit.Int(value))     => p.copy(ints = p.ints + value)
+      case (p, Lit.Double(value))  => value.toDoubleOption.fold(p)(d => p.copy(doubles = p.doubles + d))
+      case (p, Lit.String(value))  => p.copy(strings = p.strings + value)
+      case (p, Lit.Boolean(value)) => p.copy(booleans = p.booleans + value)
+      case (p, _)                  => p
     }
 }

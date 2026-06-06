@@ -5,6 +5,14 @@ import org.scalacheck.{Arbitrary, Gen}
 import pbt.gen.{ConstantPool, Generatable}
 
 object Generators {
+  implicit val boolean: Generatable[Boolean] = new Generatable[Boolean] {
+    override def arbitrary: Gen[Boolean] = Arbitrary.arbBool.arbitrary
+
+    override def mutate(seed: Boolean): Gen[Boolean] = Gen.const(!seed)
+
+    override def pooled(pool: ConstantPool): Option[Gen[Boolean]] =
+      Option.when(pool.booleans.nonEmpty)(Gen.oneOf(pool.booleans))
+  }
 
   implicit val int: Generatable[Int] = new Generatable[Int] {
     private val offsets = List(1, 2, 8, 64)
