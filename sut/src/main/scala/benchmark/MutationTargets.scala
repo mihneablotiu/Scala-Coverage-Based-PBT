@@ -46,13 +46,32 @@ object MutationTargets {
       else "flat-edge"
     }
 
-  // Classifies a triplet by component order and equality.
+  // Classifies a triplet through nested order and equality checks.
   def tripletOrder(a: Int, b: Int, c: Int): String =
-    if (a > b) "first-drop"
-    else if (b > c) "second-drop"
-    else if (a == b && b == c) "flat"
-    else if (a < b && b < c) "strictly-ascending"
-    else "nondecreasing"
+    if (a <= b) {
+      if (b <= c) {
+        if (a == b) {
+          if (b == c) "flat"
+          else "lower-plateau"
+        } else {
+          if (b == c) "upper-plateau"
+          else "rising"
+        }
+      } else {
+        if (a <= c) "middle-peak"
+        else "crossed-peak"
+      }
+    } else {
+      if (b >= c) {
+        val leftGap  = a.toLong - b.toLong
+        val rightGap = b.toLong - c.toLong
+        if (leftGap == rightGap) "even-drop"
+        else "falling"
+      } else {
+        if (a <= c) "middle-valley"
+        else "left-high"
+      }
+    }
 
   // Classifies appointment times by order, duplicates, and gaps.
   def appointmentSchedule(minutes: List[Int]): String =

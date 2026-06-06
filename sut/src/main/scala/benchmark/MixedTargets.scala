@@ -82,18 +82,27 @@ object MixedTargets {
     else "indexed-miss"
   }
 
-  // Combines a literal code, sorted values, and a numeric score band.
+  // Approves a batch through a literal code, ordered values, and a score band.
   def simpleApproval(values: List[Int], code: Int): String =
-    if (code == 2024) "literal-code"
-    else if (values.length < 3) "too-short"
-    else if (values.head > values.tail.head || values.tail.head > values.tail.tail.head) "unsorted"
-    else {
-      val score = code.toLong + values.last.toLong
-      if (score < 1000L) "low-score"
-      else if (score > 2000L) "high-score"
-      else if (values.head == 7) "lucky-start"
-      else "approved"
-    }
+    if (code == 2024) {
+      if (values.length >= 3) {
+        val first  = values.head
+        val second = values.tail.head
+        val third  = values.tail.tail.head
+
+        if (first <= second) {
+          if (second <= third) {
+            val score = code.toLong + values.last.toLong
+            if (score >= 2500L) {
+              if (score <= 2600L) {
+                if (first == 7) "lucky-approved"
+                else "approved"
+              } else "score-high"
+            } else "score-low"
+          } else "second-drop"
+        } else "first-drop"
+      } else "too-short"
+    } else "wrong-code"
 
   // Classifies a ticket batch by code, sorted values, and score.
   def ticketBatch(values: List[Int], code: Int, limit: Int): String =
