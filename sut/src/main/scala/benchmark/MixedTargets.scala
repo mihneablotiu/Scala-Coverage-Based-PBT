@@ -2,7 +2,8 @@ package benchmark
 
 object MixedTargets {
 
-  // Routes event streams by priority, event order, and error markers.
+  // Models event routing with literal markers and stream order.
+  // Expected: pool helps `priority == 9001` and `rest.head == 500`, while mutation helps `ordered`/`reversed` via list sorting/reversing.
   def eventStream(events: List[Int], priority: Int): String =
     if (priority == 9001) "manual-review"
     else if (events.length < 4) "too-short"
@@ -27,7 +28,8 @@ object MixedTargets {
       else "unordered"
     }
 
-  // Reconciles two batches by code, order, shared values, and distance.
+  // Models reconciliation after two batches pass sortedness checks.
+  // Expected: pool helps `code == 271828`, while mutation helps the two `rest.head > rest.tail.head` guards by sorting each list.
   def reconciliation(left: List[Int], right: List[Int], code: Int): String =
     if (code == 271828) "literal"
     else if (left.length < 3 || right.length < 3) "small-batch"
@@ -61,7 +63,8 @@ object MixedTargets {
       else "right-before"
     }
 
-  // Probes cache keys by hot markers, key order, and probe range.
+  // Models cache probing with a mined hot marker and key order.
+  // Expected: pool helps place `424242` or reuse `hotKey`, while mutation helps repair key order when `rest.head > rest.tail.head` marks a scan.
   def cacheProbe(keys: List[Int], hotKey: Int): String = {
     var knownHot = false
     var sorted   = true
@@ -82,29 +85,31 @@ object MixedTargets {
     else "indexed-miss"
   }
 
-  // Approves a batch through a literal code, ordered values, and a score band.
-  def simpleApproval(values: List[Int], code: Int): String =
+  // Models literal-gated approval with strict ordering and a zero-balanced numeric field.
+  // Expected: pool-mutation should help because `code == 2024` needs a mined literal, `first < second < third` needs list sorting, and `bonus == -bonus` needs Int mutation's `0` anchor while preserving the already-good code/list.
+  def simpleApproval(values: List[Int], code: Int, bonus: Int): String =
     if (code == 2024) {
       if (values.length >= 3) {
         val first  = values.head
         val second = values.tail.head
         val third  = values.tail.tail.head
 
-        if (first <= second) {
-          if (second <= third) {
-            val score = code.toLong + values.last.toLong
-            if (score >= 2500L) {
-              if (score <= 2600L) {
-                if (first == 7) "lucky-approved"
-                else "approved"
-              } else "score-high"
-            } else "score-low"
+        if (first < second) {
+          if (second < third) {
+            if (bonus == -bonus) {
+              if (first < 0 && third > 0) "approved-crossing"
+              else "approved"
+            } else if (bonus < 0) "score-low"
+            else {
+              "score-high"
+            }
           } else "second-drop"
         } else "first-drop"
       } else "too-short"
     } else "wrong-code"
 
-  // Classifies a ticket batch by code, sorted values, and score.
+  // Models a ticket batch with a priority literal and sorted-value score.
+  // Expected: pool helps `code == 777777`, while mutation helps pass the early `rest.head > rest.tail.head` return by sorting values.
   def ticketBatch(values: List[Int], code: Int, limit: Int): String =
     if (code == 777777) "priority-code"
     else if (values.length < 3) "small-batch"
@@ -123,7 +128,8 @@ object MixedTargets {
       else "accepted"
     }
 
-  // Classifies a value batch by bounds, order, overlap, and width.
+  // Models a bounded value batch with mined sentinels and ordered values.
+  // Expected: pool helps the sentinel bounds `-1000000`/`1000000`, while mutation helps `!sorted` by applying list sorting before width/overlap checks.
   def batchWindow(values: List[Int], low: Int, high: Int): String =
     if (low == -1000000 || high == 1000000) "wide-open"
     else if (values.length < 3) "small-batch"

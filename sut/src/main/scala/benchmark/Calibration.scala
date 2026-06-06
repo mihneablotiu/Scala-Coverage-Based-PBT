@@ -4,11 +4,13 @@ import benchmark.data.Tree
 
 object Calibration {
 
-  // Classifies an integer by its sign.
+  // Models a shallow integer sign split.
+  // Expected: no guided tactic should dominate because `n > 0`, `n < 0`, and zero are simple ScalaCheck draws.
   def sign(n: Int): String =
     if (n > 0) "positive" else if (n < 0) "negative" else "zero"
 
-  // Separates absent options from positive, negative, and zero payloads.
+  // Models the standard shape split of an optional integer.
+  // Expected: no guided tactic should dominate because ScalaCheck already generates `None`, `Some`, and signed payloads.
   def optionShape(o: Option[Int]): String = o match {
     case None             => "none"
     case Some(n) if n > 0 => "positive"
@@ -16,29 +18,34 @@ object Calibration {
     case Some(_)          => "zero"
   }
 
-  // Classifies a list only by its size shape.
+  // Models only the size shape of a list.
+  // Expected: no guided tactic should dominate because `Nil`, singleton, and longer lists are native random shapes.
   def listShape(xs: List[Int]): String = xs match {
     case Nil         => "empty"
     case _ :: Nil    => "single"
     case _ :: _ :: _ => "many"
   }
 
-  // Classifies a string only by its length shape.
+  // Models only the length shape of a string.
+  // Expected: no guided tactic should dominate because empty, short, and longer strings are ordinary random cases.
   def stringShape(s: String): String =
     if (s.isEmpty) "empty"
     else if (s.length == 1) "single"
     else if (s.length == 2) "double"
     else "long"
 
-  // Covers the four combinations of two boolean flags.
+  // Models the full truth table of two booleans.
+  // Expected: no guided tactic should dominate because the four combinations are already dense in the random domain.
   def boolGate(a: Boolean, b: Boolean): String =
     if (a && b) "both" else if (a) "first" else if (b) "second" else "neither"
 
-  // Compares the order relation between two integers.
+  // Models the order relation between two integers.
+  // Expected: no guided tactic should dominate; `<` and `>` are broad random branches, while equality is the only sparse case.
   def pairOrder(x: Int, y: Int): String =
     if (x < y) "lt" else if (x > y) "gt" else "eq"
 
-  // Classifies a generated tree by size and depth.
+  // Models only the coarse shape of a generated tree.
+  // Expected: no guided tactic should dominate because random tree generation already explores empty, shallow, and larger shapes.
   def treeShape(t: Tree[Int]): String = {
     var size     = 0
     var maxDepth = 0

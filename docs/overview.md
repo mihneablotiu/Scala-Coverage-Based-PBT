@@ -111,8 +111,8 @@ exactly what a ScalaCheck user gets today, and serves as the honest
 baseline. On top of it the framework adds two **feedback
 channels**, each attacking a different *kind* of hard branch:
 
-- **Pool** mines the integer constants written in the method's own
-  source and splices them into the draw — the reliable way to hit
+- **Pool** mines method-local integer, double, string, and boolean literals
+  and splices them into the draw — the reliable way to hit
   needle-in-a-haystack *literal* branches.
 - **Mutation** keeps a list of "seeds" — inputs whose iteration
   covered a previously-uncovered branch — and mostly perturbs the
@@ -146,8 +146,9 @@ problem** random testing runs into:
   usually beat random.
 - **MixedTargets** — different hard arms belong to different tactics;
   the composite should cover the most.
-- **NumericSearch** — simple numeric windows, literal-friendly bands,
-  and harder computed relations.
+- **NumericSearch** — numeric windows where mined boundaries plus small integer
+  edits can help, together with harder computed relations that show current
+  limitations.
 - **RealWorld** — compact interview-style string and numeric algorithms
   with practical parsing and validation branches.
 - **Calibration** — ordinary shallow branches; every strategy should

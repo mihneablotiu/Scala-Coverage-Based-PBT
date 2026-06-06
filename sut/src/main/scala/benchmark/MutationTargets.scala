@@ -4,7 +4,8 @@ import benchmark.data.Tree
 
 object MutationTargets {
 
-  // Classifies a ledger by sortedness, negative entries, and duplicates.
+  // Models a ledger where order must be repaired before the later flags matter.
+  // Expected: mutation/pool-mutation should help because `rest.head > rest.tail.head` blocks later outcomes until `seed.sorted` repairs the list.
   def sortedLedger(values: List[Int]): String =
     if (values.length < 4) "too-short"
     else {
@@ -27,53 +28,45 @@ object MutationTargets {
       else "clean"
     }
 
-  // Classifies a list by duplicates and endpoint order.
-  def uniqueEndpoints(values: List[Int]): String =
-    if (values.length < 3) "too-short"
+  // Models a list whose endpoint checks are reachable only after the list is ordered.
+  // Expected: mutation/pool-mutation should help because `rest.head > rest.tail.head` returns early, while the list mutator tries `seed.sorted`.
+  def orderedEndpoints(values: List[Int]): String =
+    if (values.length < 4) "too-short"
     else {
-      var outer = values
-      while (outer.nonEmpty) {
-        var inner = outer.tail
-        while (inner.nonEmpty) {
-          if (outer.head == inner.head) return "duplicate"
-          inner = inner.tail
-        }
-        outer = outer.tail
+      var rest = values
+      while (rest.length >= 2) {
+        if (rest.head > rest.tail.head) return "unsorted"
+        rest = rest.tail
       }
 
-      if (values.head < values.last) "ascending-edge"
-      else if (values.head > values.last) "descending-edge"
-      else "flat-edge"
+      if (values.head == values.last) "flat"
+      else if (values.head < 0 && values.last > 0) "crosses-zero"
+      else if (values.head >= 0) "nonnegative"
+      else "negative"
     }
 
-  // Classifies a triplet through nested order and equality checks.
-  def tripletOrder(a: Int, b: Int, c: Int): String =
-    if (a <= b) {
-      if (b <= c) {
-        if (a == b) {
-          if (b == c) "flat"
-          else "lower-plateau"
-        } else {
-          if (b == c) "upper-plateau"
-          else "rising"
-        }
-      } else {
-        if (a <= c) "middle-peak"
-        else "crossed-peak"
+  // Models a staged triplet relation with nested component checks.
+  // Expected: no tactic is expected to dominate in the current metric because the branch checks are cheap to evaluate; this is not a primary thesis example.
+  def tripletOrder(a: Int, b: Int, c: Int): String = {
+    var label = "not-dropping"
+    if (a > b) {
+      label = "needs-middle-zero"
+      if (b == -b) {
+        label = "low-tail"
+        if (c == -c) label = "centered-drop"
+        else if (c > a) label = "high-tail"
       }
     } else {
-      if (b >= c) {
-        val leftGap  = a.toLong - b.toLong
-        val rightGap = b.toLong - c.toLong
-        if (leftGap == rightGap) "even-drop"
-        else "falling"
-      } else {
-        if (a <= c) "middle-valley"
-        else "left-high"
+      if (a == -a) {
+        if (b < c) label = "zero-led-rise"
+        else label = "zero-led-flat"
       }
     }
+    label
+  }
 
-  // Classifies appointment times by order, duplicates, and gaps.
+  // Models appointment validation with early exits on invalid order.
+  // Expected: mutation/pool-mutation should help because sorting a coverage-growing list can pass `current > next` and expose gap/time checks.
   def appointmentSchedule(minutes: List[Int]): String =
     if (minutes.length < 4) "too-few"
     else {
@@ -93,7 +86,8 @@ object MutationTargets {
       else "packed-day"
     }
 
-  // Compares two batches by sortedness and interval overlap.
+  // Models merging two sorted batches.
+  // Expected: mutation/pool-mutation should help because tuple mutation can sort one list while preserving the other until both pass the sortedness guards.
   def mergeWindow(left: List[Int], right: List[Int]): String =
     if (left.length < 4 || right.length < 4) "small-batch"
     else {
@@ -116,7 +110,8 @@ object MutationTargets {
       else "right-before-left"
     }
 
-  // Searches a list after first checking whether it is sorted.
+  // Models a route that switches from linear scan to ordered search only after sorting.
+  // Expected: mutation/pool-mutation should help on `linear-scan` because `seed.sorted` exposes `before`, `after`, and `gap`; `found` remains hard.
   def binarySearchRoute(xs: List[Int], target: Int): String =
     if (xs.length < 5) "linear-small"
     else {
@@ -137,7 +132,8 @@ object MutationTargets {
       else "gap"
     }
 
-  // Classifies a tree by size and maximum depth.
+  // Models a tree whose deeper outcome requires growing structure.
+  // Expected: mutation/pool-mutation should help because the tree mutator can replace `Leaf` with generated trees and attach generated subtrees.
   def treeDepth(t: Tree[Int]): String = {
     var size     = 0
     var maxDepth = 0

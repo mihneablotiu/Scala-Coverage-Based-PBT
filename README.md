@@ -30,9 +30,10 @@ therefore draws exactly like ScalaCheck. `pool` draws from mined literals,
 `mutation` perturbs coverage-growing seeds, and `pool-mutation` composes both.
 The benchmark catalogue separates these cases into
 `Calibration`, `MagicLiterals`, `MutationTargets`, `MixedTargets`,
-`NumericSearch`, and `RealWorld`: 44 methods spanning shallow calibration cases, exact
-literal gates, structured list/tree targets, mixed tactic targets, and
-computed numeric relations, plus practical string/numeric algorithms.
+`NumericSearch`, and `RealWorld`: 44 methods spanning shallow calibration cases,
+exact literal gates, structured list/tree targets, mixed tactic targets, numeric
+cases that expose both useful offset edits and current limitations, plus practical
+string/numeric algorithms.
 
 ## Quick start
 

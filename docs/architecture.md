@@ -74,7 +74,21 @@ only builds the context and asks the chosen strategy for a generator.
 The tactics are **complementary** — a branch behind a magic literal is
 reached only by the pool, a branch behind a *structured* input (a
 sorted list, staged tuple, or tree shape) only by mutation — so the `pool-mutation`
-composite covers the most.
+composite covers the most when a method needs both.
+
+The benchmark comments state the exact expected mechanism per function. Good
+thesis/presentation examples are intentionally small:
+
+- `MagicLiterals.magicOption`: `Some(8080)` and `Some(443)` need exact mined
+  integer payloads, so pool should beat random.
+- `MutationTargets.orderedEndpoints`: `rest.head > rest.tail.head` returns
+  before endpoint checks, while the list mutator explicitly tries `seed.sorted`.
+- `MutationTargets.mergeWindow`: both lists must pass sortedness guards; tuple
+  mutation can sort one side while preserving the other.
+- `MixedTargets.simpleApproval`: `code == 2024` needs pool, `first < second < third`
+  needs list sorting, and `bonus == -bonus` needs the integer mutator's zero anchor.
+- `NumericSearch.window`: pool can draw the mined boundaries, then integer offsets
+  can step from a boundary into the narrow window.
 
 ---
 
