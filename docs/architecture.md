@@ -62,7 +62,7 @@ Each draw is chosen by the selected strategy. The baseline strategy is only
 a **pooled** draw and/or a **mutated** draw:
 
 - **pool** — draw values from mined literals (`Generatable.pooled`) while some
-  method-local scoverage statement is still uncovered.
+  branch-marked method-local target is still uncovered.
 - **mutation** — perturb a corpus seed, an input that grew coverage
   (`Generatable.mutate`).
 
@@ -73,7 +73,7 @@ only builds the context and asks the chosen strategy for a generator.
 
 ![Feedback tactics are complementary](images/mechanisms.png)
 
-The tactics are **complementary** — a branch behind a magic integer is
+The tactics are **complementary** — a branch behind a magic literal is
 reached only by the pool, a branch behind a *structured* input (a
 sorted list, staged tuple, or tree shape) only by mutation — so the `pool-mutation`
 composite covers the most.
@@ -102,9 +102,9 @@ the coverage effect of each generated input. Per input:
 
 `Feedback` is the single running signal:
 `coveredAt` (statement id to first-hit input index), `corpus` (inputs that
-each grew coverage — mutation perturbs these), and `iteration` (the current
-input index). `Gen.delay` re-reads it every draw, so guided strategies see it
-grow; `random` ignores it.
+each grew coverage — mutation perturbs these), `seenInputs` (all inputs already
+executed), and `iteration` (the current input index). `Gen.delay` re-reads it
+every draw, so guided strategies see it grow; `random` ignores it.
 
 ---
 
@@ -138,7 +138,7 @@ branch-marked also count toward branch coverage.
 
 This is simpler and more defensible than a custom branch metric:
 scoverage is the coverage source of truth.
-ScalaMeta is used only to mine integer literals from the method body for the pool
+ScalaMeta is used only to mine method-local literals for the pool
 tactic, because some literals in patterns or conditions are not exposed by
 scoverage as standalone literal statements.
 
@@ -155,24 +155,24 @@ Both guided sources steer off the *live* coverage — they are available only wh
 there is something left to gain, so a strategy is genuinely
 feedback-driven, not a fixed bias:
 
-The **pool** mines every `Int` literal in the method body into
+The **pool** mines method-local `Int`, `Double`, and `String` literals into
 a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
 (the AFL *dictionary* idea — reuse useful constants from the program in
-inputs — adapted to value-level draws; over-approximating is cheap, an
-unused literal is just a wasted draw). Each pooled draw chooses one of those
-literals — but only while some method-local statement is still uncovered;
-once every statement is hit there is nothing a literal can unlock, so it stands down. That
-is what makes pooled generation coverage-driven.
+inputs — adapted to value-level draws). Literals stay reusable: a value may
+still be useful in a different tuple position, list, option, or tree. To avoid
+wasting guided draws, feedback tracks all inputs already executed; if pool or
+mutation proposes one again, that draw falls back to random. Pool guidance is
+available only while some branch-marked method-local target is still uncovered.
 
 The **mutation** tactic perturbs the corpus of coverage-growing inputs
 with the type's `mutate` (AFL/FuzzChick-style edits and "interesting"
-edge values). It favours the *most recent* grower — the input on the
-coverage frontier — so each retained seed is the springboard that
-ratchets into nearby structured inputs (sort a list, grow a tree), with a
-slice of draws on older seeds for diversity.
+edge values). It usually mutates the *most recent* grower — the input on the
+coverage frontier — but occasionally revisits an older corpus seed for
+diversity. Each retained seed can become the springboard that ratchets into
+nearby structured inputs (sort a list, grow a tree).
 
 scoverage provides the method-local statement targets and covered statement ids
-that drive feedback. ScalaMeta provides the integer constants used by the pool tactic.
+that drive feedback. ScalaMeta provides the literals used by the pool tactic.
 
 ---
 
@@ -200,7 +200,7 @@ per cell at
 
 ```
 { "method", "sourceFile", "strategy", "totalInputs", "elapsedMillis",
-  "pool":       { "ints": [...] },
+  "pool":       { "ints": [...], "doubles": [...], "strings": [...] },
   "statements": [ each target carries branch: bool and firstHitInput: int | null ] }
 ```
 

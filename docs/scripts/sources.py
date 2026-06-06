@@ -39,7 +39,7 @@ digraph sources {
     style="rounded,filled"; fillcolor="#F5FBF8"; color="#7FB8A4";
 
     s_rand [label=<<b>random draw</b><br/><font point-size="9">Arbitrary[A]</font>>, shape=box, style="rounded,filled", fillcolor="#2E5C8A", fontcolor="white"];
-    s_pool [label=<<b>pool</b><br/><font point-size="9">literals while statements are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="#1F8A70", fontcolor="white"];
+    s_pool [label=<<b>pool</b><br/><font point-size="9">reusable literals while branches are uncovered</font>>, shape=box, style="rounded,filled", fillcolor="#1F8A70", fontcolor="white"];
     s_mut  [label=<<b>mutation</b><br/><font point-size="9">perturb a corpus seed</font>>, shape=box, style="rounded,filled", fillcolor="#E67E22", fontcolor="white"];
 
     mix [label=<<b>strategy</b><br/><font point-size="9">Gen.frequency</font>>, shape=box, style="rounded,filled", fillcolor="#2C3E50", fontcolor="white"];
@@ -54,7 +54,7 @@ digraph sources {
     sut -> out [label="fail"];
     sut -> cov [label="run"];
     cov -> fb;
-    fb -> s_pool [label="still-needed literals",   color="#1F8A70", fontcolor="#16735C", style=dashed, constraint=false];
+    fb -> s_pool [label="unseen inputs", color="#1F8A70", fontcolor="#16735C", style=dashed, constraint=false];
     fb -> s_mut  [label="keep coverage-growers",   color="#E67E22", fontcolor="#B35E10", style=dashed, constraint=false];
   }
 }

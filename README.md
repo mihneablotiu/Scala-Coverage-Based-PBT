@@ -22,7 +22,7 @@ pbt.check[Int](source, "magicInt", Strategy.pool) { n => MagicLiterals.magicInt(
 loop as every other strategy. Guided strategies add **coverage-guided tactics**,
 each reading the live coverage:
 
-- **pool** — draw from mined literals while method-local statements remain uncovered;
+- **pool** — draw from mined literals while branch-marked targets remain uncovered;
 - **mutation** — perturb a corpus of coverage-increasing seeds.
 
 A `Strategy` chooses the next generator from the current context. `random`

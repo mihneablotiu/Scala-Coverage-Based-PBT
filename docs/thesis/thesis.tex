@@ -506,8 +506,8 @@ the study an ablation rather than a comparison of unrelated tools.
 The two tactics were chosen because they attack \emph{disjoint} kinds of hard targets.
 
 \paragraph{Pool — exact-value gates.} Some branches are guarded by equality against a literal that does not
-appear in the input distribution, such as a rare integer or option payload. Random sampling is unlikely to
-produce the exact value. The pool mines such integer literals from the source and lets the strategy draw from them, so the branch becomes reachable
+appear often in the input distribution, such as a rare integer or option payload. Random sampling is unlikely to
+produce the exact value. The pool mines such literals from the source and lets the strategy draw from them, so the branch becomes reachable
 (Figure~\ref{fig:pool}).
 
 \paragraph{Mutation — incrementally-built structure.} Finally, some branches require a whole structured
@@ -548,7 +548,7 @@ strategy by deciding how to combine the available generators — nothing else ch
 
 The framework is written in Scala~2.13 and split into two sbt modules: an instrumented module containing
 the benchmark methods, and a dependency-light engine that hosts the framework and the experiment harness.
-This chapter describes the test loop, how coverage is collected and matched to source, how integer literals are
+This chapter describes the test loop, how coverage is collected and matched to source, how method-local literals are
 mined from the method body, and how each tactic is realised.
 
 \section{Realising the Loop on ScalaCheck}
@@ -585,7 +585,7 @@ branch coverage.
 foremost among it — already knows which instrumented statements fired. The framework keeps scoverage as the
 source of truth, filters its statements to the method under test, and stores whether each target is
 branch-marked by scoverage. This gives the feedback loop a source-aware signal — not only ``how much was
-covered'', but which method-local targets remain uncovered. The pool mines integer literals from the method
+covered'', but which method-local targets remain uncovered. The pool mines method-local literals from the method
 body with ScalaMeta, while scoverage remains the coverage source of truth; mutation retains an
 input precisely when it lights up a previously-unreached target.
 
@@ -600,10 +600,11 @@ random generation.
 \section{The Pool and Mutation Tactics}
 \label{sec:pool-mut}
 
-\paragraph{Pool.} At parse time we mine integer literals in the method body into a constant pool;
+\paragraph{Pool.} At parse time we mine method-local literals in the method body into a constant pool;
 over-approximating is cheap, since a literal that fits no target is merely a wasted draw, whereas a missed
-literal silently weakens the tactic. The pool source draws these literals through the generator and stands
-down once every method-local target is covered — its coverage-guided handle.
+literal silently weakens the tactic. The pool source draws these reusable literals through the generator while
+branch-marked targets remain uncovered. To avoid wasting effort on the same proposal, feedback records exact
+inputs already executed; duplicate pool or mutation proposals fall back to random generation.
 
 \paragraph{Mutation.} The mutation tactic perturbs the corpus of inputs that previously grew coverage. The
 single most important detail is the \emph{power schedule}: it mutates the \emph{most recent} coverage-grower —
@@ -634,7 +635,7 @@ cross-strategy statement and branch charts and statistics from the JSON reports.
 A benchmark for this question must isolate \emph{kinds} of hard branches, so that an improvement can be
 attributed to a mechanism rather than to luck. We therefore designed 27 methods across five categories as a
 deliberate progression (Table~\ref{tab:categories}). \emph{Calibration} methods are shallow and calibrate the
-floor. \emph{MagicLiterals} methods are gated by exact integer literals in scalars, options, lists, tuples, or
+floor. \emph{MagicLiterals} methods are gated by exact literals in scalars, options, lists, tuples, or
 trees — the pool's territory. \emph{MutationTargets} methods require ordered lists or shaped trees built up
 incrementally — mutation's territory. \emph{MixedTargets} methods contain arms suited to both tactics, so the
 composition should cover the most. \emph{NumericSearch} gates on computed or relational numeric targets that
@@ -649,7 +650,7 @@ neither literal injection nor structural mutation is expected to solve reliably.
 Category & Hard-branch kind & Intended owner \\
 \midrule
 Calibration     & shallow / edge values              & random (floor) \\
-MagicLiterals   & exact integer literals             & pool \\
+MagicLiterals   & exact literals                     & pool \\
 MutationTargets & ordered list / shaped tree         & mutation \\
 MixedTargets    & several arms, one per tactic        & composition \\
 NumericSearch   & computed / relational numeric      & none currently \\

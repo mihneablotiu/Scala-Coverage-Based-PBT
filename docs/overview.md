@@ -140,7 +140,7 @@ input is the thing under study.
 The catalogue is grouped not by input type but by the **kind of
 problem** random testing runs into:
 
-- **MagicLiterals** — exact integer/list/tree literals; the pool
+- **MagicLiterals** — exact scalar/list/tree literals; the pool
   should win.
 - **MutationTargets** — realistic structured inputs; mutation should
   usually beat random.

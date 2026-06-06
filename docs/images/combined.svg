@@ -83,9 +83,9 @@
 <!-- cov&#45;&gt;pool -->
 <g id="edge6" class="edge">
 <title>cov&#45;&gt;pool</title>
-<path fill="none" stroke="#3a9c83" stroke-width="1.7" stroke-dasharray="5,2" d="M140.99,-36.29C124.33,-48.06 103.18,-64.91 88.25,-83.54 35.93,-148.82 30.41,-253.43 31.05,-303.18"/>
-<polygon fill="#3a9c83" stroke="#3a9c83" stroke-width="1.7" points="28.07,-303.03 31.24,-311.46 34.02,-302.9 28.07,-303.03"/>
-<text xml:space="preserve" text-anchor="middle" x="103.52" y="-153.86" font-family="Helvetica,sans-Serif" font-size="10.50" fill="#2f7a68">draw while uncovered</text>
+<path fill="none" stroke="#3a9c83" stroke-width="1.7" stroke-dasharray="5,2" d="M138.03,-36.3C121.07,-47.62 100.68,-63.99 88.25,-83.54 43.67,-153.65 34.38,-254.76 32.58,-303.23"/>
+<polygon fill="#3a9c83" stroke="#3a9c83" stroke-width="1.7" points="29.61,-302.95 32.34,-311.53 35.56,-303.11 29.61,-302.95"/>
+<text xml:space="preserve" text-anchor="middle" x="99.8" y="-153.86" font-family="Helvetica,sans-Serif" font-size="10.50" fill="#2f7a68">retry unseen input</text>
 </g>
 <!-- cov&#45;&gt;mut -->
 <g id="edge7" class="edge">
