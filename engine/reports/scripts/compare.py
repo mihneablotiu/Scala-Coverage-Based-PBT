@@ -52,6 +52,10 @@ BG = "#FFFFFF"
 
 RANDOM = "random"
 
+DISPLAY_NAMES = {
+    RANDOM: "default-scalacheck",
+}
+
 # Canonical strategy order, simplest to most complex. Mirrors `Strategy.names`.
 STRATEGY_ORDER = ["random", "pool", "mutation", "pool-mutation"]
 
@@ -147,6 +151,10 @@ class SeedSpread:
 
 def color_for(strategy: str) -> str:
     return STRATEGY_COLORS.get(strategy, FALLBACK_COLOR)
+
+
+def display_strategy(strategy: str) -> str:
+    return DISPLAY_NAMES.get(strategy, strategy)
 
 
 def ordered_strategies(strategies) -> list:
@@ -307,7 +315,7 @@ def _horizontal_grouped_bars(
     for k, strategy in enumerate(strategies):
         pcts = pcts_by_strategy[strategy]
         labels = (labels_by_strategy or {}).get(strategy) or [f"{p:.0f}%" for p in pcts]
-        # Place random (k=0) ABOVE guided (k=1) within each category group:
+        # Place the ScalaCheck baseline (k=0) ABOVE guided strategies within each category group:
         # in barh, smaller y = higher on screen after invert_yaxis.
         offsets = [i + k * bar_h - 0.4 + bar_h / 2 for i in range(n_cat)]
         bars = ax.barh(
@@ -317,7 +325,7 @@ def _horizontal_grouped_bars(
             color=color_for(strategy),
             edgecolor=BORDER,
             linewidth=0.5,
-            label=strategy,
+            label=display_strategy(strategy),
         )
         for bar, pct, lbl in zip(bars, pcts, labels):
             ax.text(
@@ -417,7 +425,7 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
             color=TEXT,
         )
     ax.set_yticks(list(range(len(strategies))))
-    ax.set_yticklabels(strategies, color=TEXT, fontsize=11)
+    ax.set_yticklabels([display_strategy(s) for s in strategies], color=TEXT, fontsize=11)
     ax.invert_yaxis()
     ax.set_xlim(0, 130)
     ax.set_xlabel("coverage (%)")
@@ -512,7 +520,7 @@ def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
         categories,
         pcts_by_strategy,
         non_random,
-        title=f"Blind-spot fill — % of {metric_label()} targets random missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
+        title=f"Blind-spot fill — % of {metric_label()} targets default-scalacheck missed that the strategy covered (median, [min–max] across K={SEED_COUNT} seeds)",
         out_path=out_path,
         labels_by_strategy=labels_by_strategy,
         row_height_in=0.85,
@@ -564,7 +572,7 @@ def time_to_coverage(cells: list, budgets: list) -> dict:
 def write_time_to_coverage(curves: dict, budgets: list, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10.0, 6.0), facecolor=BG)
     for strat in ordered_strategies(curves.keys()):
-        ax.plot(budgets, curves[strat], marker="o", markersize=3, linewidth=1.8, color=color_for(strat), label=strat)
+        ax.plot(budgets, curves[strat], marker="o", markersize=3, linewidth=1.8, color=color_for(strat), label=display_strategy(strat))
     ax.set_xscale("log")
     ax.set_xlim(1, budgets[-1] if budgets else 1)
     ax.set_ylim(0, 100)
@@ -613,7 +621,7 @@ def write_throughput_bars(ips_by_strategy: dict, out_path: Path) -> None:
         ax.barh(i, ips, 0.55, color=color_for(strategy), edgecolor=BORDER, linewidth=0.6)
         ax.text(ips + top * 0.01, i, f"{ips:,.0f}/s", va="center", fontsize=11, color=TEXT)
     ax.set_yticks(list(range(len(strategies))))
-    ax.set_yticklabels(strategies, color=TEXT, fontsize=11)
+    ax.set_yticklabels([display_strategy(s) for s in strategies], color=TEXT, fontsize=11)
     ax.invert_yaxis()
     ax.set_xlim(0, top * 1.18)
     ax.set_xlabel("inputs / second (median across cells)")
@@ -666,7 +674,8 @@ def main() -> None:
         cols = {b: budgets.index(b) for b in checkpoints}
         print(f"  {'strategy':<24}" + "".join(f"{('@' + str(b)):>10}" for b in checkpoints))
         for strat in ordered_strategies(curves.keys()):
-            print(f"  {strat:<24}" + "".join(f"{curves[strat][cols[b]]:>9.1f}%" for b in checkpoints))
+            label = display_strategy(strat)
+            print(f"  {label:<24}" + "".join(f"{curves[strat][cols[b]]:>9.1f}%" for b in checkpoints))
 
         suite_cells = list(cells)
         non_random = [s for s in ordered_strategies({c.strategy for c in cells}) if s != RANDOM]
@@ -683,7 +692,7 @@ def main() -> None:
                         f"n={len(fills)} seeds]"
                     )
                 else:
-                    print(f"  {strat:<18s} no blind spot to fill (random saturated in every seed)")
+                    print(f"  {display_strategy(strat):<18s} no blind spot to fill (default-scalacheck saturated in every seed)")
 
     ips_by_strategy = throughput(cells)
     write_throughput_bars(ips_by_strategy, SUMMARY_DIR / "throughput.svg")
@@ -692,11 +701,11 @@ def main() -> None:
         rand_ips = ips_by_strategy.get(RANDOM)
         print()
         print(f"Throughput (median inputs/sec across K={SEED_COUNT} seeds × methods):")
-        print(f"  {'strategy':<40}{'inputs/sec':>12}{'vs random':>16}")
+        print(f"  {'strategy':<40}{'inputs/sec':>12}  {'vs default-scalacheck':>24}")
         for strat in ordered_strategies(ips_by_strategy.keys()):
             ips = ips_by_strategy[strat]
-            rel = f"{ips / rand_ips:.2f}× random" if rand_ips and ips > 0 and strat != RANDOM else "—"
-            print(f"  {strat:<40}{ips:>12,.0f}{rel:>16}")
+            rel = f"{ips / rand_ips:.2f}× default-scalacheck" if rand_ips and ips > 0 and strat != RANDOM else "—"
+            print(f"  {display_strategy(strat):<40}{ips:>12,.0f}  {rel:>24}")
 
 if __name__ == "__main__":
     main()
