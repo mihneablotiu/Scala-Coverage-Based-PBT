@@ -108,7 +108,7 @@ actually helps.
 
 **Random** samples uniformly and ignores past observations — it is
 exactly what a ScalaCheck user gets today, and serves as the honest
-baseline. On top of it the framework adds two **feedback
+baseline. On top of it the framework adds three **feedback
 channels**, each attacking a different *kind* of hard branch:
 
 - **Pool** mines method-local integer, double, string, and boolean literals
@@ -121,10 +121,14 @@ channels**, each attacking a different *kind* of hard branch:
   input that climbed one rung is kept and nudged one step further —
   the reliable way to reach *structured* targets a random draw rarely
   stumbles on (sorted inputs, preserved tuple components, or tree shape).
+- **Targeted** extracts numeric branch conditions from the method and
+  keeps the closest input seen so far for each uncovered numeric branch.
+  It is aimed at narrow arithmetic targets where knowing "how far away"
+  an input was is more useful than another blind random draw.
 
-These channels **compose**: **pool-mutation** switches both on at
-once. They are **complementary** — the pool hits magic literals,
-mutation climbs structure — so combining the two covers the most.
+Some channels **compose** today: **pool-mutation** switches pool and mutation
+on at once. They are **complementary** — the pool hits magic literals,
+mutation climbs structure, and targeted follows numeric branch distance.
 Validity gates (the input must first *parse* or pass a *checksum*)
 are reached by neither today; that is the open frontier (see the
 proposal).
@@ -168,7 +172,7 @@ used for time-to-coverage:
 engine/reports/statistics/
 └── <category>/          e.g. MagicLiterals
     └── <method name>/   e.g. sign
-        └── <strategy>/  e.g. random, pool, mutation, pool-mutation
+        └── <strategy>/  e.g. random, pool, mutation, targeted, pool-mutation
             └── seed=01/
                 └── coverage.json    — first-hit data for time-to-coverage
 ```

@@ -20,14 +20,16 @@ pbt.check[Int](source, "magicInt", Strategy.pool) { n => MagicLiterals.magicInt(
 
 `random` is ScalaCheck arbitrary generation in the same no-shrink measurement
 loop as every other strategy. Guided strategies add **coverage-guided tactics**,
-each reading the live coverage:
+each reading the live feedback it needs:
 
 - **pool** — draw from mined literals while branch-marked targets remain uncovered;
-- **mutation** — perturb a corpus of coverage-increasing seeds.
+- **mutation** — perturb a corpus of coverage-increasing seeds;
+- **targeted** — use branch-distance feedback for numeric branch goals.
 
 A `Strategy` chooses the next generator from the current context. `random`
 therefore draws exactly like ScalaCheck. `pool` draws from mined literals,
-`mutation` perturbs coverage-growing seeds, and `pool-mutation` composes both.
+`mutation` perturbs coverage-growing seeds, `targeted` follows numeric branch
+distances, and `pool-mutation` composes pool and mutation.
 The benchmark catalogue separates these cases into
 `Calibration`, `MagicLiterals`, `MutationTargets`, `MixedTargets`,
 `NumericSearch`, and `RealWorld`: 44 methods spanning shallow calibration cases,

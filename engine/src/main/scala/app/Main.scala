@@ -6,6 +6,7 @@ import benchmark.{Calibration, MagicLiterals, MixedTargets, MutationTargets, Num
 import pbt.Pbt
 import pbt.gen.Generatable
 import pbt.strategy.Strategy
+import pbt.targeting.OptionalNumericFields
 
 import java.nio.file.Paths
 
@@ -27,7 +28,7 @@ object Main {
   private def runAll(strategy: Strategy, seed: Long, inputs: Int): Unit = {
     val pbt = new Pbt(SutRoot)
 
-    def bench[A: Generatable](category: String, method: String)(body: A => Any): Unit = {
+    def bench[A: Generatable: OptionalNumericFields](category: String, method: String)(body: A => Any): Unit = {
       val source = Paths.get(s"sut/src/main/scala/benchmark/$category.scala")
       val out    = ReportsBase.resolve(category).resolve(method).resolve(strategy.name).resolve(f"seed=$seed%02d")
       pbt.check[A](source, method, strategy, seed, inputs)(in => { body(in); true }).write(out)

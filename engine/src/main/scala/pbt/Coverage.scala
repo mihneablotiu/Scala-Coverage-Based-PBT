@@ -26,7 +26,7 @@ final class Coverage(sutRoot: Path) {
     methodStatementData(sourceFile, method)
       .sortBy(s => (s.start, s.id))
       .map { s =>
-        Coverage.StatementTarget(s.id, s.branch)
+        Coverage.StatementTarget(s.id, s.branch, s.start, s.end)
       }
   }
 
@@ -54,5 +54,5 @@ final class Coverage(sutRoot: Path) {
 }
 
 object Coverage {
-  final case class StatementTarget(id: Int, branch: Boolean)
+  final case class StatementTarget(id: Int, branch: Boolean, start: Int, end: Int)
 }

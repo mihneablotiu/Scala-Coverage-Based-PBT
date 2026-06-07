@@ -7,9 +7,9 @@ for every strategy/seed and produces:
   cross-strategy (under engine/reports/statistics/_summary/)
     <metric>_suite.svg            — horizontal bars per (bench, strategy)
     <metric>_overall.svg          — horizontal bars per strategy
-    <metric>_blindspot.svg        — per-bench + suite-wide percentage of random's
-                           blind spot (the targets random failed to reach)
-                           that each non-random strategy covered. Median +
+    <metric>_blindspot.svg        — per-bench + suite-wide percentage of the
+                           ScalaCheck baseline's blind spot that each guided
+                           strategy covered. Median +
                            [min–max] across the K per-seed fills. Isolates
                            "targets only coverage feedback can find" from
                            "easy guards everyone hits", which the raw
@@ -42,7 +42,11 @@ STRATEGY_COLORS = {
     "random": "#2E5C8A",          # cobalt blue
     "pool": "#1F8A70",            # deep teal
     "mutation": "#E67E22",      # vibrant orange
+    "targeted": "#8E44AD",      # purple
     "pool-mutation": "#C0392B", # brick red
+    "pool-targeted": "#D4AC0D",            # gold
+    "mutation-targeted": "#5B2C6F",        # deep violet
+    "pool-mutation-targeted": "#196F3D",   # forest green
 }
 FALLBACK_COLOR = "#7F8C8D"
 BORDER = "#2C3E50"
@@ -57,7 +61,7 @@ DISPLAY_NAMES = {
 }
 
 # Canonical strategy order, simplest to most complex. Mirrors `Strategy.names`.
-STRATEGY_ORDER = ["random", "pool", "mutation", "pool-mutation"]
+STRATEGY_ORDER = ["random", "pool", "mutation", "targeted", "pool-mutation", "pool-targeted", "mutation-targeted", "pool-mutation-targeted"]
 
 # Number of seed-runs found; set in main(), used in chart titles.
 SEED_COUNT = 0
@@ -441,11 +445,11 @@ def write_overall_bars(cells: list, out_path: Path) -> None:
     plt.close(fig)
 
 
-# ── Blind-spot fill (random-relative metric) ────────────────────────────
+# ── Blind-spot fill (baseline-relative metric) ──────────────────────────
 
 
 def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
-    """For each selected target where ``random`` missed in any method of ``cells_by_method``,
+    """For each selected target where the ScalaCheck baseline missed in any method of ``cells_by_method``,
     return ``True`` if ``strategy`` covered that target, ``False`` otherwise.
 
     Both cells share the same method statement list, so targets in document order
@@ -466,8 +470,8 @@ def blindspot_pairs(cells_by_method: dict, strategy: str) -> list:
 
 def _per_seed_blindspot_fills(cells: list, strategy: str) -> list:
     """For a flat list of cells (one or more benches × multiple methods × K seeds), return one
-    blind-spot-fill % per seed. Uses paired (random, strategy) cells within the same seed; seeds
-    where random saturated the scope contribute nothing (excluded, not zero) so that the spread
+    blind-spot-fill % per seed. Uses paired (baseline, strategy) cells within the same seed; seeds
+    where the baseline saturated the scope contribute nothing (excluded, not zero) so that the spread
     reflects only seeds where there was a blind spot to fill in the first place."""
     by_seed: dict = {}
     for c in cells:
@@ -484,9 +488,9 @@ def _per_seed_blindspot_fills(cells: list, strategy: str) -> list:
 
 
 def write_blindspot_bars(cells_by_bench: dict, out_path: Path) -> None:
-    """Per-bench + suite-wide percentage of random's blind spot covered by each non-random strategy,
+    """Per-bench + suite-wide percentage of the baseline's blind spot covered by each non-baseline strategy,
     aggregated across the K seed-runs as median + [min–max]. Benches where every seed
-    saturated random (no blind spot to fill in any seed) are skipped from the chart."""
+    saturated baseline (no blind spot to fill in any seed) are skipped from the chart."""
     benches = sorted(cells_by_bench.keys())
     all_strats = {c.strategy for cs in cells_by_bench.values() for c in cs}
     non_random = [s for s in ordered_strategies(all_strats) if s != RANDOM]
@@ -595,7 +599,7 @@ def write_time_to_coverage(curves: dict, budgets: list, out_path: Path) -> None:
 # is shared, so the per-strategy throughput delta isolates the tactics' own
 # overhead (pooled generation, mutation). Reported as the
 # median inputs/sec across all (method, seed) cells, plus the slowdown vs
-# random. (Each forked JVM runs the methods in the same order, so JIT-warmup
+# baseline. (Each forked JVM runs the methods in the same order, so JIT-warmup
 # bias is consistent across strategies and the comparison stays fair.)
 
 
