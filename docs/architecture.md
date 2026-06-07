@@ -53,28 +53,31 @@ a named policy that builds the next ScalaCheck generator from the current
 ```scala
 sealed trait Strategy {
   def name: String
+  def usesTargeting: Boolean = false
   def next[A](context: TacticContext[A]): Gen[A]
 }
 ```
 
 Each draw is chosen by the selected strategy. The baseline strategy is only
 `Generatable.arbitrary`. Guided strategies may combine that random draw with
-a **pooled** draw and/or a **mutated** draw:
+a **pooled** draw, a **mutated** draw, or a numeric **targeted** draw:
 
 - **pool** — draw values from mined literals (`Generatable.pooled`) while some
   branch-marked method-local target is still uncovered.
 - **mutation** — perturb a corpus seed, an input that grew coverage
   (`Generatable.mutate`).
+- **targeted** — extract numeric branch goals from the method, keep the best
+  branch-distance attempt per goal, and generate candidates around that input.
 
-So the **four strategies are the combinations of the implemented guidance
-sources** — `random`, `pool`, `mutation`, and `pool-mutation`. The mixing
+The implemented strategies are `random`, `pool`, `mutation`, `targeted`,
+and `pool-mutation`. The mixing
 logic lives inside `Strategy`; [`Pbt.check`](../engine/src/main/scala/pbt/Pbt.scala)
 only builds the context and asks the chosen strategy for a generator.
 
 The tactics are **complementary** — a branch behind a magic literal is
-reached only by the pool, a branch behind a *structured* input (a
-sorted list, staged tuple, or tree shape) only by mutation — so the `pool-mutation`
-composite covers the most when a method needs both.
+reached by the pool, a branch behind a *structured* input (a sorted list,
+staged tuple, or tree shape) by mutation, and a branch behind a narrow numeric
+predicate by targeted branch distance.
 
 The benchmark comments state the exact expected mechanism per function. Good
 thesis/presentation examples are intentionally small:
@@ -87,8 +90,8 @@ thesis/presentation examples are intentionally small:
   mutation can sort one side while preserving the other.
 - `MixedTargets.simpleApproval`: `code == 2024` needs pool, `first < second < third`
   needs list sorting, and `bonus == -bonus` needs the integer mutator's zero anchor.
-- `NumericSearch.window`: pool can draw the mined boundaries, then integer offsets
-  can step from a boundary into the narrow window.
+- `NumericSearch.scaledOffset`: targeted branch distance can move toward
+  `3 * n + 7 == 1000000` instead of hoping random sampling hits the exact value.
 
 ---
 
@@ -108,8 +111,9 @@ the coverage effect of each generated input. Per input:
 `Feedback` is the single running signal:
 `coveredAt` (statement id to first-hit input index), `corpus` (inputs that
 each grew coverage — mutation perturbs these), `seenInputs` (all inputs already
-executed), and `iteration` (the current input index). `Gen.delay` re-reads it
-every draw, so guided strategies see it grow; `random` ignores it.
+executed), `targeted` (best branch-distance attempts by numeric goal), and
+`iteration` (the current input index). `Gen.delay` re-reads it every draw, so
+guided strategies see it grow; `random` ignores it.
 
 ---
 
@@ -121,8 +125,9 @@ each subpackage is one thing you would extend:
 ```
 pbt/            engine + core types     Pbt · Coverage · Report
 pbt/gen/        the generator interface Generatable · ConstantPool
-pbt/analysis/   source literals         Parser
+pbt/analysis/   source literals/goals   Parser
 pbt/strategy/   feedback state + presets Feedback · Strategy · TacticContext
+pbt/targeting/  numeric branch distance BranchDistance · TargetMapper
 app/            harness + all the       Main · Generators
                 concrete generators
 sut/benchmark/  SUT methods + data      Calibration · ... · data.Tree
@@ -143,9 +148,9 @@ branch-marked also count toward branch coverage.
 
 This is simpler and more defensible than a custom branch metric:
 scoverage is the coverage source of truth.
-ScalaMeta is used only to mine method-local literals for the pool
-tactic, because some literals in patterns or conditions are not exposed by
-scoverage as standalone literal statements.
+ScalaMeta is used to mine method-local literals for the pool tactic and to
+extract numeric branch predicates for the targeted tactic. scoverage remains
+the source of truth for coverage ids and final coverage percentages.
 
 `Coverage` reads scoverage's append-only measurement files whole on
 every call — they are tiny, so the simple re-read beats tracking
@@ -156,9 +161,8 @@ so each run starts clean.
 
 ## 7. What makes a tactic coverage-guided
 
-Both guided sources steer off the *live* coverage — they are available only while
-there is something left to gain, so a strategy is genuinely
-feedback-driven, not a fixed bias:
+Guided sources steer off the *live* feedback they need, so a strategy is
+feedback-driven rather than a fixed bias:
 
 The **pool** mines method-local `Int`, `Double`, and `String` literals into
 a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
@@ -176,8 +180,14 @@ coverage frontier — but occasionally revisits an older corpus seed for
 diversity. Each retained seed can become the springboard that ratchets into
 nearby structured inputs (sort a list, grow a tree).
 
+The **targeted** tactic is enabled only for strategies that opt into targeting.
+It extracts numeric `if`/`else if` branch goals, maps their true/false sides to
+scoverage branch ids, and records branch distances inside feedback. Existing
+strategies do not pay this parsing or distance-computation cost.
+
 scoverage provides the method-local statement targets and covered statement ids
-that drive feedback. ScalaMeta provides the literals used by the pool tactic.
+that drive feedback. ScalaMeta provides the literals used by the pool tactic and
+the numeric predicates used by the targeted tactic.
 
 ---
 
@@ -189,6 +199,7 @@ session, so the harness runs **one forked JVM per (strategy, seed)**
 
 ```
 sbt "engine/runMain app.Main random 1"
+sbt "engine/runMain app.Main targeted 1"
 sbt "engine/runMain app.Main pool-mutation 1"
 ```
 
@@ -237,9 +248,9 @@ the *presentation*. Either side can be rewritten without the other.
 
 | You want to add… | Touch |
 |------------------|-------|
-| A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` (all the concrete generators live there; composites defer to their components, see `list`/`tree`) |
+| A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` / optional `targeted` behavior (all concrete generators live there; composites defer to their components, see `list`/`tree`) |
 | A new coverage target shape | Usually nothing: scoverage statements are filtered by method metadata |
-| A new guided mechanism | Add the generator logic in `Strategy` and expose any needed state through `TacticContext` |
+| A new guided mechanism | Add the generator logic in `Strategy` and expose any needed state through `TacticContext` / `Feedback` |
 | A new strategy | One `Strategy` preset in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |
 | A new output format | A new writer alongside `Report` |
 

@@ -13,7 +13,7 @@ object NumericSearch {
   }
 
   // Models an exact target reached through multiplication.
-  // Expected: no tactic should reliably dominate because the current mutator can halve values, but it does not use the `doubled < target` branch direction.
+  // Expected: targeted should help because branch distance sees how far `2 * n` is from `1000000`, and its half-distance candidate matches the coefficient.
   def derivedEq(n: Int): String = {
     val target  = 1000000
     val doubled = 2 * n
@@ -23,7 +23,7 @@ object NumericSearch {
   }
 
   // Models an exact target behind a small offset.
-  // Expected: this is a limitation case because the current mutator has the needed `seed - 8` edit but no branch-distance signal to choose it reliably.
+  // Expected: targeted should help because the distance for `n + 8 == 1000000` is exactly the remaining offset from the current input.
   def offsetEq(n: Int): String = {
     val shifted = n + 8
     if (shifted < 1000000) "low"
@@ -42,14 +42,14 @@ object NumericSearch {
   }
 
   // Models a two-coordinate narrow rectangular band.
-  // Expected: pool-mutation should help because pool can draw band boundaries, while tuple mutation can adjust one coordinate at a time.
+  // Expected: targeted should help because each tuple field maps to one numeric argument, so branch distance can keep the closest `(x, y)` attempt.
   def band(x: Int, y: Int): String =
     if (x < 1000 || x > 1002) "x-outside"
     else if (y < 2000 || y > 2002) "y-outside"
     else "inside"
 
   // Models a relation between two integers and their difference.
-  // Expected: mutation may help only modestly because tuple mutation preserves one coordinate, but `x > 1000000 && delta == 1000` is still sparse.
+  // Expected: targeted may help because it scores both `x > 1000000` and `delta == 1000`, while tuple mutation can preserve one coordinate and adjust the other.
   def difference(x: Int, y: Int): String = {
     val delta = x - y
     if (x > 1000000 && delta == 1000) "far-difference"
@@ -59,7 +59,7 @@ object NumericSearch {
   }
 
   // Models a target hidden behind a scaled offset.
-  // Expected: this is a limitation case because the current Int mutator does not solve `3 * n + 7 == 1000000` directionally.
+  // Expected: targeted should help because branch distance moves candidates toward the `3 * n + 7` threshold instead of treating the exact value as random chance.
   def scaledOffset(n: Int): String = {
     val score = 3 * n + 7
     if (score < 1000000) "low"
@@ -68,7 +68,7 @@ object NumericSearch {
   }
 
   // Models a target product with overflow-safe arithmetic.
-  // Expected: this is a limitation case because no current tactic factorizes `x * y + x - y`; coverage can reveal the miss but not solve it.
+  // Expected: this remains a limitation case because targeted can score the product expression but does not factorize `x * y + x - y`.
   def productBand(x: Int, y: Int): String = {
     val score = x.toLong * y.toLong + x.toLong - y.toLong
     if (score < 1000000L) "low"
@@ -78,7 +78,7 @@ object NumericSearch {
   }
 
   // Models a quadratic score window.
-  // Expected: this is a limitation case because no current tactic uses branch distance to solve the quadratic expression.
+  // Expected: this remains a limitation case because targeted can score the quadratic expression but does not invert it to select roots directly.
   def quadraticWindow(n: Int): String = {
     val score = n.toLong * n.toLong - 17L * n.toLong + 31L
     if (score < 250000L) "low"

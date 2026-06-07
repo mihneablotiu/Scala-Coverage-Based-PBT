@@ -6,7 +6,7 @@ SCOV_HTML_DIR := sut/target/scala-2.13/scoverage-report
 SCOV_SNAP_DIR := $(REPORTS_DIR)/_scoverage
 SBT           ?= sbt
 PY            ?= python3
-STRATEGIES    := random pool mutation pool-mutation
+STRATEGIES    := random pool mutation targeted pool-mutation pool-targeted mutation-targeted pool-mutation-targeted
 
 .PHONY: full smoke
 

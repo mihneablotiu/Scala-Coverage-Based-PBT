@@ -3,6 +3,7 @@ package app
 import benchmark.data.Tree
 import org.scalacheck.{Arbitrary, Gen}
 import pbt.gen.{ConstantPool, Generatable}
+import pbt.targeting.{BranchDistance, BranchGoal, OptionalNumericFields}
 
 object Generators {
   implicit val boolean: Generatable[Boolean] = new Generatable[Boolean] {
@@ -20,24 +21,26 @@ object Generators {
     def arbitrary: Gen[Int]         = Arbitrary.arbInt.arbitrary
     def mutate(seed: Int): Gen[Int] = {
       val anchors = List(
-        0,            // reset to the neutral integer
-        1,            // try the positive unit boundary
-        -1,           // try the negative unit boundary
-        Int.MaxValue, // jump to the upper integer edge
-        Int.MinValue, // jump to the lower integer edge
-        -seed,        // mirror the value around zero
-        seed / 2,     // shrink the magnitude
-        seed * 2      // grow the magnitude
+        0,                       // reset to the neutral integer
+        1,                       // try the positive unit boundary
+        -1,                      // try the negative unit boundary
+        Int.MaxValue,            // jump to the upper integer edge
+        Int.MinValue,            // jump to the lower integer edge
+        safeInt(-seed.toLong),   // mirror the value around zero
+        seed / 2,                // shrink the magnitude
+        safeInt(seed.toLong * 2) // grow the magnitude
       )
       val nearby = offsets.flatMap(d =>
         List(
-          seed - d, // step below the current value
-          seed + d  // step above the current value
+          safeInt(seed.toLong - d), // step below the current value
+          safeInt(seed.toLong + d)  // step above the current value
         )
       )
       Gen.oneOf((anchors ++ nearby).distinct)
     }
-    def pooled(pool: ConstantPool): Option[Gen[Int]] = Option.when(pool.ints.nonEmpty)(Gen.oneOf(pool.ints))
+    def pooled(pool: ConstantPool): Option[Gen[Int]]                     = Option.when(pool.ints.nonEmpty)(Gen.oneOf(pool.ints))
+    override def targeted(seed: Int, goal: BranchGoal): Option[Gen[Int]] =
+      targetedFrom(seed, goal, intCandidates(seed, goal))
   }
 
   implicit val double: Generatable[Double] = new Generatable[Double] {
@@ -61,7 +64,9 @@ object Generators {
       )
       Gen.oneOf((anchors ++ nearby).distinct)
     }
-    def pooled(pool: ConstantPool): Option[Gen[Double]] = Option.when(pool.doubles.nonEmpty)(Gen.oneOf(pool.doubles))
+    def pooled(pool: ConstantPool): Option[Gen[Double]]                        = Option.when(pool.doubles.nonEmpty)(Gen.oneOf(pool.doubles))
+    override def targeted(seed: Double, goal: BranchGoal): Option[Gen[Double]] =
+      targetedFrom(seed, goal, doubleCandidates(seed, goal))
   }
 
   implicit val string: Generatable[String] = new Generatable[String] {
@@ -198,25 +203,33 @@ object Generators {
     }
   }
 
-  implicit def tuple2[A, B](implicit A: Generatable[A], B: Generatable[B]): Generatable[(A, B)] = new Generatable[(A, B)] {
-    def arbitrary: Gen[(A, B)]            = Gen.zip(A.arbitrary, B.arbitrary)
-    def mutate(seed: (A, B)): Gen[(A, B)] =
-      Gen.oneOf(
-        A.mutate(seed._1).map((_, seed._2)), // mutate the first component and keep the second fixed
-        B.mutate(seed._2).map((seed._1, _))  // mutate the second component and keep the first fixed
-      )
-    def pooled(pool: ConstantPool): Option[Gen[(A, B)]] = {
-      val aOnly = A.pooled(pool).map(Gen.zip(_, B.arbitrary))
-      val bOnly = B.pooled(pool).map(Gen.zip(A.arbitrary, _))
-      val both  = for {
-        a <- A.pooled(pool)
-        b <- B.pooled(pool)
-      } yield Gen.zip(a, b)
-      oneOf(aOnly, bOnly, both)
+  implicit def tuple2[A, B](implicit A: Generatable[A], B: Generatable[B], F: OptionalNumericFields[(A, B)]): Generatable[(A, B)] =
+    new Generatable[(A, B)] {
+      def arbitrary: Gen[(A, B)]            = Gen.zip(A.arbitrary, B.arbitrary)
+      def mutate(seed: (A, B)): Gen[(A, B)] =
+        Gen.oneOf(
+          A.mutate(seed._1).map((_, seed._2)), // mutate the first component and keep the second fixed
+          B.mutate(seed._2).map((seed._1, _))  // mutate the second component and keep the first fixed
+        )
+      def pooled(pool: ConstantPool): Option[Gen[(A, B)]] = {
+        val aOnly = A.pooled(pool).map(Gen.zip(_, B.arbitrary))
+        val bOnly = B.pooled(pool).map(Gen.zip(A.arbitrary, _))
+        val both  = for {
+          a <- A.pooled(pool)
+          b <- B.pooled(pool)
+        } yield Gen.zip(a, b)
+        oneOf(aOnly, bOnly, both)
+      }
+      override def targeted(seed: (A, B), goal: BranchGoal): Option[Gen[(A, B)]] =
+        Some(Gen.listOfN(16, mutate(seed)).flatMap(candidates => targetedFrom(seed, goal, candidates).getOrElse(mutate(seed))))
     }
-  }
 
-  implicit def tuple3[A, B, C](implicit A: Generatable[A], B: Generatable[B], C: Generatable[C]): Generatable[(A, B, C)] =
+  implicit def tuple3[A, B, C](implicit
+      A: Generatable[A],
+      B: Generatable[B],
+      C: Generatable[C],
+      F: OptionalNumericFields[(A, B, C)]
+  ): Generatable[(A, B, C)] =
     new Generatable[(A, B, C)] {
       def arbitrary: Gen[(A, B, C)]               = Gen.zip(A.arbitrary, B.arbitrary, C.arbitrary)
       def mutate(seed: (A, B, C)): Gen[(A, B, C)] =
@@ -236,7 +249,48 @@ object Generators {
         } yield Gen.zip(a, b, c)
         oneOf(aOnly, bOnly, cOnly, all)
       }
+      override def targeted(seed: (A, B, C), goal: BranchGoal): Option[Gen[(A, B, C)]] =
+        Some(Gen.listOfN(16, mutate(seed)).flatMap(candidates => targetedFrom(seed, goal, candidates).getOrElse(mutate(seed))))
     }
+
+  private def targetedFrom[A: OptionalNumericFields](seed: A, goal: BranchGoal, candidates: List[A]): Option[Gen[A]] =
+    BranchDistance.distance(goal, seed).flatMap { current =>
+      val ranked = candidates.distinct.flatMap(candidate => BranchDistance.distance(goal, candidate).map(candidate -> _)).sortBy(_._2)
+      val useful = ranked.collect { case (candidate, distance) if distance <= current => candidate }.take(8)
+      Option.when(useful.nonEmpty)(Gen.oneOf(useful))
+    }
+
+  private def intCandidates(seed: Int, goal: BranchGoal): List[Int] = {
+    val anchors = List(0, 1, -1, Int.MaxValue, Int.MinValue, safeInt(-seed.toLong), seed / 2, safeInt(seed.toLong * 2))
+    val nearby  = List(1, 2, 8, 64).flatMap(d => List(safeInt(seed.toLong - d), safeInt(seed.toLong + d)))
+    val steps   = distanceSteps(seed, goal)
+    val guided  = steps.flatMap(d => List(safeInt(BigDecimal(seed) + d), safeInt(BigDecimal(seed) - d)))
+    (anchors ++ nearby ++ guided).distinct
+  }
+
+  private def doubleCandidates(seed: Double, goal: BranchGoal): List[Double] = {
+    val anchors = List(0.0, 1.0, -1.0, -seed, seed / 2.0, seed * 2.0)
+    val nearby  = List(1.0, 2.0, 8.0, 64.0).flatMap(d => List(seed - d, seed + d))
+    val steps   = distanceSteps(seed, goal).map(_.toDouble)
+    (anchors ++ nearby ++ steps.flatMap(d => List(seed - d, seed + d))).filter(_.isFinite).distinct
+  }
+
+  private def distanceSteps[A: OptionalNumericFields](seed: A, goal: BranchGoal): List[BigDecimal] =
+    BranchDistance
+      .distance(goal, seed)
+      .toList
+      .flatMap(distance => List(distance, distance / 2, distance / 4, distance / 8, distance / 16))
+      .filter(_ >= 1)
+
+  private def safeInt(value: Long): Int =
+    if (value > Int.MaxValue) Int.MaxValue
+    else if (value < Int.MinValue) Int.MinValue
+    else value.toInt
+
+  private def safeInt(value: BigDecimal): Int =
+    if (value > Int.MaxValue) Int.MaxValue
+    else if (value < Int.MinValue) Int.MinValue
+    else value.toInt
 
   private def oneOf[A](options: Option[Gen[A]]*): Option[Gen[A]] = {
     val generators = options.flatten
