@@ -96,7 +96,7 @@ actually helps.
 
 1. We point the framework at our catalogue of small methods.
 2. For each method and each strategy, we ask an input generator for the
-   configured budget (`make full` uses 100000 inputs per seed; `make smoke`
+   configured budget (`make full` uses 10000 inputs per seed; `make smoke`
    uses 200).
 3. For each input we run the method.
 4. As the method runs, scoverage records which method-local statements
@@ -126,9 +126,11 @@ channels**, each attacking a different *kind* of hard branch:
   It is aimed at narrow arithmetic targets where knowing "how far away"
   an input was is more useful than another blind random draw.
 
-Some channels **compose** today: **pool-mutation** switches pool and mutation
-on at once. They are **complementary** — the pool hits magic literals,
-mutation climbs structure, and targeted follows numeric branch distance.
+The channels **compose** freely: every pairing and the full triple are
+available (**pool-mutation**, **pool-targeted**, **mutation-targeted**, and
+**pool-mutation-targeted**), each switching its component tactics on at once.
+They are **complementary** — the pool hits magic literals, mutation climbs
+structure, and targeted follows numeric branch distance.
 Validity gates (the input must first *parse* or pass a *checksum*)
 are reached by neither today; that is the open frontier (see the
 proposal).
@@ -172,7 +174,7 @@ used for time-to-coverage:
 engine/reports/statistics/
 └── <category>/          e.g. MagicLiterals
     └── <method name>/   e.g. sign
-        └── <strategy>/  e.g. random, pool, mutation, targeted, pool-mutation
+        └── <strategy>/  e.g. random, pool, mutation, targeted, pool-mutation, …
             └── seed=01/
                 └── coverage.json    — first-hit data for time-to-coverage
 ```

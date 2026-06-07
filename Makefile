@@ -35,4 +35,4 @@ full:
 	$(call run_experiment,$$(seq 1 30),10000)
 
 smoke:
-	$(call run_experiment,1,200)
+	$(call run_experiment,1,10000)

@@ -67,10 +67,13 @@ a **pooled** draw, a **mutated** draw, or a numeric **targeted** draw:
 - **mutation** — perturb a corpus seed, an input that grew coverage
   (`Generatable.mutate`).
 - **targeted** — extract numeric branch goals from the method, keep the best
-  branch-distance attempt per goal, and generate candidates around that input.
+  branch-distance attempt per goal, and propose candidates by applying the
+  type's own `mutate` operator to that best attempt (a hill climb seeded by
+  branch distance — no separate targeted generator).
 
 The implemented strategies are `random`, `pool`, `mutation`, `targeted`,
-and `pool-mutation`. The mixing
+`pool-mutation`, `pool-targeted`, `mutation-targeted`, and
+`pool-mutation-targeted` — the eight subsets of the three tactics. The mixing
 logic lives inside `Strategy`; [`Pbt.check`](../engine/src/main/scala/pbt/Pbt.scala)
 only builds the context and asks the chosen strategy for a generator.
 
@@ -90,8 +93,9 @@ thesis/presentation examples are intentionally small:
   mutation can sort one side while preserving the other.
 - `MixedTargets.simpleApproval`: `code == 2024` needs pool, `first < second < third`
   needs list sorting, and `bonus == -bonus` needs the integer mutator's zero anchor.
-- `NumericSearch.scaledOffset`: targeted branch distance can move toward
-  `3 * n + 7 == 1000000` instead of hoping random sampling hits the exact value.
+- `NumericSearch.scaledOffset`: targeted keeps the input closest to
+  `3 * n + 7 == 1000000` by branch distance and mutates it toward the threshold,
+  instead of hoping random sampling hits the exact value.
 
 ---
 
@@ -103,7 +107,8 @@ draw). Shrinking is deliberately disabled because the experiment counts
 the coverage effect of each generated input. Per input:
 
 1. **draw** — ask the selected strategy for a generator using the current context;
-2. **run** the property (guarded, so a thrown exception still counts);
+2. **run** the property purely for its coverage effect (guarded — a thrown
+   exception is swallowed, so the input still counts and the sweep always continues);
 3. **read** the scoverage statement ids fired in the method's file;
 4. **mark** the method-local statement ids as covered;
 5. **record** into [`Feedback`](../engine/src/main/scala/pbt/strategy/Feedback.scala).
@@ -127,13 +132,13 @@ pbt/            engine + core types     Pbt · Coverage · Report
 pbt/gen/        the generator interface Generatable · ConstantPool
 pbt/analysis/   source literals/goals   Parser
 pbt/strategy/   feedback state + presets Feedback · Strategy · TacticContext
-pbt/targeting/  numeric branch distance BranchDistance · TargetMapper
+pbt/targeting/  numeric branch goals    Targeting · BranchDistance · TargetMapper · NumericFields
 app/            harness + all the       Main · Generators
                 concrete generators
 sut/benchmark/  SUT methods + data      Calibration · ... · data.Tree
 ```
 
-Each subpackage is one cohesive file, so "where does X live" has one
+Each subpackage is one cohesive concern, so "where does X live" has one
 answer.
 
 ---
@@ -169,9 +174,10 @@ a [`ConstantPool`](../engine/src/main/scala/pbt/gen/ConstantPool.scala)
 (the AFL *dictionary* idea — reuse useful constants from the program in
 inputs — adapted to value-level draws). Literals stay reusable: a value may
 still be useful in a different tuple position, list, option, or tree. To avoid
-wasting guided draws, feedback tracks all inputs already executed; if pool or
-mutation proposes one again, that draw falls back to random. Pool guidance is
-available only while some branch-marked method-local target is still uncovered.
+wasting guided draws, feedback tracks all inputs already executed; a guided
+strategy that proposes one again simply draws again (the random baseline is
+exempt, so it stays bit-for-bit ScalaCheck). Pool guidance is available only
+while some branch-marked method-local target is still uncovered.
 
 The **mutation** tactic perturbs the corpus of coverage-growing inputs
 with the type's `mutate` (AFL/FuzzChick-style edits and "interesting"
@@ -248,7 +254,7 @@ the *presentation*. Either side can be rewritten without the other.
 
 | You want to add… | Touch |
 |------------------|-------|
-| A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` / optional `targeted` behavior (all concrete generators live there; composites defer to their components, see `list`/`tree`) |
+| A new input type | One `implicit Generatable[A]` object in `app.Generators` — its `arbitrary` / `mutate` / `pooled` behavior (all concrete generators live there; composites defer to their components, see `list`/`tree`) |
 | A new coverage target shape | Usually nothing: scoverage statements are filtered by method metadata |
 | A new guided mechanism | Add the generator logic in `Strategy` and expose any needed state through `TacticContext` / `Feedback` |
 | A new strategy | One `Strategy` preset in `Strategy.all` (+ the name in the Makefile's `STRATEGIES`) |

@@ -29,7 +29,8 @@ each reading the live feedback it needs:
 A `Strategy` chooses the next generator from the current context. `random`
 therefore draws exactly like ScalaCheck. `pool` draws from mined literals,
 `mutation` perturbs coverage-growing seeds, `targeted` follows numeric branch
-distances, and `pool-mutation` composes pool and mutation.
+distances, and the combination strategies (`pool-mutation`, `pool-targeted`,
+`mutation-targeted`, `pool-mutation-targeted`) compose these tactics.
 The benchmark catalogue separates these cases into
 `Calibration`, `MagicLiterals`, `MutationTargets`, `MixedTargets`,
 `NumericSearch`, and `RealWorld`: 44 methods spanning shallow calibration cases,
@@ -40,7 +41,7 @@ string/numeric algorithms.
 ## Quick start
 
 ```bash
-make full      # clean + format + run 30 seeds × 100000 inputs + analyze
+make full      # clean + format + run 30 seeds × 10000 inputs + analyze
 make smoke     # same pipeline with 1 seed × 200 inputs
 ```
 

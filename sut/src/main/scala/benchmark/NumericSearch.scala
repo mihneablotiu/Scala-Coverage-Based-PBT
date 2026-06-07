@@ -13,7 +13,7 @@ object NumericSearch {
   }
 
   // Models an exact target reached through multiplication.
-  // Expected: targeted should help because branch distance sees how far `2 * n` is from `1000000`, and its half-distance candidate matches the coefficient.
+  // Expected: targeted keeps the input closest to `2 * n == 1000000` by branch distance and mutates it, climbing toward the exact root one mutation step at a time.
   def derivedEq(n: Int): String = {
     val target  = 1000000
     val doubled = 2 * n
@@ -23,7 +23,7 @@ object NumericSearch {
   }
 
   // Models an exact target behind a small offset.
-  // Expected: targeted should help because the distance for `n + 8 == 1000000` is exactly the remaining offset from the current input.
+  // Expected: targeted keeps the input closest to `n + 8 == 1000000` and mutates it; the mutator's `+8` step lines up with the offset, so a near input can cross exactly.
   def offsetEq(n: Int): String = {
     val shifted = n + 8
     if (shifted < 1000000) "low"
@@ -42,7 +42,7 @@ object NumericSearch {
   }
 
   // Models a two-coordinate narrow rectangular band.
-  // Expected: targeted should help because each tuple field maps to one numeric argument, so branch distance can keep the closest `(x, y)` attempt.
+  // Expected: targeted keeps the closest `(x, y)` by branch distance and mutates it, with tuple mutation editing one coordinate while holding the other.
   def band(x: Int, y: Int): String =
     if (x < 1000 || x > 1002) "x-outside"
     else if (y < 2000 || y > 2002) "y-outside"
@@ -59,7 +59,7 @@ object NumericSearch {
   }
 
   // Models a target hidden behind a scaled offset.
-  // Expected: targeted should help because branch distance moves candidates toward the `3 * n + 7` threshold instead of treating the exact value as random chance.
+  // Expected: targeted keeps the input closest to `3 * n + 7 == 1000000` by branch distance and mutates it toward the threshold instead of treating the exact value as random chance.
   def scaledOffset(n: Int): String = {
     val score = 3 * n + 7
     if (score < 1000000) "low"

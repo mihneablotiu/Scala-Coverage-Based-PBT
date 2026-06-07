@@ -41,11 +41,12 @@ final class Pbt(sutRoot: Path) {
     }
 
     val prop = Prop.forAllNoShrink(Gen.delay(nextInput)) { input =>
-      val ok =
-        try property(input)
-        catch { case _: Throwable => false }
+      // Run the SUT for its coverage side effects; a thrown exception still counts as one measured
+      // input. This loop measures coverage, not correctness, so it always succeeds and never stops early.
+      try property(input)
+      catch { case _: Throwable => () }
       feedback = feedback.record(input, coverage.firedTargetIds(sourceFile, targets), targetGoals)
-      ok
+      true
     }
 
     val t0 = System.nanoTime()
