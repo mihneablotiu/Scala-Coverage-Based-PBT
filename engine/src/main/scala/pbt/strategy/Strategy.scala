@@ -112,12 +112,10 @@ object Strategy {
   private def targetedGen[A](context: TacticContext[A]): Option[Gen[A]] =
     context.targetGoals
       .filterNot(goal => context.feedback.coveredAt.contains(goal.coverageId))
-      .flatMap(goal => context.feedback.targeted.get(goal.id).map(goal -> _))
-      .sortBy { case (_, attempt) => (attempt.distance == 0, attempt.distance) }
+      .flatMap(goal => context.feedback.targeted.get(goal.id))
+      .sortBy(attempt => (attempt.distance == 0, attempt.distance))
       .headOption
-      .flatMap { case (goal, attempt) =>
-        context.generatable.targeted(attempt.input, goal).map(_.flatMap(unseenOrRandom(context)))
-      }
+      .map(attempt => context.generatable.mutate(attempt.input).flatMap(unseenOrRandom(context)))
 
   private def unseenOrRandom[A](context: TacticContext[A])(input: A): Gen[A] =
     if (context.feedback.seenInputs.contains(input)) context.generatable.arbitrary
